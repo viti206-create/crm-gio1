@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -9,7 +9,8 @@ export default function LoginInner() {
 
   const redirectTo = useMemo(() => {
     const r = searchParams.get("redirect") || "/dashboard";
-    if (!r.startsWith("/")) return "/dashboard"; // evita redirect externo
+    // segurança: evita redirect externo
+    if (!r.startsWith("/")) return "/dashboard";
     return r;
   }, [searchParams]);
 
@@ -24,15 +25,24 @@ export default function LoginInner() {
     let alive = true;
 
     (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (!alive) return;
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!alive) return;
 
-      if (data.session) {
-        window.location.assign(redirectTo);
-        return;
+        if (error) {
+          console.error("getSession error:", error);
+        }
+
+        if (data.session) {
+          // HARD redirect: garante cookie aplicado e o proxy libera
+          window.location.replace(redirectTo);
+          return;
+        }
+      } catch (e) {
+        console.error("getSession exception:", e);
+      } finally {
+        if (alive) setChecking(false);
       }
-
-      setChecking(false);
     })();
 
     return () => {
@@ -45,20 +55,25 @@ export default function LoginInner() {
     setErrorMsg(null);
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
-    setLoading(false);
+      if (error) {
+        setErrorMsg("Email ou senha inválidos.");
+        return;
+      }
 
-    if (error) {
-      setErrorMsg("Email ou senha inválidos.");
-      return;
+      // HARD redirect (mais confiável no Vercel)
+      window.location.replace(redirectTo);
+    } catch (e) {
+      console.error("login exception:", e);
+      setErrorMsg("Erro ao fazer login. Tente novamente.");
+    } finally {
+      setLoading(false);
     }
-
-    // HARD redirect: garante cookie aplicado e Proxy libera no Vercel
-    window.location.assign(redirectTo);
   }
 
   if (checking) {
@@ -113,8 +128,8 @@ export default function LoginInner() {
             onChange={(e) => setEmail(e.target.value)}
             type="email"
             required
-            placeholder="seuemail@exemplo.com"
             autoComplete="email"
+            placeholder="seuemail@exemplo.com"
             style={{
               background: "rgba(255,255,255,0.08)",
               color: "white",
@@ -133,8 +148,8 @@ export default function LoginInner() {
             onChange={(e) => setPassword(e.target.value)}
             type="password"
             required
-            placeholder="••••••••"
             autoComplete="current-password"
+            placeholder="••••••••"
             style={{
               background: "rgba(255,255,255,0.08)",
               color: "white",
