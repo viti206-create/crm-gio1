@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function LoginInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
 
   const redirectTo = useMemo(() => {
@@ -25,24 +26,16 @@ export default function LoginInner() {
     let alive = true;
 
     (async () => {
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (!alive) return;
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
 
-        if (error) {
-          console.error("getSession error:", error);
-        }
-
-        if (data.session) {
-          // HARD redirect: garante cookie aplicado e o proxy libera
-          window.location.replace(redirectTo);
-          return;
-        }
-      } catch (e) {
-        console.error("getSession exception:", e);
-      } finally {
-        if (alive) setChecking(false);
+      if (data.session) {
+        // hard redirect ajuda a garantir que cookie/sessão reflita corretamente
+        window.location.assign(redirectTo);
+        return;
       }
+
+      setChecking(false);
     })();
 
     return () => {
@@ -55,25 +48,20 @@ export default function LoginInner() {
     setErrorMsg(null);
     setLoading(true);
 
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
 
-      if (error) {
-        setErrorMsg("Email ou senha inválidos.");
-        return;
-      }
+    setLoading(false);
 
-      // HARD redirect (mais confiável no Vercel)
-      window.location.replace(redirectTo);
-    } catch (e) {
-      console.error("login exception:", e);
-      setErrorMsg("Erro ao fazer login. Tente novamente.");
-    } finally {
-      setLoading(false);
+    if (error) {
+      setErrorMsg("Email ou senha inválidos.");
+      return;
     }
+
+    // hard redirect (mais confiável com cookies no Vercel)
+    window.location.assign(redirectTo);
   }
 
   if (checking) {
