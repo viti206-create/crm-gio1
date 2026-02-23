@@ -1,24 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function LoginPage() {
-  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const redirectTo = useMemo(() => {
+    const r = searchParams.get("redirect") || "/dashboard";
+    // segurança: evita redirect externo
+    if (!r.startsWith("/")) return "/dashboard";
+    return r;
+  }, [searchParams]);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  const [checking, setChecking] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    // Se já estiver logado, manda pro dashboard
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) router.replace("/dashboard");
-    });
-  }, [router]);
+    let alive = true;
+
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
+
+      if (data.session) {
+        // HARD redirect: garante cookie aplicado e Proxy libera no Vercel
+        window.location.assign(redirectTo);
+        return;
+      }
+
+      setChecking(false);
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [redirectTo]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -37,7 +59,26 @@ export default function LoginPage() {
       return;
     }
 
-    router.replace("/dashboard");
+    // HARD redirect: mais confiável que router.replace no Vercel
+    window.location.assign(redirectTo);
+  }
+
+  if (checking) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          background:
+            "radial-gradient(900px 500px at 20% 15%, rgba(180,120,255,0.25), transparent 60%), linear-gradient(180deg, #09070c 0%, #050408 100%)",
+          padding: 16,
+          color: "white",
+        }}
+      >
+        Carregando…
+      </div>
+    );
   }
 
   return (
@@ -75,6 +116,7 @@ export default function LoginPage() {
             type="email"
             required
             placeholder="seuemail@exemplo.com"
+            autoComplete="email"
             style={{
               background: "rgba(255,255,255,0.08)",
               color: "white",
@@ -94,6 +136,7 @@ export default function LoginPage() {
             type="password"
             required
             placeholder="••••••••"
+            autoComplete="current-password"
             style={{
               background: "rgba(255,255,255,0.08)",
               color: "white",
@@ -127,12 +170,13 @@ export default function LoginPage() {
             width: "100%",
             borderRadius: 12,
             padding: "12px 12px",
-            cursor: "pointer",
+            cursor: loading ? "not-allowed" : "pointer",
             fontWeight: 950,
             border: "1px solid rgba(180,120,255,0.35)",
             background:
               "linear-gradient(180deg, rgba(180,120,255,0.30) 0%, rgba(180,120,255,0.12) 100%)",
             color: "white",
+            opacity: loading ? 0.85 : 1,
           }}
         >
           {loading ? "Entrando..." : "Entrar"}
