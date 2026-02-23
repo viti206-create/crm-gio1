@@ -14,7 +14,7 @@ export async function proxy(req: NextRequest) {
 
   if (isPublic) return NextResponse.next();
 
-  // Rotas que exigem login (ajuste conforme seu app)
+  // Rotas que exigem login
   const needsAuth =
     pathname === "/" ||
     pathname.startsWith("/dashboard") ||
@@ -27,8 +27,7 @@ export async function proxy(req: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  // Se não tiver env no ambiente (ex.: build/local mal configurado), não trava o deploy:
-  // redireciona para login com um hint (você verá no browser).
+  // Se não tiver env configurada, joga pro login com hint
   if (!supabaseUrl || !supabaseAnonKey) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
@@ -37,8 +36,8 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // IMPORTANTE: criar um response "mutável" pra receber cookies do Supabase SSR
-  let res = NextResponse.next();
+  // Response mutável para o Supabase setar cookies quando necessário
+  const res = NextResponse.next();
 
   const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
     cookies: {
@@ -46,7 +45,6 @@ export async function proxy(req: NextRequest) {
         return req.cookies.getAll();
       },
       setAll(cookiesToSet) {
-        // atualiza os cookies no response (necessário para login persistir no Vercel)
         cookiesToSet.forEach(({ name, value, options }) => {
           res.cookies.set(name, value, options);
         });
@@ -62,16 +60,7 @@ export async function proxy(req: NextRequest) {
     const url = req.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("redirect", pathname);
-
-    // quando redireciona, precisa devolver o response do redirect (e não o "res" acima)
-    const redirectRes = NextResponse.redirect(url);
-
-    // se o Supabase tentou setar cookies, replica no redirectRes
-    res.cookies.getAll().forEach((c) => {
-      redirectRes.cookies.set(c.name, c.value, c);
-    });
-
-    return redirectRes;
+    return NextResponse.redirect(url);
   }
 
   return res;
