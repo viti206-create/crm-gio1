@@ -227,7 +227,7 @@ export default function NewLeadPage() {
 
   const [name, setName] = useState("");
   const [phoneRaw, setPhoneRaw] = useState("");
-  const [source, setSource] = useState<SourceValue>("instagram"); // ✅ default seguro
+  const [source, setSource] = useState("");
   const [interest, setInterest] = useState("");
   const [stageId, setStageId] = useState<string>("");
 
@@ -480,13 +480,25 @@ export default function NewLeadPage() {
           flexWrap: "wrap",
         }}
       >
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Novo lead</div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <span style={chipStyle("muted")}>GIO • CRM</span>
-            {loadingStages ? <span style={chipStyle("primary")}>Carregando etapas…</span> : <span style={chipStyle("muted")}>Pronto</span>}
-          </div>
-        </div>
+<div style={{ display: "grid", gap: 10 }}>
+  <div style={labelStyle}>Origem *</div>
+
+  <select
+    style={inputStyle}
+    value={source}
+    onChange={(e) => setSource(e.target.value)}
+  >
+    <option value="" disabled>
+      Selecione…
+    </option>
+    <option value="instagram">Instagram</option>
+    <option value="google">Google</option>
+    <option value="site">Site</option>
+    <option value="indicacao">Indicação</option>
+    <option value="trafego">Tráfego</option>
+    <option value="outros">Outros</option>
+  </select>
+</div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button onClick={() => router.push("/dashboard")} style={btn}>
