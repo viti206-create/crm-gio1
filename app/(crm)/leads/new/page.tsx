@@ -493,7 +493,6 @@ const inputStyle: React.CSSProperties = {
   value={source}
   onChange={(e) => setSource(e.target.value)}
 >
-  >
 <option value="" disabled style={{ color: "black" }}>
   Selecione…
 </option>
