@@ -185,14 +185,12 @@ function toE164BR(input: string) {
   const digits = (input || "").replace(/\D/g, "");
   if (!digits) return "";
 
-  // já veio com 55
   if (digits.startsWith("55")) {
     const d = digits.replace(/^0+/, "");
     if (d.length === 12 || d.length === 13) return `+${d}`;
     return "";
   }
 
-  // formato BR com DDD
   if (digits.length === 10 || digits.length === 11) {
     return `+55${digits}`;
   }
@@ -209,6 +207,18 @@ function formatDatetimeLocalToISO(v: string) {
   }
 }
 
+// ✅ Valores permitidos pelo CHECK no Supabase
+const SOURCE_OPTIONS = [
+  { label: "Google", value: "google" },
+  { label: "Instagram", value: "instagram" },
+  { label: "Site", value: "site" },
+  { label: "Indicação", value: "indicacao" },
+  { label: "Tráfego Pago", value: "trafego" },
+  { label: "Outros", value: "outros" },
+] as const;
+
+type SourceValue = (typeof SOURCE_OPTIONS)[number]["value"];
+
 export default function NewLeadPage() {
   const router = useRouter();
 
@@ -217,7 +227,7 @@ export default function NewLeadPage() {
 
   const [name, setName] = useState("");
   const [phoneRaw, setPhoneRaw] = useState("");
-  const [source, setSource] = useState("");
+  const [source, setSource] = useState<SourceValue>("instagram"); // ✅ default seguro
   const [interest, setInterest] = useState("");
   const [stageId, setStageId] = useState<string>("");
 
@@ -257,7 +267,6 @@ export default function NewLeadPage() {
 
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
 
-    // Se tiver ações, deixo mais tempo na tela
     const finalDuration = opts?.actions && opts.actions.length > 0 ? 9000 : duration;
 
     toastTimerRef.current = window.setTimeout(() => setToast(null), finalDuration);
@@ -270,8 +279,8 @@ export default function NewLeadPage() {
 
   useEffect(() => {
     fetchStages();
-    // foca no nome ao abrir
     setTimeout(() => nameRef.current?.focus(), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function fetchStages() {
@@ -302,10 +311,8 @@ export default function NewLeadPage() {
   function resetForm() {
     setName("");
     setPhoneRaw("");
-    setSource("");
+    setSource("instagram"); // ✅ volta pro default seguro
     setInterest("");
-    // mantém stageId (mais rápido), mas você pode resetar se quiser:
-    // setStageId(stages[0]?.id ?? "");
     setNextActionEnabled(false);
     setNextActionType("whatsapp");
     setNextActionAt("");
@@ -315,7 +322,6 @@ export default function NewLeadPage() {
   const canSave = useMemo(() => {
     if (saving) return false;
     if (!name.trim()) return false;
-    if (!source.trim()) return false;
     if (!interest.trim()) return false;
     if (!stageId) return false;
 
@@ -330,37 +336,31 @@ export default function NewLeadPage() {
     }
 
     return true;
-  }, [
-    saving,
-    name,
-    source,
-    interest,
-    stageId,
-    phoneRaw,
-    nextActionEnabled,
-    nextActionType,
-    nextActionAt,
-  ]);
+  }, [saving, name, interest, stageId, phoneRaw, nextActionEnabled, nextActionType, nextActionAt]);
 
   async function handleSave() {
     if (saving) return;
 
     const cleanName = name.trim();
-    const cleanSource = source.trim();
     const cleanInterest = interest.trim();
     const cleanPhoneRaw = phoneRaw.trim();
     const phoneE164 = toE164BR(cleanPhoneRaw);
 
-    if (!cleanName) return showToast("Preencha o nome.", { variant: "error", title: "Campos obrigatórios" });
-    if (!cleanPhoneRaw) return showToast("Preencha o telefone.", { variant: "error", title: "Campos obrigatórios" });
-    if (!phoneE164) return showToast("Telefone inválido. Ex: (15) 9xxxx-xxxx", { variant: "error", title: "Telefone" });
-    if (!cleanSource) return showToast("Preencha a origem.", { variant: "error", title: "Campos obrigatórios" });
-    if (!cleanInterest) return showToast("Preencha o interesse.", { variant: "error", title: "Campos obrigatórios" });
-    if (!stageId) return showToast("Selecione a etapa.", { variant: "error", title: "Campos obrigatórios" });
+    if (!cleanName)
+      return showToast("Preencha o nome.", { variant: "error", title: "Campos obrigatórios" });
+    if (!cleanPhoneRaw)
+      return showToast("Preencha o telefone.", { variant: "error", title: "Campos obrigatórios" });
+    if (!phoneE164)
+      return showToast("Telefone inválido. Ex: (15) 9xxxx-xxxx", { variant: "error", title: "Telefone" });
+    if (!cleanInterest)
+      return showToast("Preencha o interesse.", { variant: "error", title: "Campos obrigatórios" });
+    if (!stageId)
+      return showToast("Selecione a etapa.", { variant: "error", title: "Campos obrigatórios" });
 
     let nextActionPayload: { next_action_type?: string; next_action_at?: string } = {};
     if (nextActionEnabled) {
-      if (!nextActionAt) return showToast("Escolha data/hora da próxima ação.", { variant: "error", title: "Próxima ação" });
+      if (!nextActionAt)
+        return showToast("Escolha data/hora da próxima ação.", { variant: "error", title: "Próxima ação" });
       const iso = formatDatetimeLocalToISO(nextActionAt);
       if (!iso) return showToast("Data/hora inválida.", { variant: "error", title: "Próxima ação" });
       nextActionPayload = { next_action_type: nextActionType, next_action_at: iso };
@@ -372,7 +372,7 @@ export default function NewLeadPage() {
       name: cleanName,
       phone_raw: cleanPhoneRaw,
       phone_e164: phoneE164,
-      source: cleanSource,
+      source, // ✅ sempre válido pro CHECK
       interest: cleanInterest,
       stage_id: stageId,
       ...nextActionPayload,
@@ -382,7 +382,7 @@ export default function NewLeadPage() {
 
     if (insertErr) {
       console.error("insert lead error:", insertErr);
-      showToast(insertErr.message ?? "Erro ao criar lead (RLS/policy?)", {
+      showToast(insertErr.message ?? "Erro ao criar lead", {
         title: "Não consegui criar",
         variant: "error",
         durationMs: 6000,
@@ -414,7 +414,6 @@ export default function NewLeadPage() {
       ],
     });
 
-    // deixa pronto para um novo lead sem tirar o usuário da tela
     resetForm();
   }
 
@@ -469,13 +468,7 @@ export default function NewLeadPage() {
   return (
     <div>
       {toast ? (
-        <Toast
-          title={toast.title}
-          text={toast.text}
-          variant={toast.variant}
-          actions={toast.actions}
-          onClose={closeToast}
-        />
+        <Toast title={toast.title} text={toast.text} variant={toast.variant} actions={toast.actions} onClose={closeToast} />
       ) : null}
 
       <div
@@ -488,16 +481,10 @@ export default function NewLeadPage() {
         }}
       >
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>
-            Novo lead
-          </div>
+          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Novo lead</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <span style={chipStyle("muted")}>GIO • CRM</span>
-            {loadingStages ? (
-              <span style={chipStyle("primary")}>Carregando etapas…</span>
-            ) : (
-              <span style={chipStyle("muted")}>Pronto</span>
-            )}
+            {loadingStages ? <span style={chipStyle("primary")}>Carregando etapas…</span> : <span style={chipStyle("muted")}>Pronto</span>}
           </div>
         </div>
 
@@ -505,11 +492,7 @@ export default function NewLeadPage() {
           <button onClick={() => router.push("/dashboard")} style={btn}>
             Voltar
           </button>
-          <button
-            onClick={handleSave}
-            style={canSave ? btnPrimary : btnDisabled}
-            disabled={!canSave}
-          >
+          <button onClick={handleSave} style={canSave ? btnPrimary : btnDisabled} disabled={!canSave}>
             {saving ? "Salvando..." : "Criar lead"}
           </button>
         </div>
@@ -541,20 +524,30 @@ export default function NewLeadPage() {
                 inputMode="tel"
               />
               <div style={{ fontSize: 12, opacity: 0.75 }}>
-                E.164:{" "}
-                <span style={{ fontWeight: 900 }}>{toE164BR(phoneRaw) || "—"}</span>
+                E.164: <span style={{ fontWeight: 900 }}>{toE164BR(phoneRaw) || "—"}</span>
               </div>
             </div>
 
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={labelStyle}>Origem *</div>
-                <input
+
+                {/* ✅ select com values válidos pelo CHECK */}
+                <select
                   style={inputStyle}
                   value={source}
-                  onChange={(e) => setSource(e.target.value)}
-                  placeholder="Ex: Instagram, Google, Indicação..."
-                />
+                  onChange={(e) => setSource(e.target.value as SourceValue)}
+                >
+                  {SOURCE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+
+                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                  O sistema salva o valor padronizado (ex.: <b>instagram</b>, <b>google</b>).
+                </div>
               </div>
 
               <div style={{ display: "grid", gap: 10 }}>
@@ -570,11 +563,7 @@ export default function NewLeadPage() {
 
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>Etapa inicial *</div>
-              <select
-                style={inputStyle}
-                value={stageId}
-                onChange={(e) => setStageId(e.target.value)}
-              >
+              <select style={inputStyle} value={stageId} onChange={(e) => setStageId(e.target.value)}>
                 {stages.length === 0 ? <option value="">Sem etapas</option> : null}
                 {stages.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -633,11 +622,7 @@ export default function NewLeadPage() {
                 >
                   <div style={{ display: "grid", gap: 10 }}>
                     <div style={labelStyle}>Tipo</div>
-                    <select
-                      style={inputStyle}
-                      value={nextActionType}
-                      onChange={(e) => setNextActionType(e.target.value)}
-                    >
+                    <select style={inputStyle} value={nextActionType} onChange={(e) => setNextActionType(e.target.value)}>
                       <option value="whatsapp">WhatsApp</option>
                       <option value="ligacao">Ligação</option>
                       <option value="avaliacao">Agendar avaliação</option>
@@ -657,8 +642,7 @@ export default function NewLeadPage() {
 
                   <div style={{ gridColumn: "1 / -1", fontSize: 12, opacity: 0.75 }}>
                     Se você preencher a próxima ação no INSERT, seu trigger deve registrar{" "}
-                    <span style={{ fontWeight: 900 }}>next_action_set</span>{" "}
-                    automaticamente.
+                    <span style={{ fontWeight: 900 }}>next_action_set</span> automaticamente.
                   </div>
                 </div>
               ) : null}
@@ -666,22 +650,11 @@ export default function NewLeadPage() {
           </div>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 10,
-            flexWrap: "wrap",
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <button onClick={() => router.push("/dashboard")} style={btn}>
             Voltar pro Kanban
           </button>
-          <button
-            onClick={handleSave}
-            style={canSave ? btnPrimary : btnDisabled}
-            disabled={!canSave}
-          >
+          <button onClick={handleSave} style={canSave ? btnPrimary : btnDisabled} disabled={!canSave}>
             {saving ? "Salvando..." : "Criar lead"}
           </button>
         </div>
