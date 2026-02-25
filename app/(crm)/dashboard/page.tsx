@@ -595,10 +595,16 @@ const bySource = React.useMemo(() => {
   return acc;
 }, [leads]);
 
-  const bySource = data.reduce((acc, lead) => {
-  acc[lead.source] = (acc[lead.source] || 0) + 1;
+  const bySource = useMemo(() => {
+  const acc: Record<string, number> = {};
+
+  for (const lead of (leads as any[]) ?? []) {
+    const key = (lead?.source ?? "outros").toString().toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
+  }
+
   return acc;
-}, {});
+}, [leads]);
 
   const stageNameFromId = (id?: string | null) => {
     if (!id) return "—";
