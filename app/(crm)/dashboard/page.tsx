@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import SourceMetrics from "./SourceMetrics";
 import {
   DndContext,
   DragEndEvent,
@@ -566,28 +567,33 @@ export default function DashboardPage() {
   }, []);
 
   
-  async function fetchData() {
-    const { data: stagesData, error: stagesErr } = await supabase
-      .from("stages")
-      .select("id,name,position,is_final")
-      .order("position", { ascending: true });
+async function fetchData() {
+  const { data: stagesData, error: stagesErr } = await supabase
+    .from("stages")
+    .select("id,name,position,is_final")
+    .order("position", { ascending: true });
 
-    const { data } = await supabase
-      .from("leads")
-      .select("source");
+  const { data: leadsData, error: leadsErr } = await supabase
+    .from("leads")
+    .select(
+      "id,name,phone_raw,phone_e164,source,interest,stage_id,next_action_type,next_action_at"
+    );
 
-    const { data: leadsData, error: leadsErr } = await supabase
-      .from("leads")
-      .select(
-        "id,name,phone_raw,phone_e164,source,interest,stage_id,next_action_type,next_action_at"
-      );
+  if (stagesErr) console.error("stages error", stagesErr);
+  if (leadsErr) console.error("leads error", leadsErr);
 
-    if (stagesErr) console.error("stages error", stagesErr);
-    if (leadsErr) console.error("leads error", leadsErr);
+  if (stagesData) setStages(stagesData as any);
+  if (leadsData) setLeads(leadsData as any);
+}
 
-    if (stagesData) setStages(stagesData);
-    if (leadsData) setLeads(leadsData as any);
+const bySource = React.useMemo(() => {
+  const acc: Record<string, number> = {};
+  for (const lead of (leads ?? [])) {
+    const key = (lead?.source ?? "outros").toString().toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
   }
+  return acc;
+}, [leads]);
 
   const bySource = data.reduce((acc, lead) => {
   acc[lead.source] = (acc[lead.source] || 0) + 1;
