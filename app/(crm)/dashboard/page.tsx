@@ -572,6 +572,10 @@ export default function DashboardPage() {
       .select("id,name,position,is_final")
       .order("position", { ascending: true });
 
+    const { data } = await supabase
+      .from("leads")
+      .select("source");
+
     const { data: leadsData, error: leadsErr } = await supabase
       .from("leads")
       .select(
@@ -584,6 +588,11 @@ export default function DashboardPage() {
     if (stagesData) setStages(stagesData);
     if (leadsData) setLeads(leadsData as any);
   }
+
+  const bySource = data.reduce((acc, lead) => {
+  acc[lead.source] = (acc[lead.source] || 0) + 1;
+  return acc;
+}, {});
 
   const stageNameFromId = (id?: string | null) => {
     if (!id) return "—";
