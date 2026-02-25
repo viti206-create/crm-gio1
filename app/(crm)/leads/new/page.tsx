@@ -427,7 +427,7 @@ export default function NewLeadPage() {
 
 const inputStyle: React.CSSProperties = {
   background: "rgba(255,255,255,0.06)",
-  color: "white",
+  color: "black",
   border: "1px solid rgba(255,255,255,0.12)",
   padding: "10px 12px",
   borderRadius: 12,
