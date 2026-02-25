@@ -560,6 +560,16 @@ export default function DashboardPage() {
     }),
   };
 
+  
+  const bySource = useMemo(() => {
+  const acc: Record<string, number> = {};
+
+  for (const lead of (leads as any[]) ?? []) {
+    const key = (lead?.source ?? "outros").toString().toLowerCase();
+    acc[key] = (acc[key] || 0) + 1;
+  }
+
+
   useEffect(() => {
     
     fetchData();
@@ -585,14 +595,6 @@ async function fetchData() {
   if (stagesData) setStages(stagesData as any);
   if (leadsData) setLeads(leadsData as any);
 }
-
-  const bySource = useMemo(() => {
-  const acc: Record<string, number> = {};
-
-  for (const lead of (leads as any[]) ?? []) {
-    const key = (lead?.source ?? "outros").toString().toLowerCase();
-    acc[key] = (acc[key] || 0) + 1;
-  }
 
   return acc;
 }, [leads]);
