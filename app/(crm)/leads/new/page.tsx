@@ -427,7 +427,7 @@ export default function NewLeadPage() {
 
 const inputStyle: React.CSSProperties = {
   background: "rgba(255,255,255,0.06)",
-  color: "black",
+  color: "white",
   border: "1px solid rgba(255,255,255,0.12)",
   padding: "10px 12px",
   borderRadius: 12,
@@ -487,22 +487,23 @@ const inputStyle: React.CSSProperties = {
 <select
   style={{
     ...inputStyle,
-    color: "white",
-    backgroundColor: "#1a1a22", // fundo escuro sólido
+    backgroundColor: "#1a1a22",
+    color: "#ffffff",
+    colorScheme: "dark", // 🔥 ESSA LINHA RESOLVE
   }}
   value={source}
   onChange={(e) => setSource(e.target.value)}
 >
-<option value="" disabled style={{ color: "black" }}>
-  Selecione…
-</option>
-<option value="instagram" style={{ color: "black" }}>Instagram</option>
-<option value="google" style={{ color: "black" }}>Google</option>
-<option value="site" style={{ color: "black" }}>Site</option>
-<option value="indicacao" style={{ color: "black" }}>Indicação</option>
-<option value="trafego" style={{ color: "black" }}>Tráfego</option>
-<option value="outros" style={{ color: "black" }}>Outros</option>
-  </select>
+  <option value="" disabled>
+    Selecione…
+  </option>
+  <option value="instagram">Instagram</option>
+  <option value="google">Google</option>
+  <option value="site">Site</option>
+  <option value="indicacao">Indicação</option>
+  <option value="trafego">Tráfego</option>
+  <option value="outros">Outros</option>
+</select>
 </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
