@@ -586,15 +586,6 @@ async function fetchData() {
   if (leadsData) setLeads(leadsData as any);
 }
 
-const bySource = React.useMemo(() => {
-  const acc: Record<string, number> = {};
-  for (const lead of (leads ?? [])) {
-    const key = (lead?.source ?? "outros").toString().toLowerCase();
-    acc[key] = (acc[key] || 0) + 1;
-  }
-  return acc;
-}, [leads]);
-
   const bySource = useMemo(() => {
   const acc: Record<string, number> = {};
 
