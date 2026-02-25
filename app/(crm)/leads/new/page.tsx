@@ -425,15 +425,16 @@ export default function NewLeadPage() {
     boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
   };
 
-  const inputStyle: React.CSSProperties = {
-    background: "rgba(255,255,255,0.06)",
-    color: "white",
-    border: "1px solid rgba(255,255,255,0.12)",
-    padding: "10px 12px",
-    borderRadius: 12,
-    outline: "none",
-    width: "100%",
-  };
+const inputStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.06)",
+  color: "white",
+  border: "1px solid rgba(255,255,255,0.12)",
+  padding: "10px 12px",
+  borderRadius: 12,
+  outline: "none",
+  width: "100%",
+  appearance: "none",
+};
 
   const labelStyle: React.CSSProperties = {
     fontSize: 12,
@@ -483,20 +484,25 @@ export default function NewLeadPage() {
 <div style={{ display: "grid", gap: 10 }}>
   <div style={labelStyle}>Origem *</div>
 
-  <select
-    style={inputStyle}
-    value={source}
-    onChange={(e) => setSource(e.target.value)}
+<select
+  style={{
+    ...inputStyle,
+    color: "white",
+    backgroundColor: "#1a1a22", // fundo escuro sólido
+  }}
+  value={source}
+  onChange={(e) => setSource(e.target.value)}
+>
   >
-    <option value="" disabled>
-      Selecione…
-    </option>
-    <option value="instagram">Instagram</option>
-    <option value="google">Google</option>
-    <option value="site">Site</option>
-    <option value="indicacao">Indicação</option>
-    <option value="trafego">Tráfego</option>
-    <option value="outros">Outros</option>
+<option value="" disabled style={{ color: "black" }}>
+  Selecione…
+</option>
+<option value="instagram" style={{ color: "black" }}>Instagram</option>
+<option value="google" style={{ color: "black" }}>Google</option>
+<option value="site" style={{ color: "black" }}>Site</option>
+<option value="indicacao" style={{ color: "black" }}>Indicação</option>
+<option value="trafego" style={{ color: "black" }}>Tráfego</option>
+<option value="outros" style={{ color: "black" }}>Outros</option>
   </select>
 </div>
 
