@@ -291,6 +291,7 @@ export default function HomePage() {
         <Link href="/leads/new" style={smallLink}>
           + Novo lead
         </Link>
+        <Link href="/leads" style={smallBtn}>Contatos</Link>
       </div>
 
       {loading ? <div style={soft}>Carregando…</div> : null}
