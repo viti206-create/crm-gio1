@@ -1034,78 +1034,92 @@ async function fetchData() {
       </div>
 
       <div style={topBar}>
-        <div style={leftHeader}>
-            const topBar: React.CSSProperties = {
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            marginBottom: 14,
-            gap: 12,
-            flexWrap: "wrap",
-            };
-          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Kanban de Leads</div>
+  <div style={leftHeader}>
+    <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>
+      Kanban de Leads
+    </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <span style={chipStyle("muted")}>Total: {totalLeads}</span>
-            {saving ? (
-              <span style={chipStyle("primary")}>Salvando… {saving.slice(0, 6)}</span>
-            ) : (
-              <span style={chipStyle("muted")}>Pronto</span>
-            )}
-          </div>
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <span style={chipStyle("muted")}>Total: {totalLeads}</span>
+      {saving ? (
+        <span style={chipStyle("primary")}>Salvando… {saving.slice(0, 6)}</span>
+      ) : (
+        <span style={chipStyle("muted")}>Pronto</span>
+      )}
+    </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <input
-              style={inputStyle}
-              placeholder="Buscar (nome, telefone...)"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+      <input
+        style={inputStyle}
+        placeholder="Buscar (nome, telefone...)"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
 
-            <select style={selectStyle} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
-              <option value="all">Todas as etapas</option>
-              {stages.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+      <select
+        style={selectStyle}
+        value={stageFilter}
+        onChange={(e) => setStageFilter(e.target.value)}
+      >
+        <option value="all">Todas as etapas</option>
+        {stages.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+          </option>
+        ))}
+      </select>
 
-            <select style={selectStyle} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
-              <option value="all">Todas as origens</option>
-              {sourceOptions.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+      <select
+        style={selectStyle}
+        value={sourceFilter}
+        onChange={(e) => setSourceFilter(e.target.value)}
+      >
+        <option value="all">Todas as origens</option>
+        {sourceOptions.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
 
-            <select style={selectStyle} value={interestFilter} onChange={(e) => setInterestFilter(e.target.value)}>
-              <option value="all">Todos os interesses</option>
-              {interestOptions.map((i) => (
-                <option key={i} value={i}>
-                  {i}
-                </option>
-              ))}
-            </select>
+      <select
+        style={selectStyle}
+        value={interestFilter}
+        onChange={(e) => setInterestFilter(e.target.value)}
+      >
+        <option value="all">Todos os interesses</option>
+        {interestOptions.map((i) => (
+          <option key={i} value={i}>
+            {i}
+          </option>
+        ))}
+      </select>
 
-            <button
-              onClick={() => {
-                setQ("");
-                setStageFilter("all");
-                setSourceFilter("all");
-                setInterestFilter("all");
-              }}
-              style={smallBtn}
-            >
-              Limpar
-            </button>
-            
-          </div>
+      <button
+        onClick={() => {
+          setQ("");
+          setStageFilter("all");
+          setSourceFilter("all");
+          setInterestFilter("all");
+        }}
+        style={smallBtn}
+      >
+        Limpar
+      </button>
+    </div>
+  </div>
 
-          
-        </div>
-      </div>
+  {/* ✅ COLUNA DIREITA: BOTÕES */}
+  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+    <button onClick={() => router.push("/leads")} style={smallBtn}>
+      Contatos
+    </button>
+
+    <button onClick={() => router.push("/leads/new")} style={smallBtn}>
+      + Novo lead
+    </button>
+  </div>
+</div>
 
       <DndContext
         sensors={sensors}
