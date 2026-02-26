@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
@@ -1034,6 +1035,14 @@ async function fetchData() {
 
       <div style={topBar}>
         <div style={leftHeader}>
+            const topBar: React.CSSProperties = {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 14,
+    gap: 12,
+    flexWrap: "wrap",
+  };
           <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Kanban de Leads</div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
