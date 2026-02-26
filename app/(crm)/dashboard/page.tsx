@@ -1,10 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import SourceMetrics from "./SourceMetrics";
 import {
   DndContext,
   DragEndEvent,
@@ -466,11 +464,7 @@ function buildWhatsappMessage(lead: Lead) {
   );
 }
 
-function LeadFromUrlOpener({
-  onOpen,
-}: {
-  onOpen: (leadId: string) => void;
-}) {
+function LeadFromUrlOpener({ onOpen }: { onOpen: (leadId: string) => void }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -487,6 +481,8 @@ function LeadFromUrlOpener({
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
+
   const [stages, setStages] = useState<Stage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [saving, setSaving] = useState<string | null>(null);
@@ -510,7 +506,6 @@ export default function DashboardPage() {
     () => leads.find((l) => l.id === selectedLeadId) ?? null,
     [selectedLeadId, leads]
   );
-
 
   const [activities, setActivities] = useState<Activity[]>([]);
   const [activitiesLoading, setActivitiesLoading] = useState(false);
@@ -561,44 +556,37 @@ export default function DashboardPage() {
     }),
   };
 
-  
+  // ✅ MÉTRICA por origem (se você quiser usar no futuro)
   const bySource = useMemo(() => {
-  const acc: Record<string, number> = {};
+    const acc: Record<string, number> = {};
+    for (const lead of leads ?? []) {
+      const key = (lead?.source ?? "outros").toString().toLowerCase();
+      acc[key] = (acc[key] || 0) + 1;
+    }
+    return acc;
+  }, [leads]);
 
-  for (const lead of (leads as any[]) ?? []) {
-    const key = (lead?.source ?? "outros").toString().toLowerCase();
-    acc[key] = (acc[key] || 0) + 1;
+  async function fetchData() {
+    const { data: stagesData, error: stagesErr } = await supabase
+      .from("stages")
+      .select("id,name,position,is_final")
+      .order("position", { ascending: true });
+
+    const { data: leadsData, error: leadsErr } = await supabase
+      .from("leads")
+      .select("id,name,phone_raw,phone_e164,source,interest,stage_id,next_action_type,next_action_at");
+
+    if (stagesErr) console.error("stages error", stagesErr);
+    if (leadsErr) console.error("leads error", leadsErr);
+
+    if (stagesData) setStages(stagesData as any);
+    if (leadsData) setLeads(leadsData as any);
   }
 
-
   useEffect(() => {
-    
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  
-async function fetchData() {
-  const { data: stagesData, error: stagesErr } = await supabase
-    .from("stages")
-    .select("id,name,position,is_final")
-    .order("position", { ascending: true });
-
-  const { data: leadsData, error: leadsErr } = await supabase
-    .from("leads")
-    .select(
-      "id,name,phone_raw,phone_e164,source,interest,stage_id,next_action_type,next_action_at"
-    );
-
-  if (stagesErr) console.error("stages error", stagesErr);
-  if (leadsErr) console.error("leads error", leadsErr);
-
-  if (stagesData) setStages(stagesData as any);
-  if (leadsData) setLeads(leadsData as any);
-}
-
-  return acc;
-}, [leads]);
 
   const stageNameFromId = (id?: string | null) => {
     if (!id) return "—";
@@ -793,9 +781,12 @@ async function fetchData() {
       await navigator.clipboard.writeText(text);
       pushToast({ kind: "success", title: successMsg });
     } catch {
-      // fallback
       prompt("Copie:", text);
-      pushToast({ kind: "info", title: "Copie manualmente", description: "Seu navegador bloqueou o clipboard." });
+      pushToast({
+        kind: "info",
+        title: "Copie manualmente",
+        description: "Seu navegador bloqueou o clipboard.",
+      });
     }
   }
 
@@ -982,7 +973,8 @@ async function fetchData() {
       borderRadius: 16,
       padding: 12,
       border: "1px solid rgba(255,255,255,0.12)",
-      background: "linear-gradient(180deg, rgba(18,18,26,0.96) 0%, rgba(10,10,16,0.94) 100%)",
+      background:
+        "linear-gradient(180deg, rgba(18,18,26,0.96) 0%, rgba(10,10,16,0.94) 100%)",
       boxShadow: "0 22px 70px rgba(0,0,0,0.55)",
       backdropFilter: "blur(10px)",
       overflow: "hidden",
@@ -1003,8 +995,9 @@ async function fetchData() {
   return (
     <div>
       <Suspense fallback={null}>
-  <LeadFromUrlOpener onOpen={setSelectedLeadId} />
-</Suspense>
+        <LeadFromUrlOpener onOpen={setSelectedLeadId} />
+      </Suspense>
+
       {/* TOASTS */}
       <div style={toastWrap} aria-live="polite" aria-relevant="additions">
         {toasts.map((t) => (
@@ -1033,94 +1026,85 @@ async function fetchData() {
         ))}
       </div>
 
+      {/* TOP BAR */}
       <div style={topBar}>
-  <div style={leftHeader}>
-    <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>
-      Kanban de Leads
-    </div>
+        <div style={leftHeader}>
+          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Kanban de Leads</div>
 
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-      <span style={chipStyle("muted")}>Total: {totalLeads}</span>
-      {saving ? (
-        <span style={chipStyle("primary")}>Salvando… {saving.slice(0, 6)}</span>
-      ) : (
-        <span style={chipStyle("muted")}>Pronto</span>
-      )}
-    </div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <span style={chipStyle("muted")}>Total: {totalLeads}</span>
+            {saving ? (
+              <span style={chipStyle("primary")}>Salvando… {saving.slice(0, 6)}</span>
+            ) : (
+              <span style={chipStyle("muted")}>Pronto</span>
+            )}
+          </div>
 
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-      <input
-        style={inputStyle}
-        placeholder="Buscar (nome, telefone...)"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <input
+              style={inputStyle}
+              placeholder="Buscar (nome, telefone...)"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
 
-      <select
-        style={selectStyle}
-        value={stageFilter}
-        onChange={(e) => setStageFilter(e.target.value)}
-      >
-        <option value="all">Todas as etapas</option>
-        {stages.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.name}
-          </option>
-        ))}
-      </select>
+            <select style={selectStyle} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
+              <option value="all">Todas as etapas</option>
+              {stages.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
 
-      <select
-        style={selectStyle}
-        value={sourceFilter}
-        onChange={(e) => setSourceFilter(e.target.value)}
-      >
-        <option value="all">Todas as origens</option>
-        {sourceOptions.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </select>
+            <select style={selectStyle} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
+              <option value="all">Todas as origens</option>
+              {sourceOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
 
-      <select
-        style={selectStyle}
-        value={interestFilter}
-        onChange={(e) => setInterestFilter(e.target.value)}
-      >
-        <option value="all">Todos os interesses</option>
-        {interestOptions.map((i) => (
-          <option key={i} value={i}>
-            {i}
-          </option>
-        ))}
-      </select>
+            <select
+              style={selectStyle}
+              value={interestFilter}
+              onChange={(e) => setInterestFilter(e.target.value)}
+            >
+              <option value="all">Todos os interesses</option>
+              {interestOptions.map((i) => (
+                <option key={i} value={i}>
+                  {i}
+                </option>
+              ))}
+            </select>
 
-      <button
-        onClick={() => {
-          setQ("");
-          setStageFilter("all");
-          setSourceFilter("all");
-          setInterestFilter("all");
-        }}
-        style={smallBtn}
-      >
-        Limpar
-      </button>
-    </div>
-  </div>
+            <button
+              onClick={() => {
+                setQ("");
+                setStageFilter("all");
+                setSourceFilter("all");
+                setInterestFilter("all");
+              }}
+              style={smallBtn}
+            >
+              Limpar
+            </button>
+          </div>
+        </div>
 
-  {/* ✅ COLUNA DIREITA: BOTÕES */}
-  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-    <button onClick={() => router.push("/leads")} style={smallBtn}>
-      Contatos
-    </button>
+        {/* BOTÕES */}
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button onClick={() => router.push("/leads")} style={smallBtn}>
+            Contatos
+          </button>
+          <button onClick={() => router.push("/leads/new")} style={smallBtn}>
+            + Novo lead
+          </button>
+        </div>
+      </div>
 
-    <button onClick={() => router.push("/leads/new")} style={smallBtn}>
-      + Novo lead
-    </button>
-  </div>
-</div>
-
+      {/* KANBAN */}
       <DndContext
         sensors={sensors}
         collisionDetection={closestCorners}
@@ -1165,7 +1149,12 @@ async function fetchData() {
         </DragOverlay>
       </DndContext>
 
-      <Modal open={!!selectedLeadId} title={selectedLead ? selectedLead.name : "Lead"} onClose={() => setSelectedLeadId(null)}>
+      {/* MODAL */}
+      <Modal
+        open={!!selectedLeadId}
+        title={selectedLead ? selectedLead.name : "Lead"}
+        onClose={() => setSelectedLeadId(null)}
+      >
         {selectedLead ? (
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "grid", gap: 10 }}>
