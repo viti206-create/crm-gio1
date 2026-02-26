@@ -1036,13 +1036,13 @@ async function fetchData() {
       <div style={topBar}>
         <div style={leftHeader}>
             const topBar: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: 14,
-    gap: 12,
-    flexWrap: "wrap",
-  };
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            marginBottom: 14,
+            gap: 12,
+            flexWrap: "wrap",
+            };
           <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Kanban de Leads</div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
