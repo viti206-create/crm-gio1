@@ -291,7 +291,7 @@ export default function HomePage() {
         <Link href="/leads/new" style={smallLink}>
           + Novo lead
         </Link>
-        <Link href="/leads" style={smallBtn}>
+        <Link href="/leads" style={smallLink}>
           Contatos
         </Link>
       </div>
