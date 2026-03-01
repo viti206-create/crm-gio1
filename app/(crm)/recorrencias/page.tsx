@@ -107,6 +107,7 @@ export default function RecorrenciasPage() {
 
   // form (nova recorrência)
   const [formLeadId, setFormLeadId] = useState<string>("");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [formStatus, setFormStatus] = useState<string>("ativo");
   const [formStartDate, setFormStartDate] = useState<string>(() => {
     const d = new Date();
@@ -166,61 +167,48 @@ export default function RecorrenciasPage() {
   }, []);
 
   async function handleCreate() {
-    if (saving) return;
+  if (saving) return;
 
-    const leadId = (formLeadId || "").trim();
-    const status = (formStatus || "").trim().toLowerCase();
-    const start = (formStartDate || "").trim();
-    const total = Number(formTotal || 0);
-    const done = Number(formDone || 0);
+  // validações básicas
+  if (!formLeadId) return alert("Selecione um cliente.");
+  if (!formStartDate) return alert("Selecione a data de início.");
+  if (!formStatus) return alert("Selecione o status.");
+  if (!formTotal || formTotal < 1) return alert("Total de parcelas inválido.");
+  if (formDone < 0) return alert("Parcelas pagas inválidas.");
 
-    if (!leadId) {
-      alert("Selecione um cliente (lead).");
-      return;
-    }
-    if (!start) {
-      alert("Preencha a data de início.");
-      return;
-    }
-    if (!Number.isFinite(total) || total <= 0) {
-      alert("Parcelas totais precisa ser maior que 0.");
-      return;
-    }
-    if (!Number.isFinite(done) || done < 0) {
-      alert("Parcelas pagas não pode ser negativo.");
-      return;
-    }
-    if (done > total) {
-      alert("Parcelas pagas não pode ser maior que o total.");
-      return;
-    }
+  setSaving(true);
 
-    setSaving(true);
+  const payload = {
+    lead_id: formLeadId,
+    status: formStatus,
+    start_date: formStartDate,
+    installments_total: Number(formTotal),
+    installments_done: Number(formDone),
+  };
 
-    const { error } = await supabase.from("recorrencias").insert({
-      lead_id: leadId,
-      status,
-      start_date: start,
-      installments_total: total,
-      installments_done: done,
-    });
+  const q = editingId
+    ? supabase.from("recorrencias").update(payload).eq("id", editingId)
+    : supabase.from("recorrencias").insert(payload);
 
-    setSaving(false);
+  const { error } = await q;
 
-    if (error) {
-      console.error("insert recorrencia error:", error);
-      alert(`Não consegui salvar.\n\n${error.message}`);
-      return;
-    }
+  setSaving(false);
 
-    // recarrega lista
-    await fetchRows();
-
-    // mantém o lead selecionado (pra criar outras), mas reseta alguns campos
-    setFormStatus("ativo");
-    setFormTotal(10);
-    setFormDone(1);
+  if (error) {
+    console.error(error);
+    alert(error.message);
+    return;
   }
+
+  // limpa form e sai do modo edição
+  setEditingId(null);
+  setFormStatus("ativo");
+  setFormStartDate("");
+  setFormTotal(10);
+  setFormDone(1);
+
+  await fetchRows(); // ou fetchRecorrencias() / fetchData() — use a função que você já tem pra recarregar lista
+}
 
   // cálculo de datas + janela de cancelamento
   const computed = useMemo(() => {
