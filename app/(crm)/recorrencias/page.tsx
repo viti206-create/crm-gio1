@@ -562,7 +562,9 @@ export default function RecorrenciasPage() {
             <tr key={x.r.id}>
               <td style={td}>
                 <div style={{ fontWeight: 900 }}>{leadName}</div>
-                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>{phone || "—"}</div>
+                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
+                  {phone || "—"}
+                </div>
               </td>
 
               <td style={td}>
@@ -571,6 +573,7 @@ export default function RecorrenciasPage() {
 
               <td style={td}>
                 <button
+                  type="button"
                   style={btn}
                   onClick={() => {
                     setEditingId(x.r.id);
@@ -592,26 +595,34 @@ export default function RecorrenciasPage() {
                 <div style={{ fontWeight: 900 }}>
                   {Number(x.r.installments_done || 0)} / {Number(x.r.installments_total || 0)}
                 </div>
-                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Pagas / Total</div>
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                  Pagas / Total
+                </div>
               </td>
 
               <td style={td}>
                 <div style={{ fontWeight: 900 }}>{formatDateBR(x.end)}</div>
-                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Último pagamento</div>
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                  Último pagamento
+                </div>
               </td>
 
               <td style={td}>
                 <div style={{ fontWeight: 900 }}>
                   {formatDateBR(x.cancelFrom)} → {formatDateBR(x.cancelTo)}
                 </div>
-                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Janela permitida</div>
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
+                  Janela permitida
+                </div>
               </td>
 
               <td style={td}>
                 <span style={chipStyle(windowChipKind)}>{x.windowLabel}</span>
                 {x.inWindow ? (
                   <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
-                    {x.lastDays ? `⚠️ Faltam ${x.daysToClose} dia(s)` : `Faltam ${x.daysToClose} dia(s) p/ fechar`}
+                    {x.lastDays
+                      ? `⚠️ Faltam ${x.daysToClose} dia(s)`
+                      : `Faltam ${x.daysToClose} dia(s) p/ fechar`}
                   </div>
                 ) : (
                   <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
@@ -625,7 +636,7 @@ export default function RecorrenciasPage() {
       )}
     </tbody>
   </table>
-</div>      
+</div>     
 
       <div style={{ fontSize: 12, opacity: 0.7, marginTop: 12 }}>
         Se ao salvar aparecer erro, geralmente é: <b>RLS/policy</b> na tabela <b>recorrencias</b> ou <b>lead_id</b> inválido.
