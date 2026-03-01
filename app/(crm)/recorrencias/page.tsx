@@ -478,7 +478,7 @@ export default function RecorrenciasPage() {
     </div>
 
     <button style={saving ? btn : btnPrimary} disabled={saving} onClick={handleCreate}>
-      {saving ? "Salvando..." : "Salvar"}
+      {saving ? "Salvando..." : editingId ? "Atualizar" : "Salvar"}
     </button>
   </div>
 
@@ -563,6 +563,23 @@ export default function RecorrenciasPage() {
                     <td style={td}>
                       <span style={chipStyle(stLower === "ativo" ? "primary" : "muted")}>{status}</span>
                     </td>
+
+                    <td style={td}>
+                      <button
+                        style={btn}
+                        onClick={() => {
+                          setEditingId(x.r.id);
+                          setFormLeadId(x.r.lead_id);
+                          setFormStatus(x.r.status ?? "ativo");
+                          setFormStartDate(x.r.start_date);
+                          setFormTotal(x.r.installments_total);
+                          setFormDone(x.r.installments_done);
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                         }}
+                      >
+                         Editar
+                      </button>
+                   </td>
 
                     <td style={td}>{formatDateBR(x.start)}</td>
 
