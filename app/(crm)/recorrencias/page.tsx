@@ -1,5 +1,6 @@
 "use client";
 
+<div style={{ color: "white", fontWeight: 900 }}>RECORRENCIAS PAGE ATIVA</div>
 import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
