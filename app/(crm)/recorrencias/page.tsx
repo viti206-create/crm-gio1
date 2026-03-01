@@ -1,13 +1,11 @@
 "use client";
 
-<div style={{ color: "white", fontWeight: 900 }}>RECORRENCIAS PAGE ATIVA</div>
-import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 
-type LeadMini = {
+type LeadRow = {
   id: string;
-  name: string | null;
+  name: string;
   phone_raw: string | null;
   phone_e164: string | null;
 };
@@ -16,40 +14,77 @@ type RecRow = {
   id: string;
   lead_id: string;
   status: string | null;
-  start_date: string; // date (YYYY-MM-DD)
+  start_date: string; // yyyy-mm-dd
   installments_total: number;
   installments_done: number;
-  leads?: { name: string | null; phone_raw: string | null; phone_e164: string | null } | null;
+  leads?: LeadRow | null; // join
 };
 
-function pad2(n: number) {
-  return String(n).padStart(2, "0");
+type ChipKind = "primary" | "muted" | "warn" | "danger";
+
+function chipStyle(kind: ChipKind = "muted"): React.CSSProperties {
+  let border = "1px solid rgba(255,255,255,0.10)";
+  let bg = "rgba(255,255,255,0.04)";
+  let color = "rgba(255,255,255,0.90)";
+
+  if (kind === "primary") {
+    border = "1px solid rgba(180,120,255,0.35)";
+    bg = "rgba(180,120,255,0.12)";
+  }
+  if (kind === "warn") {
+    border = "1px solid rgba(255,200,120,0.35)";
+    bg = "rgba(255,200,120,0.10)";
+  }
+  if (kind === "danger") {
+    border = "1px solid rgba(255,120,160,0.35)";
+    bg = "rgba(255,120,160,0.12)";
+  }
+
+  return {
+    fontSize: 12,
+    padding: "3px 8px",
+    borderRadius: 999,
+    border,
+    background: bg,
+    color,
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    lineHeight: "16px",
+    whiteSpace: "nowrap",
+    fontWeight: 900,
+  };
 }
 
-function formatDateBR(d: Date) {
-  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`;
+function formatDateBR(d: Date | string | null | undefined) {
+  try {
+    if (!d) return "—";
+    const dt = typeof d === "string" ? new Date(d) : d;
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const mm = String(dt.getMonth() + 1).padStart(2, "0");
+    const yyyy = dt.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  } catch {
+    return "—";
+  }
 }
 
-// parse "YYYY-MM-DD" como data local (evita bug de timezone)
-function parseDateLocal(ymd: string) {
+function parseYMD(ymd: string) {
+  // cria em UTC para não “puxar” um dia por fuso
   const [y, m, d] = (ymd || "").split("-").map((x) => Number(x));
-  return new Date(y || 1970, (m || 1) - 1, d || 1, 12, 0, 0); // meio-dia local (mais seguro)
+  return new Date(Date.UTC(y, (m || 1) - 1, d || 1, 12, 0, 0));
 }
 
-function addMonthsSafe(base: Date, monthsToAdd: number) {
-  const d = new Date(base);
-  const day = d.getDate();
-  d.setDate(1);
-  d.setMonth(d.getMonth() + monthsToAdd);
-  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
-  d.setDate(Math.min(day, lastDay));
-  return d;
+function addDays(dt: Date, days: number) {
+  const x = new Date(dt.getTime());
+  x.setUTCDate(x.getUTCDate() + days);
+  return x;
 }
 
-function addDays(base: Date, days: number) {
-  const d = new Date(base);
-  d.setDate(d.getDate() + days);
-  return d;
+function addMonths(dt: Date, months: number) {
+  const x = new Date(dt.getTime());
+  x.setUTCMonth(x.getUTCMonth() + months);
+  return x;
 }
 
 function normalizePhoneReadable(raw: string | null, e164: string | null) {
@@ -57,185 +92,112 @@ function normalizePhoneReadable(raw: string | null, e164: string | null) {
   return base.trim();
 }
 
-function chipStyle(kind: "primary" | "muted" | "warn" | "danger" = "muted"): React.CSSProperties {
-  const map = {
-    primary: {
-      border: "1px solid rgba(180,120,255,0.35)",
-      background: "rgba(180,120,255,0.12)",
-      color: "rgba(255,255,255,0.92)",
-    },
-    muted: {
-      border: "1px solid rgba(255,255,255,0.12)",
-      background: "rgba(255,255,255,0.05)",
-      color: "rgba(255,255,255,0.88)",
-    },
-    warn: {
-      border: "1px solid rgba(255,200,120,0.35)",
-      background: "rgba(255,200,120,0.10)",
-      color: "rgba(255,255,255,0.92)",
-    },
-    danger: {
-      border: "1px solid rgba(255,120,160,0.35)",
-      background: "rgba(255,120,160,0.10)",
-      color: "rgba(255,255,255,0.92)",
-    },
-  }[kind];
-
-  return {
-    fontSize: 12,
-    padding: "3px 8px",
-    borderRadius: 999,
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    lineHeight: "16px",
-    whiteSpace: "nowrap",
-    ...map,
-  };
+function statusKind(status: string) {
+  const s = (status || "").toLowerCase();
+  if (s === "ativo") return "primary";
+  if (s.includes("paus")) return "warn";
+  if (s.includes("cancel")) return "danger";
+  if (s.includes("encerr")) return "danger";
+  return "muted";
 }
 
 export default function RecorrenciasPage() {
-  const router = useRouter();
+  const [loading, setLoading] = useState(true);
 
+  const [leads, setLeads] = useState<LeadRow[]>([]);
   const [rows, setRows] = useState<RecRow[]>([]);
-  const [leads, setLeads] = useState<LeadMini[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [errMsg, setErrMsg] = useState<string | null>(null);
 
   // filtros
   const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | string>("all");
 
-  // form (nova recorrência)
-  const [formLeadId, setFormLeadId] = useState<string>("");
+  // modo edição
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // form (serve para criar e para editar)
+  const [formLeadId, setFormLeadId] = useState<string>("");
   const [formStatus, setFormStatus] = useState<string>("ativo");
-  const [formStartDate, setFormStartDate] = useState<string>(() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-  });
-  const [formTotal, setFormTotal] = useState<number>(10);
-  const [formDone, setFormDone] = useState<number>(1);
+  const [formStartDate, setFormStartDate] = useState<string>(""); // yyyy-mm-dd
+  const [formTotal, setFormTotal] = useState<number>(12);
+  const [formDone, setFormDone] = useState<number>(0);
+
   const [saving, setSaving] = useState(false);
+  const topRef = useRef<HTMLDivElement | null>(null);
 
-  async function fetchRows() {
+  async function fetchAll() {
     setLoading(true);
-    setErrMsg(null);
 
-    // precisa existir FK recorrencias.lead_id -> leads.id (pra relação "leads" funcionar)
-    const { data, error } = await supabase
-      .from("recorrencias")
-      .select(
-        "id, lead_id, status, start_date, installments_total, installments_done, leads(name, phone_raw, phone_e164)"
-      )
-      .order("start_date", { ascending: false });
-
-    setLoading(false);
-
-    if (error) {
-      console.error("fetch recorrencias error:", error);
-      setErrMsg(error.message ?? "Erro ao carregar recorrências");
-      setRows([]);
-      return;
-    }
-
-    setRows((data as any) ?? []);
-  }
-
-  async function fetchLeads() {
-    const { data, error } = await supabase
+    const { data: leadsData, error: leadsErr } = await supabase
       .from("leads")
       .select("id,name,phone_raw,phone_e164")
-      .order("created_at", { ascending: false });
+      .order("name", { ascending: true });
 
-    if (error) {
-      console.error("fetch leads error:", error);
-      // não trava a tela se falhar
-      return;
-    }
+    const { data: recData, error: recErr } = await supabase
+      .from("recorrencias")
+      .select("id,lead_id,status,start_date,installments_total,installments_done,leads(id,name,phone_raw,phone_e164)")
+      .order("start_date", { ascending: false });
 
-    const list = ((data as any) ?? []) as LeadMini[];
-    setLeads(list);
+    if (leadsErr) console.error("leads error:", leadsErr);
+    if (recErr) console.error("recorrencias error:", recErr);
 
-    // se não tem lead selecionado ainda, escolhe o primeiro
-    if (!formLeadId && list.length > 0) setFormLeadId(list[0].id);
+    setLeads((leadsData as any) ?? []);
+    setRows((recData as any) ?? []);
+
+    setLoading(false);
   }
 
   useEffect(() => {
-    fetchRows();
-    fetchLeads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchAll();
   }, []);
 
-  async function handleCreate() {
-  if (saving) return;
-
-  // validações básicas
-  if (!formLeadId) return alert("Selecione um cliente.");
-  if (!formStartDate) return alert("Selecione a data de início.");
-  if (!formStatus) return alert("Selecione o status.");
-  if (!formTotal || formTotal < 1) return alert("Total de parcelas inválido.");
-  if (formDone < 0) return alert("Parcelas pagas inválidas.");
-
-  setSaving(true);
-
-  const payload = {
-    lead_id: formLeadId,
-    status: formStatus,
-    start_date: formStartDate,
-    installments_total: Number(formTotal),
-    installments_done: Number(formDone),
-  };
-
-  const q = editingId
-    ? supabase.from("recorrencias").update(payload).eq("id", editingId)
-    : supabase.from("recorrencias").insert(payload);
-
-  const { error } = await q;
-
-  setSaving(false);
-
-  if (error) {
-    console.error(error);
-    alert(error.message);
-    return;
+  function resetFormToCreate() {
+    setEditingId(null);
+    setFormLeadId("");
+    setFormStatus("ativo");
+    setFormStartDate("");
+    setFormTotal(12);
+    setFormDone(0);
   }
 
-  // limpa form e sai do modo edição
-  setEditingId(null);
-  setFormStatus("ativo");
-  setFormStartDate("");
-  setFormTotal(10);
-  setFormDone(1);
-
-  await fetchRows(); // ou fetchRecorrencias() / fetchData() — use a função que você já tem pra recarregar lista
-}
-
-  // cálculo de datas + janela de cancelamento
   const computed = useMemo(() => {
-    const today = new Date();
-    today.setHours(12, 0, 0, 0);
+    const now = new Date();
+    const qLower = q.trim().toLowerCase();
 
-    return rows.map((r) => {
-      const start = parseDateLocal(r.start_date);
-
-      // Fim previsto = data do último pagamento
-      // total 10 => start + 9 meses
+    return (rows ?? []).map((r) => {
+      const start = parseYMD(r.start_date);
       const total = Number(r.installments_total || 0);
-      const monthsToAdd = Math.max(0, total - 1);
-      const end = addMonthsSafe(start, monthsToAdd);
+      const done = Number(r.installments_done || 0);
 
-      // janela: 1 dia após o fim até 27 dias depois
+      // Fim previsto = data do ÚLTIMO pagamento (mensal)
+      // ex: total 12 -> soma 11 meses
+      const end = addMonths(start, Math.max(0, total - 1));
+
+      // janela permitida: 1 dia após até 27 dias após
       const cancelFrom = addDays(end, 1);
       const cancelTo = addDays(end, 27);
 
-      const inWindow = today >= cancelFrom && today <= cancelTo;
+      const inWindow = now >= cancelFrom && now <= cancelTo;
 
-      const daysToClose = Math.ceil((cancelTo.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+      const daysToClose = inWindow
+        ? Math.ceil((cancelTo.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+        : Math.ceil((cancelFrom.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+      // “últimos dias” = últimos 3 dias da janela
       const lastDays = inWindow && daysToClose <= 3;
 
-      let windowLabel: "Fora da janela" | "Pode cancelar" | "Últimos dias" = "Fora da janela";
-      if (inWindow) windowLabel = lastDays ? "Últimos dias" : "Pode cancelar";
+      let windowLabel = "Fora da janela";
+      if (inWindow) windowLabel = lastDays ? "Últimos dias" : "Dentro da janela";
+      else if (now < cancelFrom) windowLabel = "Aguardando janela";
+
+      // filtro texto
+      const leadName = r.leads?.name ?? "";
+      const phone = normalizePhoneReadable(r.leads?.phone_raw ?? null, r.leads?.phone_e164 ?? null);
+      const status = (r.status ?? "").toString();
+
+      const hay = `${leadName} ${phone} ${status}`.toLowerCase();
+      const passesQ = !qLower || hay.includes(qLower);
+
+      const passesStatus = statusFilter === "all" || status.toLowerCase() === statusFilter.toLowerCase();
 
       return {
         r,
@@ -247,68 +209,105 @@ export default function RecorrenciasPage() {
         lastDays,
         daysToClose,
         windowLabel,
+        passesQ,
+        passesStatus,
       };
     });
-  }, [rows]);
+  }, [rows, q, statusFilter]);
+
+  const filtered = useMemo(() => {
+    return computed.filter((x) => x.passesQ && x.passesStatus);
+  }, [computed]);
+
+  // cards de resumo (1 linha)
+  const summary = useMemo(() => {
+    const total = rows.length;
+    const ativos = rows.filter((r) => (r.status ?? "").toLowerCase() === "ativo").length;
+
+    const inWindow = computed.filter((x) => x.inWindow).length;
+    const lastDays = computed.filter((x) => x.lastDays).length;
+
+    return { total, ativos, inWindow, lastDays };
+  }, [rows, computed]);
 
   const statusOptions = useMemo(() => {
     const set = new Set<string>();
-    for (const x of rows) if (x.status) set.add(x.status);
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
+    for (const r of rows) if (r.status) set.add(r.status);
+    const arr = Array.from(set).sort((a, b) => a.localeCompare(b));
+    return arr;
   }, [rows]);
 
-  const filtered = useMemo(() => {
-    const query = q.trim().toLowerCase();
+  const canSave = useMemo(() => {
+    if (saving) return false;
+    if (!formLeadId) return false;
+    if (!formStartDate) return false;
+    if (!formStatus.trim()) return false;
+    const total = Number(formTotal);
+    const done = Number(formDone);
+    if (!Number.isFinite(total) || total <= 0) return false;
+    if (!Number.isFinite(done) || done < 0) return false;
+    if (done > total) return false;
+    return true;
+  }, [saving, formLeadId, formStartDate, formStatus, formTotal, formDone]);
 
-    return computed.filter((x) => {
-      if (statusFilter !== "all") {
-        const st = (x.r.status ?? "").toLowerCase();
-        if (st !== statusFilter.toLowerCase()) return false;
-      }
+  async function handleSave() {
+    if (!canSave) return;
 
-      if (!query) return true;
+    setSaving(true);
 
-      const name = (x.r.leads?.name ?? "").toLowerCase();
-      const phone = normalizePhoneReadable(x.r.leads?.phone_raw ?? null, x.r.leads?.phone_e164 ?? null).toLowerCase();
-      const status = (x.r.status ?? "").toLowerCase();
+    const payload = {
+      lead_id: formLeadId,
+      status: formStatus.trim(),
+      start_date: formStartDate,
+      installments_total: Number(formTotal),
+      installments_done: Number(formDone),
+    };
 
-      return `${name} ${phone} ${status}`.includes(query);
-    });
-  }, [computed, q, statusFilter]);
+    let err: any = null;
 
-  const totals = useMemo(() => {
-    let ativos = 0;
-    let podeCancelar = 0;
-    let ultimosDias = 0;
-
-    for (const x of computed) {
-      if ((x.r.status ?? "").toLowerCase() === "ativo") ativos++;
-      if (x.inWindow) podeCancelar++;
-      if (x.lastDays) ultimosDias++;
+    if (editingId) {
+      const { error } = await supabase.from("recorrencias").update(payload).eq("id", editingId);
+      err = error;
+    } else {
+      const { error } = await supabase.from("recorrencias").insert(payload);
+      err = error;
     }
 
-    return { ativos, podeCancelar, ultimosDias, total: computed.length };
-  }, [computed]);
+    setSaving(false);
 
-  const wrap: React.CSSProperties = {
-    maxWidth: 1200,
-    margin: "0 auto",
+    if (err) {
+      console.error("save recorrencia error:", err);
+      alert(err.message ?? "Erro ao salvar. Pode ser RLS/policy.");
+      return;
+    }
+
+    await fetchAll();
+    resetFormToCreate();
+    topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function startEdit(x: RecRow) {
+    setEditingId(x.id);
+    setFormLeadId(x.lead_id);
+    setFormStatus(x.status ?? "ativo");
+    setFormStartDate(x.start_date);
+    setFormTotal(Number(x.installments_total || 12));
+    setFormDone(Number(x.installments_done || 0));
+    topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // estilos
+  const page: React.CSSProperties = {
     padding: 16,
+    color: "white",
   };
 
-  const topBar: React.CSSProperties = {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-    flexWrap: "wrap",
-    marginBottom: 14,
-  };
-
-  const title: React.CSSProperties = {
-    fontSize: 18,
-    fontWeight: 950,
-    letterSpacing: 0.2,
+  const card: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    borderRadius: 18,
+    padding: 14,
+    boxShadow: "0 22px 70px rgba(0,0,0,0.55)",
   };
 
   const inputStyle: React.CSSProperties = {
@@ -318,10 +317,14 @@ export default function RecorrenciasPage() {
     padding: "10px 12px",
     borderRadius: 12,
     outline: "none",
-    minWidth: 240,
+    width: "100%",
   };
 
-  const selectStyle: React.CSSProperties = { ...inputStyle, minWidth: 190 };
+  const selectStyle: React.CSSProperties = {
+    ...inputStyle,
+    minWidth: 190,
+    cursor: "pointer",
+  };
 
   const btn: React.CSSProperties = {
     background: "rgba(255,255,255,0.06)",
@@ -331,6 +334,7 @@ export default function RecorrenciasPage() {
     borderRadius: 12,
     cursor: "pointer",
     fontWeight: 900,
+    whiteSpace: "nowrap",
   };
 
   const btnPrimary: React.CSSProperties = {
@@ -340,19 +344,17 @@ export default function RecorrenciasPage() {
       "linear-gradient(180deg, rgba(180,120,255,0.20) 0%, rgba(180,120,255,0.08) 100%)",
   };
 
-  const card: React.CSSProperties = {
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.04)",
-    borderRadius: 16,
-    padding: 12,
-    boxShadow: "0 22px 70px rgba(0,0,0,0.40)",
+  const btnDanger: React.CSSProperties = {
+    ...btn,
+    border: "1px solid rgba(255,120,160,0.35)",
+    background: "rgba(255,120,160,0.10)",
   };
 
-  const tableWrap: React.CSSProperties = {
-    overflowX: "auto",
-    borderRadius: 16,
-    border: "1px solid rgba(255,255,255,0.10)",
-    background: "rgba(255,255,255,0.03)",
+  const label: React.CSSProperties = {
+    fontSize: 12,
+    opacity: 0.85,
+    fontWeight: 900,
+    letterSpacing: 0.2,
   };
 
   const th: React.CSSProperties = {
@@ -373,274 +375,296 @@ export default function RecorrenciasPage() {
   };
 
   return (
-    <div style={wrap}>
-      <div style={topBar}>
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={title}>Recorrências</div>
+    <div style={page}>
+      <div
+        style={{
+          background:
+            "radial-gradient(900px 500px at 20% 15%, rgba(180,120,255,0.25), transparent 60%), linear-gradient(180deg, #09070c 0%, #050408 100%)",
+          borderRadius: 18,
+          border: "1px solid rgba(255,255,255,0.10)",
+          padding: 16,
+        }}
+      >
+        <div ref={topRef} />
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <span style={chipStyle("muted")}>Total: {totals.total}</span>
-            <span style={chipStyle("primary")}>Ativos: {totals.ativos}</span>
-            <span style={chipStyle("warn")}>Pode cancelar: {totals.podeCancelar}</span>
-            <span style={chipStyle("danger")}>Últimos dias: {totals.ultimosDias}</span>
-            {loading ? <span style={chipStyle("muted")}>Carregando…</span> : <span style={chipStyle("muted")}>Pronto</span>}
+        {/* topo */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            alignItems: "flex-start",
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>
+              Recorrências
+            </div>
+
+            {/* 1 linha só */}
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <span style={chipStyle("muted")}>Total: {summary.total}</span>
+              <span style={chipStyle("primary")}>Ativos: {summary.ativos}</span>
+              <span style={chipStyle("warn")}>Na janela: {summary.inWindow}</span>
+              <span style={chipStyle("danger")}>Últimos dias: {summary.lastDays}</span>
+            </div>
           </div>
 
-          {errMsg ? (
-            <div style={{ fontSize: 12, opacity: 0.9, color: "rgba(255,160,190,0.95)" }}>
-              Erro: {errMsg}
-            </div>
-          ) : null}
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={btn}
+              onClick={() => fetchAll()}
+              disabled={loading}
+            >
+              {loading ? "Atualizando..." : "Atualizar"}
+            </button>
+
+            {editingId ? (
+              <button type="button" style={btnDanger} onClick={resetFormToCreate}>
+                Cancelar edição
+              </button>
+            ) : null}
+          </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button style={btn} onClick={() => router.push("/dashboard")}>
-            Voltar
-          </button>
-          <button style={btn} onClick={fetchRows}>
-            Recarregar
-          </button>
-        </div>
-      </div>
+        {/* form criar/editar */}
+        <div style={{ ...card, marginBottom: 14 }}>
+          <div style={{ fontWeight: 950, marginBottom: 10 }}>
+            {editingId ? "Editar recorrência" : "Adicionar recorrência"}
+          </div>
 
-      {/* FORM: ADICIONAR RECORRÊNCIA */}
-<div style={{ ...card, marginBottom: 14 }}>
-  <div style={{ fontWeight: 950, marginBottom: 10 }}>Adicionar recorrência</div>
-
-  {/* GRID 1 LINHA COM LABELS */}
-  <div
-    style={{
-      display: "grid",
-      gap: 10,
-      gridTemplateColumns: "2.4fr 1.1fr 1.1fr 0.8fr 0.8fr auto",
-      alignItems: "end",
-    }}
-  >
-    <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 900 }}>Cliente</div>
-      <select
-        style={{ ...selectStyle, minWidth: 0, width: "100%" }}
-        value={formLeadId}
-        onChange={(e) => setFormLeadId(e.target.value)}
-      >
-        {leads.length === 0 ? <option value="">Sem leads</option> : null}
-        {leads.map((l) => {
-          const phone = normalizePhoneReadable(l.phone_raw, l.phone_e164);
-          const label = `${l.name ?? "Sem nome"}${phone ? ` • ${phone}` : ""}`;
-          return (
-            <option key={l.id} value={l.id}>
-              {label}
-            </option>
-          );
-        })}
-      </select>
-    </div>
-
-    <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 900 }}>Status</div>
-      <select style={{ ...selectStyle, minWidth: 0, width: "100%" }} value={formStatus} onChange={(e) => setFormStatus(e.target.value)}>
-        <option value="ativo">ativo</option>
-        <option value="pausado">pausado</option>
-        <option value="encerrado">encerrado</option>
-        <option value="cancelado">cancelado</option>
-      </select>
-    </div>
-
-    <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 900 }}>Início</div>
-      <input
-        type="date"
-        style={{ ...inputStyle, minWidth: 0, width: "100%" }}
-        value={formStartDate}
-        onChange={(e) => setFormStartDate(e.target.value)}
-      />
-    </div>
-
-    <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 900 }}>Total</div>
-      <input
-        type="number"
-        style={{ ...inputStyle, minWidth: 0, width: "100%" }}
-        value={formTotal}
-        onChange={(e) => setFormTotal(Number(e.target.value))}
-        min={1}
-      />
-    </div>
-
-    <div style={{ display: "grid", gap: 6 }}>
-      <div style={{ fontSize: 12, opacity: 0.85, fontWeight: 900 }}>Pagas</div>
-      <input
-        type="number"
-        style={{ ...inputStyle, minWidth: 0, width: "100%" }}
-        value={formDone}
-        onChange={(e) => setFormDone(Number(e.target.value))}
-        min={0}
-      />
-    </div>
-
-    <button style={saving ? btn : btnPrimary} disabled={saving} onClick={handleCreate}>
-      {saving ? "Salvando..." : editingId ? "Atualizar" : "Salvar"}
-    </button>
-  </div>
-
-  <div style={{ fontSize: 12, opacity: 0.72, marginTop: 10 }}>
-    Regra: cancelar somente do <b>Fim+1</b> até <b>Fim+27</b>.
-  </div>
-</div>
-
-      {/* FILTROS */}
-      <div style={{ ...card, marginBottom: 14 }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <input
-            style={inputStyle}
-            placeholder="Buscar (nome/telefone/status...)"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-
-          <select style={selectStyle} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="all">Todos os status</option>
-            {statusOptions.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-
-          <button
-            style={btn}
-            onClick={() => {
-              setQ("");
-              setStatusFilter("all");
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "1.3fr 0.8fr 0.7fr 0.6fr 0.6fr",
+              alignItems: "end",
             }}
           >
-            Limpar
-          </button>
-        </div>
-      </div>
-
-      {/* TABELA */}
-
-<div style={{ overflowX: "auto" }}>
-  <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-    <thead>
-      <tr>
-        <th style={th}>Cliente</th>
-        <th style={th}>Status</th>
-        <th style={th}>Ações</th>
-        <th style={th}>Início</th>
-        <th style={th}>Parcelas</th>
-        <th style={th}>Fim previsto</th>
-        <th style={th}>Janela permitida</th>
-        <th style={th}>Situação</th>
-      </tr>
-    </thead>
-
-    <tbody>
-      {filtered.length === 0 ? (
-        <tr>
-          <td style={td} colSpan={8}>
-            <div style={{ opacity: 0.75 }}>
-              {loading ? "Carregando..." : "Nenhuma recorrência encontrada com esses filtros."}
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Cliente *</div>
+              <select
+                value={formLeadId}
+                onChange={(e) => setFormLeadId(e.target.value)}
+                style={selectStyle}
+              >
+                <option value="">Selecione...</option>
+                {leads.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}
+                  </option>
+                ))}
+              </select>
             </div>
-          </td>
-        </tr>
-      ) : (
-        filtered.map((x) => {
-          const leadName = x.r.leads?.name ?? "—";
-          const phone = normalizePhoneReadable(
-            x.r.leads?.phone_raw ?? null,
-            x.r.leads?.phone_e164 ?? ""
-          );
 
-          const status = (x.r.status ?? "—").toString();
-          const stLower = status.toLowerCase();
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Status *</div>
+              <select
+                value={formStatus}
+                onChange={(e) => setFormStatus(e.target.value)}
+                style={selectStyle}
+              >
+                <option value="ativo">Ativo</option>
+                <option value="pausado">Pausado</option>
+                <option value="cancelado">Cancelado</option>
+                <option value="encerrado">Encerrado</option>
+              </select>
+            </div>
 
-          let windowChipKind: "muted" | "warn" | "danger" = "muted";
-          if (x.inWindow) windowChipKind = x.lastDays ? "danger" : "warn";
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Início *</div>
+              <input
+                type="date"
+                value={formStartDate}
+                onChange={(e) => setFormStartDate(e.target.value)}
+                style={inputStyle}
+              />
+            </div>
 
-          return (
-            <tr key={x.r.id}>
-              <td style={td}>
-                <div style={{ fontWeight: 900 }}>{leadName}</div>
-                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
-                  {phone || "—"}
-                </div>
-              </td>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Total</div>
+              <input
+                type="number"
+                min={1}
+                value={formTotal}
+                onChange={(e) => setFormTotal(Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
 
-              <td style={td}>
-                <span style={chipStyle(stLower === "ativo" ? "primary" : "muted")}>{status}</span>
-              </td>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Pagas</div>
+              <input
+                type="number"
+                min={0}
+                value={formDone}
+                onChange={(e) => setFormDone(Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          </div>
 
-              <td style={td}>
-                <button
-                  type="button"
-                  style={btn}
-                  onClick={() => {
-                    setEditingId(x.r.id);
-                    setFormLeadId(x.r.lead_id);
-                    setFormStatus(x.r.status ?? "ativo");
-                    setFormStartDate(x.r.start_date);
-                    setFormTotal(x.r.installments_total);
-                    setFormDone(x.r.installments_done);
-                    window.scrollTo({ top: 0, behavior: "smooth" });
-                  }}
-                >
-                  Editar
-                </button>
-              </td>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, gap: 10 }}>
+            <button type="button" style={btnPrimary} onClick={handleSave} disabled={!canSave}>
+              {saving ? "Salvando..." : editingId ? "Salvar alterações" : "Adicionar"}
+            </button>
+          </div>
 
-              <td style={td}>{formatDateBR(x.start)}</td>
+          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>
+            Regra: <b>Fim previsto</b> é o último pagamento (mensal). Você só pode cancelar de{" "}
+            <b>1 dia após</b> o fim até <b>27 dias após</b>.
+          </div>
+        </div>
 
-              <td style={td}>
-                <div style={{ fontWeight: 900 }}>
-                  {Number(x.r.installments_done || 0)} / {Number(x.r.installments_total || 0)}
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                  Pagas / Total
-                </div>
-              </td>
+        {/* filtros */}
+        <div style={{ ...card, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              style={{ ...inputStyle, minWidth: 260 }}
+              placeholder="Buscar (nome, telefone, status...)"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
 
-              <td style={td}>
-                <div style={{ fontWeight: 900 }}>{formatDateBR(x.end)}</div>
-                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                  Último pagamento
-                </div>
-              </td>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="all">Todos os status</option>
+              {statusOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
 
-              <td style={td}>
-                <div style={{ fontWeight: 900 }}>
-                  {formatDateBR(x.cancelFrom)} → {formatDateBR(x.cancelTo)}
-                </div>
-                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>
-                  Janela permitida
-                </div>
-              </td>
+            <button
+              type="button"
+              style={btn}
+              onClick={() => {
+                setQ("");
+                setStatusFilter("all");
+              }}
+            >
+              Limpar
+            </button>
+          </div>
+        </div>
 
-              <td style={td}>
-                <span style={chipStyle(windowChipKind)}>{x.windowLabel}</span>
-                {x.inWindow ? (
-                  <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
-                    {x.lastDays
-                      ? `⚠️ Faltam ${x.daysToClose} dia(s)`
-                      : `Faltam ${x.daysToClose} dia(s) p/ fechar`}
-                  </div>
+        {/* tabela */}
+        <div style={{ ...card, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Cliente</th>
+                  <th style={th}>Status</th>
+                  <th style={th}>Ações</th>
+                  <th style={th}>Início</th>
+                  <th style={th}>Parcelas</th>
+                  <th style={th}>Fim previsto</th>
+                  <th style={th}>Janela permitida</th>
+                  <th style={th}>Situação</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td style={td} colSpan={8}>
+                      <div style={{ opacity: 0.75 }}>
+                        {loading ? "Carregando..." : "Nenhuma recorrência encontrada com esses filtros."}
+                      </div>
+                    </td>
+                  </tr>
                 ) : (
-                  <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
-                    Ainda não é a hora de cancelar
-                  </div>
-                )}
-              </td>
-            </tr>
-          );
-        })
-      )}
-    </tbody>
-  </table>
-</div>     
+                  filtered.map((x) => {
+                    const leadName = x.r.leads?.name ?? "—";
+                    const phone = normalizePhoneReadable(
+                      x.r.leads?.phone_raw ?? null,
+                      x.r.leads?.phone_e164 ?? null
+                    );
 
-      <div style={{ fontSize: 12, opacity: 0.7, marginTop: 12 }}>
-        Se ao salvar aparecer erro, geralmente é: <b>RLS/policy</b> na tabela <b>recorrencias</b> ou <b>lead_id</b> inválido.
+                    const status = (x.r.status ?? "—").toString();
+                    const stLower = status.toLowerCase();
+
+                    let windowChipKind: ChipKind = "muted";
+                    if (x.inWindow) windowChipKind = x.lastDays ? "danger" : "warn";
+
+                    return (
+                      <tr key={x.r.id}>
+                        <td style={td}>
+                          <div style={{ fontWeight: 900 }}>{leadName}</div>
+                          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>{phone || "—"}</div>
+                        </td>
+
+                        <td style={td}>
+                          <span style={chipStyle(statusKind(stLower) as ChipKind)}>{status}</span>
+                        </td>
+
+                        <td style={td}>
+                          <button
+                            type="button"
+                            style={btn}
+                            onClick={() => startEdit(x.r)}
+                          >
+                            Editar
+                          </button>
+                        </td>
+
+                        <td style={td}>{formatDateBR(x.start)}</td>
+
+                        <td style={td}>
+                          <div style={{ fontWeight: 900 }}>
+                            {Number(x.r.installments_done || 0)} / {Number(x.r.installments_total || 0)}
+                          </div>
+                          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Pagas / Total</div>
+                        </td>
+
+                        <td style={td}>
+                          <div style={{ fontWeight: 900 }}>{formatDateBR(x.end)}</div>
+                          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Último pagamento</div>
+                        </td>
+
+                        <td style={td}>
+                          <div style={{ fontWeight: 900 }}>
+                            {formatDateBR(x.cancelFrom)} → {formatDateBR(x.cancelTo)}
+                          </div>
+                          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Janela permitida</div>
+                        </td>
+
+                        <td style={td}>
+                          <span style={chipStyle(windowChipKind)}>{x.windowLabel}</span>
+                          {x.inWindow ? (
+                            <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
+                              {x.lastDays
+                                ? `⚠️ Faltam ${x.daysToClose} dia(s)`
+                                : `Faltam ${x.daysToClose} dia(s) p/ fechar`}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
+                              {new Date() < x.cancelFrom
+                                ? `Abre em ${Math.max(0, x.daysToClose)} dia(s)`
+                                : "Fora do período permitido"}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 12 }}>
+            Se ao salvar aparecer erro, geralmente é: <b>RLS/policy</b> na tabela <b>recorrencias</b>.
+          </div>
+        </div>
       </div>
     </div>
   );
