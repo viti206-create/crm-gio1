@@ -519,107 +519,113 @@ export default function RecorrenciasPage() {
       </div>
 
       {/* TABELA */}
-      <div style={tableWrap}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={th}>Cliente</th>
-              <th style={th}>Status</th>
-              <th style={th}>Ações</th>
-              <th style={th}>Início</th>
-              <th style={th}>Parcelas</th>
-              <th style={th}>Fim previsto</th>
-              <th style={th}>Janela p/ cancelar</th>
-              <th style={th}>Situação</th>
-            </tr>
-          </thead>
 
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr>
-                <td style={td} colSpan={8}>
-                  <div style={{ opacity: 0.75 }}>
-                    {loading ? "Carregando..." : "Nenhuma recorrência encontrada com esses filtros."}
+<div style={{ overflowX: "auto" }}>
+  <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+    <thead>
+      <tr>
+        <th style={th}>Cliente</th>
+        <th style={th}>Status</th>
+        <th style={th}>Ações</th>
+        <th style={th}>Início</th>
+        <th style={th}>Parcelas</th>
+        <th style={th}>Fim previsto</th>
+        <th style={th}>Janela permitida</th>
+        <th style={th}>Situação</th>
+      </tr>
+    </thead>
+
+    <tbody>
+      {filtered.length === 0 ? (
+        <tr>
+          <td style={td} colSpan={8}>
+            <div style={{ opacity: 0.75 }}>
+              {loading ? "Carregando..." : "Nenhuma recorrência encontrada com esses filtros."}
+            </div>
+          </td>
+        </tr>
+      ) : (
+        filtered.map((x) => {
+          const leadName = x.r.leads?.name ?? "—";
+          const phone = normalizePhoneReadable(
+            x.r.leads?.phone_raw ?? null,
+            x.r.leads?.phone_e164 ?? ""
+          );
+
+          const status = (x.r.status ?? "—").toString();
+          const stLower = status.toLowerCase();
+
+          let windowChipKind: "muted" | "warn" | "danger" = "muted";
+          if (x.inWindow) windowChipKind = x.lastDays ? "danger" : "warn";
+
+          return (
+            <tr key={x.r.id}>
+              <td style={td}>
+                <div style={{ fontWeight: 900 }}>{leadName}</div>
+                <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>{phone || "—"}</div>
+              </td>
+
+              <td style={td}>
+                <span style={chipStyle(stLower === "ativo" ? "primary" : "muted")}>{status}</span>
+              </td>
+
+              <td style={td}>
+                <button
+                  style={btn}
+                  onClick={() => {
+                    setEditingId(x.r.id);
+                    setFormLeadId(x.r.lead_id);
+                    setFormStatus(x.r.status ?? "ativo");
+                    setFormStartDate(x.r.start_date);
+                    setFormTotal(x.r.installments_total);
+                    setFormDone(x.r.installments_done);
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }}
+                >
+                  Editar
+                </button>
+              </td>
+
+              <td style={td}>{formatDateBR(x.start)}</td>
+
+              <td style={td}>
+                <div style={{ fontWeight: 900 }}>
+                  {Number(x.r.installments_done || 0)} / {Number(x.r.installments_total || 0)}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Pagas / Total</div>
+              </td>
+
+              <td style={td}>
+                <div style={{ fontWeight: 900 }}>{formatDateBR(x.end)}</div>
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Último pagamento</div>
+              </td>
+
+              <td style={td}>
+                <div style={{ fontWeight: 900 }}>
+                  {formatDateBR(x.cancelFrom)} → {formatDateBR(x.cancelTo)}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Janela permitida</div>
+              </td>
+
+              <td style={td}>
+                <span style={chipStyle(windowChipKind)}>{x.windowLabel}</span>
+                {x.inWindow ? (
+                  <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
+                    {x.lastDays ? `⚠️ Faltam ${x.daysToClose} dia(s)` : `Faltam ${x.daysToClose} dia(s) p/ fechar`}
                   </div>
-                </td>
-              </tr>
-            ) : (
-              filtered.map((x) => {
-                const leadName = x.r.leads?.name ?? "—";
-                const phone = normalizePhoneReadable(x.r.leads?.phone_raw ?? null, x.r.leads?.phone_e164 ?? null);
-
-                const status = (x.r.status ?? "—").toString();
-                const stLower = status.toLowerCase();
-
-                let windowChipKind: "muted" | "warn" | "danger" = "muted";
-                if (x.inWindow) windowChipKind = x.lastDays ? "danger" : "warn";
-
-                return (
-                  <tr key={x.r.id}>
-                    <td style={td}>
-                      <div style={{ fontWeight: 900 }}>{leadName}</div>
-                      <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>{phone || "—"}</div>
-                    </td>
-
-                    <td style={td}>
-                      <span style={chipStyle(stLower === "ativo" ? "primary" : "muted")}>{status}</span>
-                    </td>
-
-                    <td style={td}>
-                      <button
-                        style={btn}
-                        onClick={() => {
-                          setEditingId(x.r.id);
-                          setFormLeadId(x.r.lead_id);
-                          setFormStatus(x.r.status ?? "ativo");
-                          setFormStartDate(x.r.start_date);
-                          setFormTotal(x.r.installments_total);
-                          setFormDone(x.r.installments_done);
-                          window.scrollTo({ top: 0, behavior: "smooth" });
-                         }}
-                      >
-                         Editar
-                      </button>
-                   </td>
-
-                    <td style={td}>{formatDateBR(x.start)}</td>
-
-                    <td style={td}>
-                      <div style={{ fontWeight: 900 }}>
-                        {Number(x.r.installments_done || 0)} / {Number(x.r.installments_total || 0)}
-                      </div>
-                      <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Pagas / Total</div>
-                    </td>
-
-                    <td style={td}>
-                      <div style={{ fontWeight: 900 }}>{formatDateBR(x.end)}</div>
-                      <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Último pagamento</div>
-                    </td>
-
-                    <td style={td}>
-                      <div style={{ fontWeight: 900 }}>
-                        {formatDateBR(x.cancelFrom)} → {formatDateBR(x.cancelTo)}
-                      </div>
-                      <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Janela permitida</div>
-                    </td>
-
-                    <td style={td}>
-                      <span style={chipStyle(windowChipKind)}>{x.windowLabel}</span>
-                      {x.inWindow ? (
-                        <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
-                          {x.lastDays ? `⚠️ Faltam ${x.daysToClose} dia(s)` : `Faltam ${x.daysToClose} dia(s) p/ fechar`}
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>Ainda não é a hora de cancelar</div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                ) : (
+                  <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
+                    Ainda não é a hora de cancelar
+                  </div>
+                )}
+              </td>
+            </tr>
+          );
+        })
+      )}
+    </tbody>
+  </table>
+</div>      
 
       <div style={{ fontSize: 12, opacity: 0.7, marginTop: 12 }}>
         Se ao salvar aparecer erro, geralmente é: <b>RLS/policy</b> na tabela <b>recorrencias</b> ou <b>lead_id</b> inválido.
