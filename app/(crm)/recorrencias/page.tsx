@@ -41,6 +41,7 @@ function chipStyle(kind: ChipKind = "muted"): React.CSSProperties {
   }
 
   return {
+    
     fontSize: 12,
     padding: "3px 8px",
     borderRadius: 999,
@@ -608,11 +609,18 @@ export default function RecorrenciasPage() {
 
                         <td style={td}>
                           <button
-                            type="button"
-                            style={btn}
-                            onClick={() => startEdit(x.r)}
+                             style={btn}
+                             onClick={() => {
+                               setEditingId(x.r.id);
+                               setFormLeadId(x.r.lead_id);
+                               setFormStatus(x.r.status ?? "ativo");
+                               setFormStartDate(x.r.start_date);
+                               setFormTotal(x.r.installments_total);
+                               setFormDone(x.r.installments_done);
+                               window.scrollTo({ top: 0, behavior: "smooth" });
+                             }}
                           >
-                            Editar
+                             Editar
                           </button>
                         </td>
 
