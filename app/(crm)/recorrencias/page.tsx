@@ -525,6 +525,7 @@ export default function RecorrenciasPage() {
             <tr>
               <th style={th}>Cliente</th>
               <th style={th}>Status</th>
+              <th style={th}>Ações</th>
               <th style={th}>Início</th>
               <th style={th}>Parcelas</th>
               <th style={th}>Fim previsto</th>
@@ -536,7 +537,7 @@ export default function RecorrenciasPage() {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td style={td} colSpan={7}>
+                <td style={td} colSpan={8}>
                   <div style={{ opacity: 0.75 }}>
                     {loading ? "Carregando..." : "Nenhuma recorrência encontrada com esses filtros."}
                   </div>
