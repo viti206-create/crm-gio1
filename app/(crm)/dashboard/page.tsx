@@ -1098,6 +1098,9 @@ export default function DashboardPage() {
           <button onClick={() => router.push("/leads")} style={smallBtn}>
             Contatos
           </button>
+          <button onClick={() => router.push("/recorrencias")} style={smallBtn}>
+            Recorrências
+          </button>
           <button onClick={() => router.push("/leads/new")} style={smallBtn}>
             + Novo lead
           </button>
