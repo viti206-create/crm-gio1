@@ -684,11 +684,7 @@ export default function NewLeadPage() {
                 placeholder="Ex: (15) 9xxxx-xxxx"
                 inputMode="tel"
               />
-              <div style={{ fontSize: 12, opacity: 0.75 }}>
-                E.164:{" "}
-                <span style={{ fontWeight: 900 }}>{toE164BR(phoneRaw) || "—"}</span>
-              </div>
-            </div>
+             </div>
 
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
               <div style={{ display: "grid", gap: 10 }}>
@@ -721,10 +717,7 @@ export default function NewLeadPage() {
                 options={stageOptions}
                 disabled={loadingStages || stageOptions.length === 0}
               />
-              <div style={{ fontSize: 12, opacity: 0.7 }}>
-                Dica: por padrão, escolhemos a primeira etapa por posição.
               </div>
-            </div>
 
             <div
               style={{

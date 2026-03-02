@@ -183,10 +183,7 @@ export default function LoginInner() {
           {loading ? "Entrando..." : "Entrar"}
         </button>
 
-        <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-          Dica: use o usuário que você criou no Supabase Auth.
-        </div>
-      </form>
+        </form>
     </div>
   );
 }
