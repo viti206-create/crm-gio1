@@ -125,6 +125,8 @@ export default function RecorrenciasPage() {
   const [saving, setSaving] = useState(false);
   const topRef = useRef<HTMLDivElement | null>(null);
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   async function fetchAll() {
     setLoading(true);
 
@@ -250,6 +252,28 @@ export default function RecorrenciasPage() {
     if (done > total) return false;
     return true;
   }, [saving, formLeadId, formStartDate, formStatus, formTotal, formDone]);
+
+async function handleDelete(id: string) {
+  const ok = window.confirm("Tem certeza que deseja excluir essa recorrência?\n\nEssa ação não pode ser desfeita.");
+  if (!ok) return;
+
+  setDeletingId(id);
+
+  // remove da tela primeiro (sensação de rapidez)
+  setRows((prev) => prev.filter((r) => r.id !== id)); // <- se o seu estado não se chama setRows, veja o ajuste abaixo
+
+  const { error } = await supabase.from("recorrencias").delete().eq("id", id);
+
+  setDeletingId(null);
+
+  if (error) {
+    console.error("delete recorrencia error:", error);
+    alert(error.message ?? "Não consegui excluir (RLS/policy?)");
+
+    // se falhar, recarrega tudo pra voltar ao normal
+    fetchAll();
+  }
+}
 
   async function handleSave() {
     if (!canSave) return;
@@ -604,25 +628,41 @@ export default function RecorrenciasPage() {
                         </td>
 
                         <td style={td}>
-                          <span style={chipStyle(statusKind(stLower) as ChipKind)}>{status}</span>
+                          <span style={chipStyle(stLower === "ativo" ? "primary" : "muted")}>{status}</span>
                         </td>
 
+                        {/* AÇÕES */}
                         <td style={td}>
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                           <button
-                             style={btn}
-                             onClick={() => {
-                               setEditingId(x.r.id);
-                               setFormLeadId(x.r.lead_id);
-                               setFormStatus(x.r.status ?? "ativo");
-                               setFormStartDate(x.r.start_date);
-                               setFormTotal(x.r.installments_total);
-                               setFormDone(x.r.installments_done);
-                               window.scrollTo({ top: 0, behavior: "smooth" });
-                             }}
+                            style={btn}
+                            onClick={() => {
+                              setEditingId(x.r.id);
+                              setFormLeadId(x.r.lead_id);
+                              setFormStatus((x.r.status ?? "ativo").toString());
+                              setFormStartDate(x.r.start_date);
+                              setFormTotal(Number(x.r.installments_total ?? 0));
+                              setFormDone(Number(x.r.installments_done ?? 0));
+                              window.scrollTo({ top: 0, behavior: "smooth" });
+                            }}
                           >
-                             Editar
+                            Editar
                           </button>
-                        </td>
+
+                          <button
+                            style={{
+                              ...btn,
+                              border: "1px solid rgba(255,120,160,0.35)",
+                              background: "rgba(255,120,160,0.10)",
+                            }}
+                            onClick={() => handleDelete(x.r.id)}
+                            disabled={deletingId === x.r.id}
+                            title="Excluir recorrência"
+                          >
+                            {deletingId === x.r.id ? "Excluindo..." : "Excluir"}
+                          </button>
+                        </div>
+                      </td>
 
                         <td style={td}>{formatDateBR(x.start)}</td>
 
@@ -655,9 +695,7 @@ export default function RecorrenciasPage() {
                             </div>
                           ) : (
                             <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
-                              {new Date() < x.cancelFrom
-                                ? `Abre em ${Math.max(0, x.daysToClose)} dia(s)`
-                                : "Fora do período permitido"}
+                              Ainda não é a hora de cancelar
                             </div>
                           )}
                         </td>
