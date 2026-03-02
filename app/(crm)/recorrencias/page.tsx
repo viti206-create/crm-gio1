@@ -543,11 +543,7 @@ async function handleDelete(id: string) {
             </button>
           </div>
 
-          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 10 }}>
-            Regra: <b>Fim previsto</b> é o último pagamento (mensal). Você só pode cancelar de{" "}
-            <b>1 dia após</b> o fim até <b>27 dias após</b>.
-          </div>
-        </div>
+           </div>
 
         {/* filtros */}
         <div style={{ ...card, marginBottom: 14 }}>
@@ -712,10 +708,7 @@ async function handleDelete(id: string) {
             </table>
           </div>
 
-          <div style={{ fontSize: 12, opacity: 0.7, marginTop: 12 }}>
-            Se ao salvar aparecer erro, geralmente é: <b>RLS/policy</b> na tabela <b>recorrencias</b>.
           </div>
-        </div>
       </div>
     </div>
   );
