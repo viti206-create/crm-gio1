@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useRouter } from "next/navigation";
 
 type LeadRow = {
   id: string;
@@ -103,6 +104,7 @@ function statusKind(status: string) {
 }
 
 export default function RecorrenciasPage() {
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
 
   const [leads, setLeads] = useState<LeadRow[]>([]);
