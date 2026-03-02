@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Stage = {
@@ -65,8 +64,6 @@ function formatWhen(iso: string) {
 }
 
 export default function LeadsListPage() {
-  const router = useRouter();
-
   const [stages, setStages] = useState<Stage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -205,7 +202,6 @@ export default function LeadsListPage() {
             ) : (
               <span style={chipStyle("muted")}>Total: {filtered.length}</span>
             )}
-            <span style={chipStyle("muted")}>Dica: clique em “Abrir no Kanban” para abrir o modal direto</span>
           </div>
         </div>
 
@@ -213,14 +209,6 @@ export default function LeadsListPage() {
           <Link href="/leads/new" style={btnPrimary}>
             + Novo lead
           </Link>
-
-          <button onClick={() => router.push("/dashboard")} style={btn}>
-            Ir para Kanban
-          </button>
-
-          <button onClick={fetchAll} style={btn}>
-            Atualizar
-          </button>
         </div>
       </div>
 
@@ -289,9 +277,7 @@ export default function LeadsListPage() {
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                   <div style={{ display: "grid", gap: 6 }}>
                     <div style={{ fontWeight: 950, fontSize: 15 }}>{l.name}</div>
-                    <div style={{ fontSize: 12, opacity: 0.85 }}>
-                      {l.phone_raw ?? l.phone_e164}
-                    </div>
+                    <div style={{ fontSize: 12, opacity: 0.85 }}>{l.phone_raw ?? l.phone_e164}</div>
 
                     <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                       <span style={chipStyle("primary")}>{stageName}</span>
@@ -306,15 +292,7 @@ export default function LeadsListPage() {
                   </div>
 
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
-                    <button
-                      style={btnPrimary}
-                      onClick={() => router.push(`/dashboard?lead=${encodeURIComponent(l.id)}`)}
-                      title="Abre o modal do lead direto no Kanban"
-                    >
-                      Abrir no Kanban
-                    </button>
-
-                    <a style={btn} href={wa} target="_blank" rel="noreferrer">
+                    <a style={btnPrimary} href={wa} target="_blank" rel="noreferrer">
                       WhatsApp
                     </a>
                   </div>

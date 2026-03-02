@@ -95,6 +95,7 @@ export default function HomePage() {
 
   useEffect(() => {
     fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function fetchAll() {
@@ -140,7 +141,7 @@ export default function HomePage() {
   }, [leads, finalStageIds]);
 
   // Agenda
-  const now = useMemo(() => new Date(), [loading]); // “refresca” quando carregar
+  const now = useMemo(() => new Date(), [loading]);
   const todayStart = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -266,16 +267,6 @@ export default function HomePage() {
     whiteSpace: "nowrap",
   };
 
-  const smallLink: React.CSSProperties = {
-    textDecoration: "none",
-    color: "rgba(255,255,255,0.85)",
-    fontWeight: 800,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.05)",
-    padding: "8px 10px",
-    borderRadius: 12,
-  };
-
   return (
     <div>
       <div style={pageTitle}>
@@ -285,15 +276,6 @@ export default function HomePage() {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <span style={chipStyle("muted")}>Leads: {totalLeads}</span>
         <span style={chipStyle("primary")}>Em progresso: {inProgress}</span>
-        <Link href="/dashboard" style={smallLink}>
-          Ir para o Kanban
-        </Link>
-        <Link href="/leads/new" style={smallLink}>
-          + Novo lead
-        </Link>
-        <Link href="/leads" style={smallLink}>
-          Contatos
-        </Link>
       </div>
 
       {loading ? <div style={soft}>Carregando…</div> : null}

@@ -1095,13 +1095,7 @@ export default function DashboardPage() {
 
         {/* BOTÕES */}
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button onClick={() => router.push("/leads")} style={smallBtn}>
-            Contatos
-          </button>
-          <button onClick={() => router.push("/recorrencias")} style={smallBtn}>
-            Recorrências
-          </button>
-          <button onClick={() => router.push("/leads/new")} style={smallBtn}>
+         <button onClick={() => router.push("/leads/new")} style={smallBtn}>
             + Novo lead
           </button>
         </div>

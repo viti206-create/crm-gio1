@@ -401,6 +401,9 @@ async function handleDelete(id: string) {
 
   return (
     <div style={page}>
+      <button onClick={() => router.push("/leads/new")} style={btnPrimary}>
+       + Novo lead
+      </button>
       <div
         style={{
           background:

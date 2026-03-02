@@ -1,105 +1,92 @@
 "use client";
 
 import Link from "next/link";
-import Image from "next/image";
 import { usePathname } from "next/navigation";
+import React from "react";
 
 export default function CrmShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
 
-  const headerStyle: React.CSSProperties = {
+  const header: React.CSSProperties = {
     display: "flex",
-    justifyContent: "space-between",
     alignItems: "center",
-    padding: "16px 24px",
-    borderBottom: "1px solid rgba(255,255,255,0.08)",
+    justifyContent: "space-between",
+    padding: "18px 18px",
+    borderBottom: "1px solid rgba(255,255,255,0.10)",
     background:
-      "linear-gradient(180deg, rgba(20,20,28,0.98) 0%, rgba(12,12,18,0.96) 100%)",
-    backdropFilter: "blur(8px)",
+      "radial-gradient(1200px 600px at 30% 0%, rgba(140,80,255,0.25) 0%, rgba(10,10,16,0.92) 55%, rgba(10,10,16,0.98) 100%)",
   };
 
-  const navBtn: React.CSSProperties = {
-    padding: "8px 14px",
-    borderRadius: 12,
+  const left: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    minWidth: 260,
+  };
+
+  const right: React.CSSProperties = {
+    display: "flex",
+    gap: 10,
+    flexWrap: "wrap",
+    justifyContent: "flex-end",
+  };
+
+  const btnBase: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "10px 14px",
+    borderRadius: 14,
+    fontWeight: 900,
     textDecoration: "none",
-    fontWeight: 800,
-    fontSize: 14,
-    border: "1px solid rgba(255,255,255,0.12)",
-    background: "rgba(255,255,255,0.05)",
-    color: "white",
+    border: "1px solid rgba(255,255,255,0.14)",
+    background: "rgba(255,255,255,0.06)",
+    color: "rgba(255,255,255,0.92)",
   };
 
-  const navBtnPrimary: React.CSSProperties = {
-    ...navBtn,
+  const btnActive: React.CSSProperties = {
+    ...btnBase,
     border: "1px solid rgba(180,120,255,0.35)",
     background:
-      "linear-gradient(180deg, rgba(180,120,255,0.20) 0%, rgba(180,120,255,0.08) 100%)",
+      "linear-gradient(180deg, rgba(180,120,255,0.22) 0%, rgba(180,120,255,0.10) 100%)",
   };
 
+  const isActive = (href: string) => {
+    if (href === "/home") return pathname === "/home";
+    if (href === "/dashboard") return pathname.startsWith("/dashboard");
+    if (href === "/leads") return pathname.startsWith("/leads");
+    if (href === "/recorrencias") return pathname.startsWith("/recorrencias");
+    return false;
+  };
+
+  const NavBtn = ({ href, label }: { href: string; label: string }) => (
+    <Link href={href} style={isActive(href) ? btnActive : btnBase}>
+      {label}
+    </Link>
+  );
+
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background:
-          "radial-gradient(circle at top left, rgba(120,0,255,0.20), transparent 50%), #0b0b10",
-        color: "white",
-      }}
-    >
-      <header style={headerStyle}>
-        {/* LOGO + IDENTIDADE */}
-        <Link
-          href="/home"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            textDecoration: "none",
-            color: "white",
-          }}
-        >
-          <Image
-            src="/logo-gio.png"
-            alt="GIO Estética Avançada"
-            width={100}
-            height={100}
-            priority
-            style={{ borderRadius: 24 }}
-          />
-
-          <div style={{ lineHeight: 1.1 }}>
-            <div style={{ fontWeight: 950, fontSize: 16 }}>CRM GIO</div>
-            <div style={{ fontSize: 12, opacity: 0.75 }}>
-              Boituva • Unidade
+    <div>
+      <div style={header}>
+        <div style={left}>
+          {/* Aqui fica seu logo atual (se você já tem um componente/IMG, mantenha). */}
+          <div style={{ display: "grid", gap: 2 }}>
+            <div style={{ fontWeight: 950, fontSize: 18, letterSpacing: 0.2 }}>
+              CRM GIO
             </div>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>Unidade • Boituva</div>
           </div>
-        </Link>
-
-        {/* MENU */}
-        <div style={{ display: "flex", gap: 10 }}>
-          <Link
-            href="/home"
-            style={pathname === "/home" ? navBtnPrimary : navBtn}
-          >
-            Home
-          </Link>
-
-          <Link
-            href="/dashboard"
-            style={pathname === "/dashboard" ? navBtnPrimary : navBtn}
-          >
-            Kanban
-          </Link>
-
-          <Link
-            href="/leads/new"
-            style={pathname === "/leads/new" ? navBtnPrimary : navBtn}
-          >
-            + Novo Lead
-          </Link>
         </div>
-      </header>
 
-      <main style={{ padding: 24 }}>{children}</main>
+        <div style={right}>
+          <NavBtn href="/home" label="Home" />
+          <NavBtn href="/dashboard" label="Kanban" />
+          <NavBtn href="/leads" label="Contatos" />
+          <NavBtn href="/recorrencias" label="Recorrências" />
+        </div>
+      </div>
+
+      <div style={{ padding: 18 }}>{children}</div>
     </div>
   );
 }
