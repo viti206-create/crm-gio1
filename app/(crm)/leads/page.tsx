@@ -216,7 +216,7 @@ export default function LeadsListPage() {
           value={stageFilter}
           onChange={setStageFilter}
           placeholder="Todas as etapas"
-          searchable
+          searchable={false}
           minWidth={220}
           options={[
             { value: "all", label: "Todas as etapas" },
@@ -231,7 +231,7 @@ export default function LeadsListPage() {
           value={sourceFilter}
           onChange={setSourceFilter}
           placeholder="Todas as origens"
-          searchable
+          searchable={false}
           minWidth={220}
           options={[
             { value: "all", label: "Todas as origens" },
@@ -246,7 +246,7 @@ export default function LeadsListPage() {
           value={interestFilter}
           onChange={setInterestFilter}
           placeholder="Todos os interesses"
-          searchable
+          searchable={false}
           minWidth={220}
           options={[
             { value: "all", label: "Todos os interesses" },
