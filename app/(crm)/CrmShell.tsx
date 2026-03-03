@@ -70,6 +70,11 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
       <div style={header}>
         <div style={left}>
           {/* Aqui fica seu logo atual (se você já tem um componente/IMG, mantenha). */}
+          <img
+            src="/logo-gio.png"
+            alt="GIO"
+            style={{ height: 80 }}
+          />
           <div style={{ display: "grid", gap: 2 }}>
             <div style={{ fontWeight: 950, fontSize: 18, letterSpacing: 0.2 }}>
               CRM GIO
