@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import SelectDark from "../_components/SelectDark";
 import {
   DndContext,
   DragEndEvent,
@@ -1048,36 +1049,53 @@ export default function DashboardPage() {
               onChange={(e) => setQ(e.target.value)}
             />
 
-            <select style={selectStyle} value={stageFilter} onChange={(e) => setStageFilter(e.target.value)}>
-              <option value="all">Todas as etapas</option>
-              {stages.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
+            <SelectDark
+              value={stageFilter}
+              onChange={setStageFilter}
+              placeholder="Todas as etapas"
+              searchable
+              searchPlaceholder="Buscar etapa..."
+              minWidth={220}
+              options={[
+                { value: "all", label: "Todas as etapas" },
+                ...stages.map((s) => ({
+                  value: s.id,
+                  label: s.name,
+                })),
+              ]}
+            />
 
-            <select style={selectStyle} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)}>
-              <option value="all">Todas as origens</option>
-              {sourceOptions.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
+            <SelectDark
+              value={sourceFilter}
+              onChange={setSourceFilter}
+              placeholder="Todas as origens"
+              searchable
+              searchPlaceholder="Buscar origem..."
+              minWidth={220}
+              options={[
+                { value: "all", label: "Todas as origens" },
+                ...sourceOptions.map((s) => ({
+                  value: s,
+                  label: s,
+                })),
+              ]}
+            />
 
-            <select
-              style={selectStyle}
+            <SelectDark
               value={interestFilter}
-              onChange={(e) => setInterestFilter(e.target.value)}
-            >
-              <option value="all">Todos os interesses</option>
-              {interestOptions.map((i) => (
-                <option key={i} value={i}>
-                  {i}
-                </option>
-              ))}
-            </select>
+              onChange={setInterestFilter}
+              placeholder="Todos os interesses"
+              searchable
+              searchPlaceholder="Buscar interesse..."
+              minWidth={220}
+              options={[
+                { value: "all", label: "Todos os interesses" },
+                ...interestOptions.map((i) => ({
+                  value: i,
+                  label: i,
+                })),
+              ]}
+            />
 
             <button
               onClick={() => {

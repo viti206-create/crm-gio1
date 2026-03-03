@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
+import SelectDark from "../_components/SelectDark";
 
 type LeadRow = {
   id: string;
@@ -440,18 +441,7 @@ async function handleDelete(id: string) {
               <span style={chipStyle("warn")}>Na janela: {summary.inWindow}</span>
               <span style={chipStyle("danger")}>Últimos dias: {summary.lastDays}</span>
             </div>
-          </div>
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              style={btn}
-              onClick={() => fetchAll()}
-              disabled={loading}
-            >
-              {loading ? "Atualizando..." : "Atualizar"}
-            </button>
-
+                    
             {editingId ? (
               <button type="button" style={btnDanger} onClick={resetFormToCreate}>
                 Cancelar edição
@@ -476,32 +466,35 @@ async function handleDelete(id: string) {
           >
             <div style={{ display: "grid", gap: 6 }}>
               <div style={label}>Cliente *</div>
-              <select
+              <SelectDark
                 value={formLeadId}
-                onChange={(e) => setFormLeadId(e.target.value)}
-                style={selectStyle}
-              >
-                <option value="">Selecione...</option>
-                {leads.map((l) => (
-                  <option key={l.id} value={l.id}>
-                    {l.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setFormLeadId}
+                placeholder="Selecione..."
+                options={leads.map((l) => ({
+                  value: l.id,
+                  label: l.name,
+                  meta: l.phone_raw ?? l.phone_e164 ?? "",
+                }))}
+                searchable
+                searchPlaceholder="Buscar cliente..."
+                minWidth={300}
+              />
             </div>
 
             <div style={{ display: "grid", gap: 6 }}>
               <div style={label}>Status *</div>
-              <select
+              <SelectDark
                 value={formStatus}
-                onChange={(e) => setFormStatus(e.target.value)}
-                style={selectStyle}
-              >
-                <option value="ativo">Ativo</option>
-                <option value="pausado">Pausado</option>
-                <option value="cancelado">Cancelado</option>
-                <option value="encerrado">Encerrado</option>
-              </select>
+                onChange={setFormStatus}
+                options={[
+                  { value: "ativo", label: "Ativo" },
+                  { value: "pausado", label: "Pausado" },
+                  { value: "cancelado", label: "Cancelado" },
+                  { value: "encerrado", label: "Encerrado" },
+                ]}
+                searchable={false}
+                minWidth={180}
+              />
             </div>
 
             <div style={{ display: "grid", gap: 6 }}>
