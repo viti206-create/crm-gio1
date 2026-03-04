@@ -129,12 +129,24 @@ function formatWhen(iso: string) {
 
 function prettyActivityLabel(type: string) {
   const t = (type || "").toLowerCase();
-  if (t === "created") return "Lead criado";
-  if (t === "stage_changed") return "Mudança de etapa";
-  if (t === "next_action_set") return "Próxima ação definida";
-  if (t === "note") return "Observação";
-  if (t === "updated") return "Atualização";
-  return type;
+  const map: Record<string, string> = {
+    created: "Criado",
+    updated: "Atualizado",
+    stage_changed: "Etapa alterada",
+    next_action_set: "Próxima ação definida",
+    appointment_set: "Agendamento definido",
+    note_added: "Nota adicionada",
+
+    contact_whatsapp: "Contato (WhatsApp)",
+    contact_call: "Contato (Ligação)",
+    contact_instagram: "Contato (Instagram)",
+
+    proposal_sent: "Proposta enviada",
+    sale_closed: "Venda fechada",
+    lost_set: "Marcado como perdido",
+  };
+
+  return map[t] ?? type;
 }
 
 function ActivityRow({
