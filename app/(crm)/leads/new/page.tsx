@@ -337,9 +337,15 @@ export default function NewLeadPage() {
 
   const [name, setName] = useState("");
   const [phoneRaw, setPhoneRaw] = useState("");
-  const [source, setSource] = useState("");
+
+  const [source, setSource] = useState<string>("instagram");
   const [interest, setInterest] = useState("");
   const [stageId, setStageId] = useState<string>("");
+
+  // NOVOS CAMPOS
+  const [campaign, setCampaign] = useState<string>("");
+  const [profiles, setProfiles] = useState<Array<{ id: string; name: string | null }>>([]);
+  const [responsibleId, setResponsibleId] = useState<string>(""); // uuid (opcional)
 
   const [nextActionEnabled, setNextActionEnabled] = useState(false);
   const [nextActionType, setNextActionType] = useState<string>("whatsapp");
@@ -374,6 +380,16 @@ export default function NewLeadPage() {
     [stages]
   );
 
+  const responsibleOptions = useMemo(() => {
+    const opts = profiles
+      .map((p) => ({
+        value: p.id,
+        label: (p.name ?? "").trim() ? (p.name as string) : p.id,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+    return [{ value: "", label: "— Não definido —" }, ...opts];
+  }, [profiles]);
+
   function showToast(
     text: string,
     opts?: {
@@ -403,11 +419,19 @@ export default function NewLeadPage() {
     setToast(null);
   }
 
-  useEffect(() => {
-    fetchStages();
-    setTimeout(() => nameRef.current?.focus(), 50);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  async function fetchProfiles() {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, name")
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("profiles error:", error);
+      return;
+    }
+
+    setProfiles((data ?? []) as any);
+  }
 
   async function fetchStages() {
     setLoadingStages(true);
@@ -434,14 +458,26 @@ export default function NewLeadPage() {
     if (!stageId && rows.length > 0) setStageId(rows[0].id);
   }
 
+  useEffect(() => {
+    fetchStages();
+    fetchProfiles();
+    setTimeout(() => nameRef.current?.focus(), 50);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function resetForm() {
     setName("");
     setPhoneRaw("");
-    setSource("");
+    setSource("instagram"); // IMPORTANTE: não deixar vazio, pq é obrigatório
     setInterest("");
+    setStageId((prev) => prev); // mantém o stage atual (ou você pode resetar pro primeiro)
+    setCampaign("");
+    setResponsibleId("");
+
     setNextActionEnabled(false);
     setNextActionType("whatsapp");
     setNextActionAt("");
+
     setTimeout(() => nameRef.current?.focus(), 50);
   }
 
@@ -484,6 +520,9 @@ export default function NewLeadPage() {
     const cleanPhoneRaw = phoneRaw.trim();
     const phoneE164 = toE164BR(cleanPhoneRaw);
 
+    const cleanCampaign = campaign.trim();
+    const cleanResponsibleId = responsibleId.trim();
+
     if (!cleanName)
       return showToast("Preencha o nome.", { variant: "error", title: "Campos obrigatórios" });
     if (!cleanPhoneRaw)
@@ -522,6 +561,11 @@ export default function NewLeadPage() {
       source: cleanSource,
       interest: cleanInterest,
       stage_id: stageId,
+
+      // NOVOS CAMPOS (batem com suas colunas reais)
+      campaign: cleanCampaign ? cleanCampaign : null,
+      responsible_id: cleanResponsibleId ? cleanResponsibleId : null,
+
       ...nextActionPayload,
     });
 
@@ -684,7 +728,7 @@ export default function NewLeadPage() {
                 placeholder="Ex: (15) 9xxxx-xxxx"
                 inputMode="tel"
               />
-             </div>
+            </div>
 
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
               <div style={{ display: "grid", gap: 10 }}>
@@ -708,6 +752,30 @@ export default function NewLeadPage() {
               </div>
             </div>
 
+            {/* NOVOS CAMPOS (campanha + responsável) */}
+            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={labelStyle}>Campanha (opcional)</div>
+                <input
+                  style={inputStyle}
+                  value={campaign}
+                  onChange={(e) => setCampaign(e.target.value)}
+                  placeholder="Ex: MARÇO - LASER PERNAS"
+                />
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={labelStyle}>Responsável (opcional)</div>
+                <Select
+                  value={responsibleId}
+                  onChange={setResponsibleId}
+                  placeholder="Selecione…"
+                  options={responsibleOptions}
+                  disabled={profiles.length === 0}
+                />
+              </div>
+            </div>
+
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>Etapa inicial *</div>
               <Select
@@ -717,7 +785,7 @@ export default function NewLeadPage() {
                 options={stageOptions}
                 disabled={loadingStages || stageOptions.length === 0}
               />
-              </div>
+            </div>
 
             <div
               style={{

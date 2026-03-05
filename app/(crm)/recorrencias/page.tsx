@@ -43,7 +43,6 @@ function chipStyle(kind: ChipKind = "muted"): React.CSSProperties {
   }
 
   return {
-    
     fontSize: 12,
     padding: "3px 8px",
     borderRadius: 999,
@@ -95,15 +94,6 @@ function normalizePhoneReadable(raw: string | null, e164: string | null) {
   return base.trim();
 }
 
-function statusKind(status: string) {
-  const s = (status || "").toLowerCase();
-  if (s === "ativo") return "primary";
-  if (s.includes("paus")) return "warn";
-  if (s.includes("cancel")) return "danger";
-  if (s.includes("encerr")) return "danger";
-  return "muted";
-}
-
 export default function RecorrenciasPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -138,9 +128,16 @@ export default function RecorrenciasPage() {
       .select("id,name,phone_raw,phone_e164")
       .order("name", { ascending: true });
 
+    const summaryRes = await supabase
+      .from("v_recorrencias_forecast_summary")
+      .select("*")
+      .limit(1);
+
     const { data: recData, error: recErr } = await supabase
       .from("recorrencias")
-      .select("id,lead_id,status,start_date,installments_total,installments_done,leads(id,name,phone_raw,phone_e164)")
+      .select(
+        "id,lead_id,status,start_date,installments_total,installments_done,leads(id,name,phone_raw,phone_e164)"
+      )
       .order("start_date", { ascending: false });
 
     if (leadsErr) console.error("leads error:", leadsErr);
@@ -165,6 +162,16 @@ export default function RecorrenciasPage() {
     setFormDone(0);
   }
 
+  function startEdit(x: RecRow) {
+    setEditingId(x.id);
+    setFormLeadId(x.lead_id);
+    setFormStatus((x.status ?? "ativo").toString());
+    setFormStartDate(x.start_date);
+    setFormTotal(Number(x.installments_total || 12));
+    setFormDone(Number(x.installments_done || 0));
+    topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   const computed = useMemo(() => {
     const now = new Date();
     const qLower = q.trim().toLowerCase();
@@ -172,7 +179,6 @@ export default function RecorrenciasPage() {
     return (rows ?? []).map((r) => {
       const start = parseYMD(r.start_date);
       const total = Number(r.installments_total || 0);
-      const done = Number(r.installments_done || 0);
 
       // Fim previsto = data do ÚLTIMO pagamento (mensal)
       // ex: total 12 -> soma 11 meses
@@ -203,7 +209,8 @@ export default function RecorrenciasPage() {
       const hay = `${leadName} ${phone} ${status}`.toLowerCase();
       const passesQ = !qLower || hay.includes(qLower);
 
-      const passesStatus = statusFilter === "all" || status.toLowerCase() === statusFilter.toLowerCase();
+      const passesStatus =
+        statusFilter === "all" || status.toLowerCase() === statusFilter.toLowerCase();
 
       return {
         r,
@@ -221,9 +228,7 @@ export default function RecorrenciasPage() {
     });
   }, [rows, q, statusFilter]);
 
-  const filtered = useMemo(() => {
-    return computed.filter((x) => x.passesQ && x.passesStatus);
-  }, [computed]);
+  const filtered = useMemo(() => computed.filter((x) => x.passesQ && x.passesStatus), [computed]);
 
   // cards de resumo (1 linha)
   const summary = useMemo(() => {
@@ -239,8 +244,7 @@ export default function RecorrenciasPage() {
   const statusOptions = useMemo(() => {
     const set = new Set<string>();
     for (const r of rows) if (r.status) set.add(r.status);
-    const arr = Array.from(set).sort((a, b) => a.localeCompare(b));
-    return arr;
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [rows]);
 
   const canSave = useMemo(() => {
@@ -248,35 +252,46 @@ export default function RecorrenciasPage() {
     if (!formLeadId) return false;
     if (!formStartDate) return false;
     if (!formStatus.trim()) return false;
+
     const total = Number(formTotal);
     const done = Number(formDone);
+
     if (!Number.isFinite(total) || total <= 0) return false;
     if (!Number.isFinite(done) || done < 0) return false;
     if (done > total) return false;
+
     return true;
   }, [saving, formLeadId, formStartDate, formStatus, formTotal, formDone]);
 
-async function handleDelete(id: string) {
-  const ok = window.confirm("Tem certeza que deseja excluir essa recorrência?\n\nEssa ação não pode ser desfeita.");
-  if (!ok) return;
+  async function handleDelete(id: string) {
+    if (deletingId) return; // trava clique duplo
 
-  setDeletingId(id);
+    const ok = window.confirm(
+      "Tem certeza que deseja excluir essa recorrência?\n\nEssa ação não pode ser desfeita."
+    );
+    if (!ok) return;
 
-  // remove da tela primeiro (sensação de rapidez)
-  setRows((prev) => prev.filter((r) => r.id !== id)); // <- se o seu estado não se chama setRows, veja o ajuste abaixo
+    setDeletingId(id);
 
-  const { error } = await supabase.from("recorrencias").delete().eq("id", id);
+    // snapshot pra rollback se o supabase negar (RLS/policy)
+    const prevRows = rows;
 
-  setDeletingId(null);
+    // remove da tela primeiro (sensação de rapidez)
+    setRows((prev) => prev.filter((r) => r.id !== id));
 
-  if (error) {
-    console.error("delete recorrencia error:", error);
-    alert(error.message ?? "Não consegui excluir (RLS/policy?)");
+    const { error } = await supabase.from("recorrencias").delete().eq("id", id);
 
-    // se falhar, recarrega tudo pra voltar ao normal
-    fetchAll();
+    setDeletingId(null);
+
+    if (error) {
+      console.error("delete recorrencia error:", error);
+      alert(error.message ?? "Não consegui excluir (RLS/policy?)");
+
+      // rollback e recarrega
+      setRows(prevRows);
+      fetchAll();
+    }
   }
-}
 
   async function handleSave() {
     if (!canSave) return;
@@ -314,21 +329,8 @@ async function handleDelete(id: string) {
     topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  function startEdit(x: RecRow) {
-    setEditingId(x.id);
-    setFormLeadId(x.lead_id);
-    setFormStatus(x.status ?? "ativo");
-    setFormStartDate(x.start_date);
-    setFormTotal(Number(x.installments_total || 12));
-    setFormDone(Number(x.installments_done || 0));
-    topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
   // estilos
-  const page: React.CSSProperties = {
-    padding: 16,
-    color: "white",
-  };
+  const page: React.CSSProperties = { padding: 16, color: "white" };
 
   const card: React.CSSProperties = {
     border: "1px solid rgba(255,255,255,0.10)",
@@ -348,11 +350,7 @@ async function handleDelete(id: string) {
     width: "100%",
   };
 
-  const selectStyle: React.CSSProperties = {
-    ...inputStyle,
-    minWidth: 190,
-    cursor: "pointer",
-  };
+  const selectStyle: React.CSSProperties = { ...inputStyle, minWidth: 190, cursor: "pointer" };
 
   const btn: React.CSSProperties = {
     background: "rgba(255,255,255,0.06)",
@@ -403,298 +401,291 @@ async function handleDelete(id: string) {
   };
 
   return (
-  <div style={page}>
-    <div
-      style={{
-        background:
-          "radial-gradient(900px 500px at 20% 15%, rgba(180,120,255,0.25), transparent 60%), linear-gradient(180deg, #09070c 0%, #050408 100%)",
-        borderRadius: 18,
-        border: "1px solid rgba(255,255,255,0.10)",
-        padding: 16,
-      }}
-    >
-      <div ref={topRef} />
-
-      {/* topo */}
+    <div style={page}>
       <div
         style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-          alignItems: "center",
-          marginBottom: 12,
+          background:
+            "radial-gradient(900px 500px at 20% 15%, rgba(180,120,255,0.25), transparent 60%), linear-gradient(180deg, #09070c 0%, #050408 100%)",
+          borderRadius: 18,
+          border: "1px solid rgba(255,255,255,0.10)",
+          padding: 16,
         }}
       >
-        {/* ESQUERDA */}
-        <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Recorrências</div>
+        <div ref={topRef} />
 
-          {/* 1 linha só */}
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <span style={chipStyle("muted")}>Total: {summary.total}</span>
-            <span style={chipStyle("primary")}>Ativos: {summary.ativos}</span>
-            <span style={chipStyle("warn")}>Na janela: {summary.inWindow}</span>
-            <span style={chipStyle("danger")}>Últimos dias: {summary.lastDays}</span>
-          </div>
-        </div>
-
-        {/* DIREITA */}
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button onClick={() => router.push("/leads/new")} style={btnPrimary}>
-            + Novo lead
-          </button>
-        </div>
-      </div>
-
-      {/* botão cancelar edição (alinhado à direita, como as outras páginas) */}
-      {editingId ? (
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-          <button type="button" style={btnDanger} onClick={resetFormToCreate}>
-            Cancelar edição
-          </button>
-        </div>
-      ) : null}
-
-      {/* form criar/editar */}
-      <div style={{ ...card, marginBottom: 14 }}>
-        <div style={{ fontWeight: 950, marginBottom: 10 }}>
-          {editingId ? "Editar recorrência" : "Adicionar recorrência"}
-        </div>
-
+        {/* topo */}
         <div
           style={{
-            display: "grid",
+            display: "flex",
+            justifyContent: "space-between",
             gap: 12,
-            gridTemplateColumns: "1.3fr 0.8fr 0.7fr 0.6fr 0.6fr",
-            alignItems: "end",
+            flexWrap: "wrap",
+            alignItems: "center",
+            marginBottom: 12,
           }}
         >
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={label}>Cliente *</div>
-            <SelectDark
-              value={formLeadId}
-              onChange={setFormLeadId}
-              placeholder="Selecione..."
-              options={leads.map((l) => ({
-                value: l.id,
-                label: l.name,
-                meta: l.phone_raw ?? l.phone_e164 ?? "",
-              }))}
-              searchable
-              searchPlaceholder="Buscar cliente..."
-              minWidth={300}
-            />
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Recorrências</div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <span style={chipStyle("muted")}>Total: {summary.total}</span>
+              <span style={chipStyle("primary")}>Ativos: {summary.ativos}</span>
+              <span style={chipStyle("warn")}>Na janela: {summary.inWindow}</span>
+              <span style={chipStyle("danger")}>Últimos dias: {summary.lastDays}</span>
+            </div>
           </div>
 
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={label}>Status *</div>
-            <SelectDark
-              value={formStatus}
-              onChange={setFormStatus}
-              options={[
-                { value: "ativo", label: "Ativo" },
-                { value: "pausado", label: "Pausado" },
-                { value: "cancelado", label: "Cancelado" },
-                { value: "encerrado", label: "Encerrado" },
-              ]}
-              searchable={false}
-              minWidth={180}
-            />
-          </div>
-
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={label}>Início *</div>
-            <input
-              type="date"
-              value={formStartDate}
-              onChange={(e) => setFormStartDate(e.target.value)}
-              style={inputStyle}
-            />
-          </div>
-
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={label}>Total</div>
-            <input
-              type="number"
-              min={1}
-              value={formTotal}
-              onChange={(e) => setFormTotal(Number(e.target.value))}
-              style={inputStyle}
-            />
-          </div>
-
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={label}>Pagas</div>
-            <input
-              type="number"
-              min={0}
-              value={formDone}
-              onChange={(e) => setFormDone(Number(e.target.value))}
-              style={inputStyle}
-            />
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={() => router.push("/leads/new")} style={btnPrimary}>
+              + Novo lead
+            </button>
           </div>
         </div>
 
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, gap: 10 }}>
-          <button type="button" style={btnPrimary} onClick={handleSave} disabled={!canSave}>
-            {saving ? "Salvando..." : editingId ? "Salvar alterações" : "Adicionar"}
-          </button>
-        </div>
-      </div>
+        {/* cancelar edição */}
+        {editingId ? (
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+            <button type="button" style={btnDanger} onClick={resetFormToCreate} disabled={saving}>
+              Cancelar edição
+            </button>
+          </div>
+        ) : null}
 
-      {/* filtros */}
-      <div style={{ ...card, marginBottom: 14 }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            style={{ ...inputStyle, minWidth: 260 }}
-            placeholder="Buscar (nome, telefone, status...)"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
+        {/* form criar/editar */}
+        <div style={{ ...card, marginBottom: 14 }}>
+          <div style={{ fontWeight: 950, marginBottom: 10 }}>
+            {editingId ? "Editar recorrência" : "Adicionar recorrência"}
+          </div>
 
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} style={selectStyle}>
-            <option value="all">Todos os status</option>
-            {statusOptions.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-
-          <button
-            type="button"
-            style={btn}
-            onClick={() => {
-              setQ("");
-              setStatusFilter("all");
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "1.3fr 0.8fr 0.7fr 0.6fr 0.6fr",
+              alignItems: "end",
             }}
           >
-            Limpar
-          </button>
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Cliente *</div>
+              <SelectDark
+                value={formLeadId}
+                onChange={setFormLeadId}
+                placeholder="Selecione..."
+                options={leads.map((l) => ({
+                  value: l.id,
+                  label: l.name,
+                  meta: l.phone_raw ?? l.phone_e164 ?? "",
+                }))}
+                searchable
+                searchPlaceholder="Buscar cliente..."
+                minWidth={300}
+              />
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Status *</div>
+              <SelectDark
+                value={formStatus}
+                onChange={setFormStatus}
+                options={[
+                  { value: "ativo", label: "Ativo" },
+                  { value: "pausado", label: "Pausado" },
+                  { value: "cancelado", label: "Cancelado" },
+                  { value: "encerrado", label: "Encerrado" },
+                ]}
+                searchable={false}
+                minWidth={180}
+              />
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Início *</div>
+              <input
+                type="date"
+                value={formStartDate}
+                onChange={(e) => setFormStartDate(e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Total</div>
+              <input
+                type="number"
+                min={1}
+                value={formTotal}
+                onChange={(e) => setFormTotal(Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={label}>Pagas</div>
+              <input
+                type="number"
+                min={0}
+                value={formDone}
+                onChange={(e) => setFormDone(Number(e.target.value))}
+                style={inputStyle}
+              />
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12, gap: 10 }}>
+            <button type="button" style={btnPrimary} onClick={handleSave} disabled={!canSave}>
+              {saving ? "Salvando..." : editingId ? "Salvar alterações" : "Adicionar"}
+            </button>
+          </div>
         </div>
-      </div>
 
-      {/* tabela */}
-      <div style={{ ...card, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-            <thead>
-              <tr>
-                <th style={th}>Cliente</th>
-                <th style={th}>Status</th>
-                <th style={th}>Ações</th>
-                <th style={th}>Início</th>
-                <th style={th}>Parcelas</th>
-                <th style={th}>Fim previsto</th>
-                <th style={th}>Janela permitida</th>
-                <th style={th}>Situação</th>
-              </tr>
-            </thead>
+        {/* filtros */}
+        <div style={{ ...card, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+            <input
+              style={{ ...inputStyle, minWidth: 260 }}
+              placeholder="Buscar (nome, telefone, status...)"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
 
-            <tbody>
-              {filtered.length === 0 ? (
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="all">Todos os status</option>
+              {statusOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              style={btn}
+              onClick={() => {
+                setQ("");
+                setStatusFilter("all");
+              }}
+            >
+              Limpar
+            </button>
+          </div>
+        </div>
+
+        {/* tabela */}
+        <div style={{ ...card, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
                 <tr>
-                  <td style={td} colSpan={8}>
-                    <div style={{ opacity: 0.75 }}>
-                      {loading ? "Carregando..." : "Nenhuma recorrência encontrada com esses filtros."}
-                    </div>
-                  </td>
+                  <th style={th}>Cliente</th>
+                  <th style={th}>Status</th>
+                  <th style={th}>Ações</th>
+                  <th style={th}>Início</th>
+                  <th style={th}>Parcelas</th>
+                  <th style={th}>Fim previsto</th>
+                  <th style={th}>Janela permitida</th>
+                  <th style={th}>Situação</th>
                 </tr>
-              ) : (
-                filtered.map((x) => {
-                  const leadName = x.r.leads?.name ?? "—";
-                  const phone = normalizePhoneReadable(x.r.leads?.phone_raw ?? null, x.r.leads?.phone_e164 ?? null);
+              </thead>
 
-                  const status = (x.r.status ?? "—").toString();
-                  const stLower = status.toLowerCase();
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td style={td} colSpan={8}>
+                      <div style={{ opacity: 0.75 }}>
+                        {loading ? "Carregando..." : "Nenhuma recorrência encontrada com esses filtros."}
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((x) => {
+                    const leadName = x.r.leads?.name ?? "—";
+                    const phone = normalizePhoneReadable(
+                      x.r.leads?.phone_raw ?? null,
+                      x.r.leads?.phone_e164 ?? null
+                    );
 
-                  let windowChipKind: ChipKind = "muted";
-                  if (x.inWindow) windowChipKind = x.lastDays ? "danger" : "warn";
+                    const status = (x.r.status ?? "—").toString();
+                    const stLower = status.toLowerCase();
 
-                  return (
-                    <tr key={x.r.id}>
-                      <td style={td}>
-                        <div style={{ fontWeight: 900 }}>{leadName}</div>
-                        <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>{phone || "—"}</div>
-                      </td>
+                    let windowChipKind: ChipKind = "muted";
+                    if (x.inWindow) windowChipKind = x.lastDays ? "danger" : "warn";
 
-                      <td style={td}>
-                        <span style={chipStyle(stLower === "ativo" ? "primary" : "muted")}>{status}</span>
-                      </td>
+                    return (
+                      <tr key={x.r.id}>
+                        <td style={td}>
+                          <div style={{ fontWeight: 900 }}>{leadName}</div>
+                          <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>{phone || "—"}</div>
+                        </td>
 
-                      <td style={td}>
-                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                          <button
-                            style={btn}
-                            onClick={() => {
-                              setEditingId(x.r.id);
-                              setFormLeadId(x.r.lead_id);
-                              setFormStatus((x.r.status ?? "ativo").toString());
-                              setFormStartDate(x.r.start_date);
-                              setFormTotal(Number(x.r.installments_total ?? 0));
-                              setFormDone(Number(x.r.installments_done ?? 0));
-                              window.scrollTo({ top: 0, behavior: "smooth" });
-                            }}
-                          >
-                            Editar
-                          </button>
+                        <td style={td}>
+                          <span style={chipStyle(stLower === "ativo" ? "primary" : "muted")}>{status}</span>
+                        </td>
 
-                          <button
-                            style={{
-                              ...btn,
-                              border: "1px solid rgba(255,120,160,0.35)",
-                              background: "rgba(255,120,160,0.10)",
-                            }}
-                            onClick={() => handleDelete(x.r.id)}
-                            disabled={deletingId === x.r.id}
-                            title="Excluir recorrência"
-                          >
-                            {deletingId === x.r.id ? "Excluindo..." : "Excluir"}
-                          </button>
-                        </div>
-                      </td>
+                        <td style={td}>
+                          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                            <button style={btn} onClick={() => startEdit(x.r)} disabled={saving || !!deletingId}>
+                              Editar
+                            </button>
 
-                      <td style={td}>{formatDateBR(x.start)}</td>
-
-                      <td style={td}>
-                        <div style={{ fontWeight: 900 }}>
-                          {Number(x.r.installments_done || 0)} / {Number(x.r.installments_total || 0)}
-                        </div>
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Pagas / Total</div>
-                      </td>
-
-                      <td style={td}>
-                        <div style={{ fontWeight: 900 }}>{formatDateBR(x.end)}</div>
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Último pagamento</div>
-                      </td>
-
-                      <td style={td}>
-                        <div style={{ fontWeight: 900 }}>
-                          {formatDateBR(x.cancelFrom)} → {formatDateBR(x.cancelTo)}
-                        </div>
-                        <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Janela permitida</div>
-                      </td>
-
-                      <td style={td}>
-                        <span style={chipStyle(windowChipKind)}>{x.windowLabel}</span>
-                        {x.inWindow ? (
-                          <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
-                            {x.lastDays ? `⚠️ Faltam ${x.daysToClose} dia(s)` : `Faltam ${x.daysToClose} dia(s) p/ fechar`}
+                            <button
+                              style={btnDanger}
+                              onClick={() => handleDelete(x.r.id)}
+                              disabled={deletingId === x.r.id || saving}
+                              title="Excluir recorrência"
+                            >
+                              {deletingId === x.r.id ? "Excluindo..." : "Excluir"}
+                            </button>
                           </div>
-                        ) : (
-                          <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>Ainda não é a hora de cancelar</div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
+                        </td>
+
+                        <td style={td}>{formatDateBR(x.start)}</td>
+
+                        <td style={td}>
+                          <div style={{ fontWeight: 900 }}>
+                            {Number(x.r.installments_done || 0)} / {Number(x.r.installments_total || 0)}
+                          </div>
+                          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Pagas / Total</div>
+                        </td>
+
+                        <td style={td}>
+                          <div style={{ fontWeight: 900 }}>{formatDateBR(x.end)}</div>
+                          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Último pagamento</div>
+                        </td>
+
+                        <td style={td}>
+                          <div style={{ fontWeight: 900 }}>
+                            {formatDateBR(x.cancelFrom)} → {formatDateBR(x.cancelTo)}
+                          </div>
+                          <div style={{ fontSize: 12, opacity: 0.75, marginTop: 4 }}>Janela permitida</div>
+                        </td>
+
+                        <td style={td}>
+                          <span style={chipStyle(windowChipKind)}>{x.windowLabel}</span>
+                          {x.inWindow ? (
+                            <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
+                              {x.lastDays
+                                ? `⚠️ Faltam ${x.daysToClose} dia(s)`
+                                : `Faltam ${x.daysToClose} dia(s) p/ fechar`}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 12, opacity: 0.78, marginTop: 6 }}>
+                              Ainda não é a hora de cancelar
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
-  </div>
-);
+  );
 }

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import SelectDark from "../_components/SelectDark";
 
@@ -20,6 +21,8 @@ type Lead = {
   source: string;
   interest: string;
   stage_id: string;
+  campaign?: string | null;
+  responsible_id?: string | null;
   next_action_type?: string | null;
   next_action_at?: string | null;
 };
@@ -65,6 +68,8 @@ function formatWhen(iso: string) {
 }
 
 export default function LeadsListPage() {
+  const router = useRouter();
+
   const [stages, setStages] = useState<Stage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
@@ -89,7 +94,9 @@ export default function LeadsListPage() {
 
     const { data: leadsData, error: leadsErr } = await supabase
       .from("leads")
-      .select("id,name,phone_raw,phone_e164,source,interest,stage_id,next_action_type,next_action_at")
+      .select(
+        "id,name,phone_raw,phone_e164,source,interest,stage_id,campaign,responsible_id,next_action_type,next_action_at"
+      )
       .order("id", { ascending: false });
 
     if (stagesErr) console.error("stages error:", stagesErr);
@@ -134,6 +141,8 @@ export default function LeadsListPage() {
         l.source ?? "",
         l.interest ?? "",
         stageNameFromId(l.stage_id) ?? "",
+        l.campaign ?? "",
+        l.responsible_id ?? "",
       ]
         .join(" ")
         .toLowerCase();
@@ -151,7 +160,7 @@ export default function LeadsListPage() {
     outline: "none",
     minWidth: 240,
   };
-  
+
   const btn: React.CSSProperties = {
     background: "rgba(255,255,255,0.06)",
     color: "white",
@@ -181,13 +190,20 @@ export default function LeadsListPage() {
     boxShadow: "0 18px 60px rgba(0,0,0,0.45)",
     display: "grid",
     gap: 10,
+    cursor: "pointer",
   };
+
+  function goEdit(id: string) {
+    router.push(`/leads/${id}`);
+  }
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div style={{ display: "grid", gap: 8 }}>
-          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Contatos (Leads)</div>
+          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>
+            Contatos (Leads)
+          </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {loading ? (
               <span style={chipStyle("primary")}>Carregando…</span>
@@ -283,7 +299,17 @@ export default function LeadsListPage() {
             const stageName = stageNameFromId(l.stage_id);
 
             return (
-              <div key={l.id} style={card}>
+              <div
+                key={l.id}
+                style={card}
+                onClick={() => goEdit(l.id)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") goEdit(l.id);
+                }}
+                title="Clique para editar"
+              >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                   <div style={{ display: "grid", gap: 6 }}>
                     <div style={{ fontWeight: 950, fontSize: 15 }}>{l.name}</div>
@@ -293,6 +319,7 @@ export default function LeadsListPage() {
                       <span style={chipStyle("primary")}>{stageName}</span>
                       <span style={chipStyle("muted")}>{l.source}</span>
                       <span style={chipStyle("muted")}>{l.interest}</span>
+
                       {l.next_action_at ? (
                         <span style={chipStyle("muted")}>
                           Próx.: {l.next_action_type ?? "ação"} • {formatWhen(l.next_action_at)}
@@ -302,7 +329,26 @@ export default function LeadsListPage() {
                   </div>
 
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
-                    <a style={btnPrimary} href={wa} target="_blank" rel="noreferrer">
+                    {/* Editar (não dispara clique do card) */}
+                    <button
+                      style={btn}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        goEdit(l.id);
+                      }}
+                    >
+                      Editar
+                    </button>
+
+                    {/* WhatsApp (não dispara clique do card) */}
+                    <a
+                      style={btnPrimary}
+                      href={wa}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       WhatsApp
                     </a>
                   </div>
