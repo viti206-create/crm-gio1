@@ -5,17 +5,17 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminAccess } from "../_hooks/useAdminAccess";
 
-type ForecastSummaryRow = {
-  month_ref: string | null;
-  active_count: number | null;
-  expected_amount: number | null;
-  overdue_amount: number | null;
+type ForecastSummaryRow = Record<string, any>;
+
+type ForecastMonthlyRawRow = {
+  month: string | null;
+  expected_revenue: number | null;
 };
 
-type ForecastMonthlyRow = {
-  month_ref: string | null;
-  expected_amount: number | null;
-  active_count: number | null;
+type ForecastMonthlyGroupedRow = {
+  month: string;
+  expected_amount: number;
+  active_count: number;
 };
 
 function formatBRL(v: number | null | undefined) {
@@ -82,8 +82,8 @@ export default function RelatoriosPage() {
   const { isAdmin, loadingRole } = useAdminAccess();
 
   const [loading, setLoading] = useState(true);
-  const [forecastSummary, setForecastSummary] = useState<ForecastSummaryRow[]>([]);
-  const [forecastMonthly, setForecastMonthly] = useState<ForecastMonthlyRow[]>([]);
+  const [forecastSummary, setForecastSummary] = useState<ForecastSummaryRow | null>(null);
+  const [forecastMonthlyRaw, setForecastMonthlyRaw] = useState<ForecastMonthlyRawRow[]>([]);
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -98,19 +98,20 @@ export default function RelatoriosPage() {
       await Promise.all([
         supabase
           .from("v_recorrencias_forecast_summary")
-          .select("month_ref,active_count,expected_amount,overdue_amount")
-          .order("month_ref", { ascending: true }),
+          .select("*")
+          .limit(1)
+          .maybeSingle(),
         supabase
           .from("v_recorrencias_forecast_monthly")
-          .select("month_ref,expected_amount,active_count")
-          .order("month_ref", { ascending: true }),
+          .select("month,expected_revenue")
+          .order("month", { ascending: true }),
       ]);
 
-    if (summaryErr) console.error("forecast summary error:", summaryErr);
-    if (monthlyErr) console.error("forecast monthly error:", monthlyErr);
+    if (summaryErr) console.error("forecast summary error:", JSON.stringify(summaryErr, null, 2));
+    if (monthlyErr) console.error("forecast monthly error:", JSON.stringify(monthlyErr, null, 2));
 
-    setForecastSummary((summaryData as any) ?? []);
-    setForecastMonthly((monthlyData as any) ?? []);
+    setForecastSummary((summaryData as any) ?? null);
+    setForecastMonthlyRaw((monthlyData as any) ?? []);
     setLoading(false);
   }
 
@@ -120,24 +121,47 @@ export default function RelatoriosPage() {
     }
   }, [isAdmin]);
 
-  const totals = useMemo(() => {
-    const expected = forecastMonthly.reduce(
-      (acc, row) => acc + Number(row.expected_amount ?? 0),
-      0
+  const forecastMonthly = useMemo<ForecastMonthlyGroupedRow[]>(() => {
+    const map = new Map<string, ForecastMonthlyGroupedRow>();
+
+    for (const row of forecastMonthlyRaw) {
+      const month = String(row.month ?? "").trim();
+      if (!month) continue;
+
+      const expected = Number(row.expected_revenue ?? 0);
+
+      if (!map.has(month)) {
+        map.set(month, {
+          month,
+          expected_amount: 0,
+          active_count: 0,
+        });
+      }
+
+      const current = map.get(month)!;
+      current.expected_amount += expected;
+      current.active_count += 1;
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
+  }, [forecastMonthlyRaw]);
+
+  const summaryCards = useMemo(() => {
+    const expectedThis = Number(forecastSummary?.expected_this ?? 0);
+    const expectedNext = Number(forecastSummary?.expected_next ?? 0);
+    const expectedNext3 = Number(
+      forecastSummary?.expected_next_3 ??
+        forecastSummary?.expected_next_three ??
+        forecastSummary?.expected_3_months ??
+        0
     );
 
-    const active = forecastMonthly.reduce(
-      (acc, row) => acc + Number(row.active_count ?? 0),
-      0
-    );
-
-    const overdue = forecastSummary.reduce(
-      (acc, row) => acc + Number(row.overdue_amount ?? 0),
-      0
-    );
-
-    return { expected, active, overdue };
-  }, [forecastMonthly, forecastSummary]);
+    return {
+      expectedThis,
+      expectedNext,
+      expectedNext3,
+    };
+  }, [forecastSummary]);
 
   const page: React.CSSProperties = {
     padding: 16,
@@ -215,13 +239,13 @@ export default function RelatoriosPage() {
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <span style={chipStyle("primary")}>
-                Previsto: {formatBRL(totals.expected)}
+                Este mês: {formatBRL(summaryCards.expectedThis)}
               </span>
               <span style={chipStyle("warn")}>
-                Em atraso: {formatBRL(totals.overdue)}
+                Próximo mês: {formatBRL(summaryCards.expectedNext)}
               </span>
               <span style={chipStyle("muted")}>
-                Ativos: {totals.active}
+                Próx. 3 meses: {formatBRL(summaryCards.expectedNext3)}
               </span>
             </div>
           </div>
@@ -251,7 +275,7 @@ export default function RelatoriosPage() {
                   <tr>
                     <th style={th}>Mês</th>
                     <th style={th}>Previsto</th>
-                    <th style={th}>Ativos</th>
+                    <th style={th}>Qtd. lançamentos</th>
                   </tr>
                 </thead>
 
@@ -269,11 +293,11 @@ export default function RelatoriosPage() {
                       </td>
                     </tr>
                   ) : (
-                    forecastMonthly.map((row, idx) => (
-                      <tr key={`${row.month_ref}-${idx}`}>
-                        <td style={td}>{formatMonthLabel(row.month_ref)}</td>
+                    forecastMonthly.map((row) => (
+                      <tr key={row.month}>
+                        <td style={td}>{formatMonthLabel(row.month)}</td>
                         <td style={td}>{formatBRL(row.expected_amount)}</td>
-                        <td style={td}>{Number(row.active_count ?? 0)}</td>
+                        <td style={td}>{row.active_count}</td>
                       </tr>
                     ))
                   )}
@@ -287,42 +311,48 @@ export default function RelatoriosPage() {
               Resumo do forecast
             </div>
 
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-                <thead>
-                  <tr>
-                    <th style={th}>Mês</th>
-                    <th style={th}>Ativos</th>
-                    <th style={th}>Previsto</th>
-                    <th style={th}>Atrasado</th>
-                  </tr>
-                </thead>
+            <div style={{ display: "grid", gap: 12 }}>
+              <div
+                style={{
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.03)",
+                  borderRadius: 14,
+                  padding: 14,
+                }}
+              >
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Este mês</div>
+                <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
+                  {formatBRL(summaryCards.expectedThis)}
+                </div>
+              </div>
 
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td style={td} colSpan={4}>
-                        Carregando...
-                      </td>
-                    </tr>
-                  ) : forecastSummary.length === 0 ? (
-                    <tr>
-                      <td style={td} colSpan={4}>
-                        Nenhum dado encontrado.
-                      </td>
-                    </tr>
-                  ) : (
-                    forecastSummary.map((row, idx) => (
-                      <tr key={`${row.month_ref}-${idx}`}>
-                        <td style={td}>{formatMonthLabel(row.month_ref)}</td>
-                        <td style={td}>{Number(row.active_count ?? 0)}</td>
-                        <td style={td}>{formatBRL(row.expected_amount)}</td>
-                        <td style={td}>{formatBRL(row.overdue_amount)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+              <div
+                style={{
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.03)",
+                  borderRadius: 14,
+                  padding: 14,
+                }}
+              >
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Próximo mês</div>
+                <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
+                  {formatBRL(summaryCards.expectedNext)}
+                </div>
+              </div>
+
+              <div
+                style={{
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.03)",
+                  borderRadius: 14,
+                  padding: 14,
+                }}
+              >
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Próximos 3 meses</div>
+                <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
+                  {formatBRL(summaryCards.expectedNext3)}
+                </div>
+              </div>
             </div>
           </div>
         </div>

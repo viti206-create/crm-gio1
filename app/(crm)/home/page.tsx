@@ -18,9 +18,16 @@ type Lead = {
   phone_e164: string;
   source: string;
   interest: string;
+  campaign?: string | null;
   stage_id: string;
   next_action_type?: string | null;
   next_action_at?: string | null;
+};
+
+type GroupItem = {
+  label: string;
+  count: number;
+  pct: number;
 };
 
 function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
@@ -87,6 +94,105 @@ function prettyNextAction(type?: string | null) {
   return type as string;
 }
 
+function buildGroupedFunnel(values: Array<string | null | undefined>, total: number, top = 5) {
+  const map = new Map<string, number>();
+
+  for (const raw of values) {
+    const label = (raw ?? "").trim() || "Não definido";
+    map.set(label, (map.get(label) ?? 0) + 1);
+  }
+
+  return Array.from(map.entries())
+    .map(([label, count]) => ({
+      label,
+      count,
+      pct: total > 0 ? Math.round((count / total) * 100) : 0,
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
+    .slice(0, top);
+}
+
+function MiniFunnelCard({
+  title,
+  items,
+}: {
+  title: string;
+  items: GroupItem[];
+}) {
+  const sectionTitle: React.CSSProperties = {
+    fontWeight: 950,
+    fontSize: 15,
+    marginBottom: 10,
+  };
+
+  const card: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%)",
+    borderRadius: 16,
+    padding: 14,
+    boxShadow: "0 16px 44px rgba(0,0,0,0.35)",
+    overflow: "hidden",
+  };
+
+  const soft: React.CSSProperties = {
+    fontSize: 12,
+    opacity: 0.7,
+  };
+
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
+        <div style={sectionTitle}>{title}</div>
+        <div style={soft}>Top {items.length}</div>
+      </div>
+
+      {items.length === 0 ? (
+        <div style={soft}>Sem dados.</div>
+      ) : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {items.map((item, idx) => {
+            const width = Math.max(34, 100 - idx * 12);
+            return (
+              <div
+                key={`${title}-${item.label}`}
+                style={{
+                  width: `${width}%`,
+                  minWidth: 180,
+                  justifySelf: "center",
+                  borderRadius: 14,
+                  padding: "10px 12px",
+                  border: "1px solid rgba(180,120,255,0.18)",
+                  background:
+                    "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.06) 100%)",
+                }}
+              >
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                  <div
+                    style={{
+                      fontWeight: 900,
+                      fontSize: 13,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                    title={item.label}
+                  >
+                    {item.label}
+                  </div>
+
+                  <div style={{ fontSize: 12, opacity: 0.9, fontWeight: 900 }}>
+                    {item.count} • {item.pct}%
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -109,7 +215,9 @@ export default function HomePage() {
 
     const { data: leadsData, error: leadsErr } = await supabase
       .from("leads")
-      .select("id,name,phone_raw,phone_e164,source,interest,stage_id,next_action_type,next_action_at");
+      .select(
+        "id,name,phone_raw,phone_e164,source,interest,campaign,stage_id,next_action_type,next_action_at"
+      );
 
     if (stagesErr) console.error(stagesErr);
     if (leadsErr) console.error(leadsErr);
@@ -140,18 +248,19 @@ export default function HomePage() {
     return leads.filter((l) => !finalStageIds.has(l.stage_id)).length;
   }, [leads, finalStageIds]);
 
-  // Agenda
   const now = useMemo(() => new Date(), [loading]);
   const todayStart = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
   }, [loading]);
+
   const todayEnd = useMemo(() => {
     const d = new Date(todayStart);
     d.setHours(23, 59, 59, 999);
     return d;
   }, [todayStart]);
+
   const next7End = useMemo(() => {
     const d = new Date(todayEnd);
     d.setDate(d.getDate() + 7);
@@ -189,13 +298,51 @@ export default function HomePage() {
     [leadsWithNext, todayEnd, next7End]
   );
 
-  // Resumo por etapa
   const countsByStage = useMemo(() => {
     const m = new Map<string, number>();
     for (const st of stages) m.set(st.id, 0);
     for (const l of leads) m.set(l.stage_id, (m.get(l.stage_id) ?? 0) + 1);
     return m;
   }, [stages, leads]);
+
+  const stageFunnel = useMemo(() => {
+    return stages
+      .map((st) => {
+        const count = countsByStage.get(st.id) ?? 0;
+        const pct = totalLeads > 0 ? Math.round((count / totalLeads) * 100) : 0;
+        return {
+          ...st,
+          count,
+          pct,
+          theme: stageTheme(st.name),
+        };
+      })
+      .filter((x) => x.count > 0 || totalLeads === 0);
+  }, [stages, countsByStage, totalLeads]);
+
+  const campaignsFunnel = useMemo(() => {
+    return buildGroupedFunnel(
+      leads.map((l) => l.campaign),
+      totalLeads,
+      5
+    );
+  }, [leads, totalLeads]);
+
+  const sourceFunnel = useMemo(() => {
+    return buildGroupedFunnel(
+      leads.map((l) => l.source),
+      totalLeads,
+      5
+    );
+  }, [leads, totalLeads]);
+
+  const interestFunnel = useMemo(() => {
+    return buildGroupedFunnel(
+      leads.map((l) => l.interest),
+      totalLeads,
+      5
+    );
+  }, [leads, totalLeads]);
 
   const pageTitle: React.CSSProperties = {
     fontSize: 18,
@@ -224,13 +371,19 @@ export default function HomePage() {
   };
 
   const cardTitle: React.CSSProperties = { fontSize: 13, opacity: 0.8, fontWeight: 900 };
-  const cardValue: React.CSSProperties = { fontSize: 34, fontWeight: 950, marginTop: 4, lineHeight: "38px" };
+  const cardValue: React.CSSProperties = {
+    fontSize: 34,
+    fontWeight: 950,
+    marginTop: 4,
+    lineHeight: "38px",
+  };
   const cardHint: React.CSSProperties = { fontSize: 12, opacity: 0.65 };
 
   const gridMain: React.CSSProperties = {
     display: "grid",
-    gridTemplateColumns: "minmax(0, 1.3fr) minmax(0, 1fr)",
+    gridTemplateColumns: "minmax(0, 1.25fr) minmax(0, 0.75fr)",
     gap: 12,
+    marginBottom: 12,
   };
 
   const sectionTitle: React.CSSProperties = { fontWeight: 950, fontSize: 16, marginBottom: 10 };
@@ -253,7 +406,12 @@ export default function HomePage() {
   };
 
   const rowLeft: React.CSSProperties = { display: "grid", gap: 4, minWidth: 0 };
-  const rowName: React.CSSProperties = { fontWeight: 950, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+  const rowName: React.CSSProperties = {
+    fontWeight: 950,
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  };
   const rowMeta: React.CSSProperties = { display: "flex", gap: 8, flexWrap: "wrap" };
 
   const openBtn: React.CSSProperties = {
@@ -263,8 +421,15 @@ export default function HomePage() {
     padding: "10px 12px",
     borderRadius: 12,
     border: "1px solid rgba(180,120,255,0.30)",
-    background: "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
+    background:
+      "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
     whiteSpace: "nowrap",
+  };
+
+  const funnelGrid: React.CSSProperties = {
+    display: "grid",
+    gridTemplateColumns: "1.1fr 1fr 1fr 1fr",
+    gap: 12,
   };
 
   return (
@@ -308,7 +473,6 @@ export default function HomePage() {
       </div>
 
       <div style={gridMain}>
-        {/* Agenda */}
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
             <div style={sectionTitle}>Agenda de ações</div>
@@ -325,7 +489,6 @@ export default function HomePage() {
             <div style={{ opacity: 0.75 }}>Nenhuma próxima ação definida ainda.</div>
           ) : (
             <div style={{ display: "grid", gap: 14 }}>
-              {/* Atrasadas */}
               <div>
                 <div style={{ fontWeight: 950, marginBottom: 10 }}>
                   Atrasadas <span style={{ ...chipStyle("muted"), marginLeft: 8 }}>{overdue.length}</span>
@@ -356,7 +519,6 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* Hoje */}
               <div>
                 <div style={{ fontWeight: 950, marginBottom: 10 }}>
                   Hoje <span style={{ ...chipStyle("muted"), marginLeft: 8 }}>{today.length}</span>
@@ -387,7 +549,6 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* Próximos 7 dias */}
               <div>
                 <div style={{ fontWeight: 950, marginBottom: 10 }}>
                   Próximos 7 dias <span style={{ ...chipStyle("muted"), marginLeft: 8 }}>{next7.length}</span>
@@ -421,75 +582,132 @@ export default function HomePage() {
           )}
         </div>
 
-        {/* Resumo por etapas */}
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-            <div style={sectionTitle}>Resumo por etapas</div>
-            <div style={soft}>Distribuição</div>
+            <div style={sectionTitle}>Funil de etapas</div>
+            <div style={soft}>Triangular • porcentagens</div>
           </div>
 
-          {stages.length === 0 ? (
+          {stageFunnel.length === 0 ? (
             <div style={soft}>Sem etapas carregadas.</div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
-              {stages.map((st) => {
-                const theme = stageTheme(st.name);
-                const count = countsByStage.get(st.id) ?? 0;
-                const pct = totalLeads > 0 ? Math.round((count / totalLeads) * 100) : 0;
+              {stageFunnel.map((st, idx) => {
+                const width = Math.max(28, 100 - idx * 11);
 
                 return (
                   <div
                     key={st.id}
                     style={{
-                      border: "1px solid rgba(255,255,255,0.10)",
-                      background: "rgba(255,255,255,0.03)",
-                      borderRadius: 14,
-                      padding: 12,
+                      width: `${width}%`,
+                      minWidth: 180,
+                      justifySelf: "center",
+                      borderRadius: 16,
+                      padding: "12px 14px",
+                      border: `1px solid ${st.theme.tint}`,
+                      background: `linear-gradient(180deg, ${st.theme.tint} 0%, rgba(255,255,255,0.02) 100%)`,
                     }}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 950 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
                         <span
                           style={{
                             width: 10,
                             height: 10,
                             borderRadius: 999,
-                            background: theme.accent,
-                            boxShadow: `0 0 0 6px ${theme.tint}`,
+                            background: st.theme.accent,
+                            boxShadow: `0 0 0 6px ${st.theme.tint}`,
+                            flexShrink: 0,
                           }}
                         />
-                        {st.name}
+                        <span
+                          style={{
+                            fontWeight: 950,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                          title={st.name}
+                        >
+                          {st.name}
+                        </span>
                         {st.is_final ? <span style={chipStyle("muted")}>Final</span> : null}
                       </div>
-                      <div style={{ fontWeight: 900, opacity: 0.85 }}>
-                        {count} • {pct}%
-                      </div>
-                    </div>
 
-                    <div
-                      style={{
-                        marginTop: 10,
-                        height: 10,
-                        borderRadius: 999,
-                        border: "1px solid rgba(255,255,255,0.10)",
-                        background: "rgba(0,0,0,0.25)",
-                        overflow: "hidden",
-                      }}
-                    >
-                      <div
-                        style={{
-                          height: "100%",
-                          width: `${pct}%`,
-                          background: theme.accent,
-                          opacity: 0.55,
-                        }}
-                      />
+                      <div style={{ fontWeight: 900, fontSize: 13, opacity: 0.9, whiteSpace: "nowrap" }}>
+                        {st.count} • {st.pct}%
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
           )}
+        </div>
+      </div>
+
+      <div style={funnelGrid}>
+        <MiniFunnelCard title="Funil por campanhas" items={campaignsFunnel} />
+        <MiniFunnelCard title="Funil por origem" items={sourceFunnel} />
+        <MiniFunnelCard title="Funil por interesses" items={interestFunnel} />
+        <div style={card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+            <div style={sectionTitle}>Resumo rápido</div>
+            <div style={soft}>Topos do funil</div>
+          </div>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            <div
+              style={{
+                border: "1px solid rgba(255,255,255,0.10)",
+                background: "rgba(255,255,255,0.03)",
+                borderRadius: 14,
+                padding: 12,
+              }}
+            >
+              <div style={soft}>Campanha líder</div>
+              <div style={{ fontWeight: 950, marginTop: 4 }}>
+                {campaignsFunnel[0]?.label ?? "Não definido"}
+              </div>
+              <div style={{ marginTop: 6, opacity: 0.8, fontSize: 12 }}>
+                {campaignsFunnel[0]?.count ?? 0} leads • {campaignsFunnel[0]?.pct ?? 0}%
+              </div>
+            </div>
+
+            <div
+              style={{
+                border: "1px solid rgba(255,255,255,0.10)",
+                background: "rgba(255,255,255,0.03)",
+                borderRadius: 14,
+                padding: 12,
+              }}
+            >
+              <div style={soft}>Origem líder</div>
+              <div style={{ fontWeight: 950, marginTop: 4 }}>
+                {sourceFunnel[0]?.label ?? "Não definido"}
+              </div>
+              <div style={{ marginTop: 6, opacity: 0.8, fontSize: 12 }}>
+                {sourceFunnel[0]?.count ?? 0} leads • {sourceFunnel[0]?.pct ?? 0}%
+              </div>
+            </div>
+
+            <div
+              style={{
+                border: "1px solid rgba(255,255,255,0.10)",
+                background: "rgba(255,255,255,0.03)",
+                borderRadius: 14,
+                padding: 12,
+              }}
+            >
+              <div style={soft}>Interesse líder</div>
+              <div style={{ fontWeight: 950, marginTop: 4 }}>
+                {interestFunnel[0]?.label ?? "Não definido"}
+              </div>
+              <div style={{ marginTop: 6, opacity: 0.8, fontSize: 12 }}>
+                {interestFunnel[0]?.count ?? 0} leads • {interestFunnel[0]?.pct ?? 0}%
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>

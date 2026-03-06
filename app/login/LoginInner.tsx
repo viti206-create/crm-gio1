@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import Link from "next/link";
 
 export default function LoginInner() {
   const router = useRouter();
@@ -182,6 +183,10 @@ export default function LoginInner() {
         >
           {loading ? "Entrando..." : "Entrar"}
         </button>
+
+          <Link href="/forgot-password">
+            Esqueci minha senha
+          </Link>
 
         </form>
     </div>
