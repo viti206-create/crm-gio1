@@ -135,12 +135,8 @@ function Toast({
 
         <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
           <div style={{ display: "grid", gap: 6 }}>
-            {title ? (
-              <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>{title}</div>
-            ) : null}
-            <div style={{ fontSize: 12, opacity: 0.9, whiteSpace: "pre-wrap" }}>
-              {text}
-            </div>
+            {title ? <div style={{ fontWeight: 950, letterSpacing: 0.2 }}>{title}</div> : null}
+            <div style={{ fontSize: 12, opacity: 0.9, whiteSpace: "pre-wrap" }}>{text}</div>
 
             {actions && actions.length > 0 ? (
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 6 }}>
@@ -198,16 +194,17 @@ function toE164BR(input: string) {
   return "";
 }
 
-function formatDatetimeLocalToISO(v: string) {
+function formatDateToISO(v: string) {
   try {
-    const d = new Date(v);
+    if (!v) return "";
+    const d = new Date(`${v}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return "";
     return d.toISOString();
   } catch {
     return "";
   }
 }
 
-/** SELECT CUSTOM (resolve o dropdown branco do Chrome/Windows) */
 function Select({
   value,
   onChange,
@@ -342,10 +339,9 @@ export default function NewLeadPage() {
   const [interest, setInterest] = useState("");
   const [stageId, setStageId] = useState<string>("");
 
-  // NOVOS CAMPOS
   const [campaign, setCampaign] = useState<string>("");
   const [profiles, setProfiles] = useState<Array<{ id: string; name: string | null }>>([]);
-  const [responsibleId, setResponsibleId] = useState<string>(""); // uuid (opcional)
+  const [responsibleId, setResponsibleId] = useState<string>("");
 
   const [nextActionEnabled, setNextActionEnabled] = useState(false);
   const [nextActionType, setNextActionType] = useState<string>("whatsapp");
@@ -387,6 +383,7 @@ export default function NewLeadPage() {
         label: (p.name ?? "").trim() ? (p.name as string) : p.id,
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
+
     return [{ value: "", label: "— Não definido —" }, ...opts];
   }, [profiles]);
 
@@ -468,16 +465,13 @@ export default function NewLeadPage() {
   function resetForm() {
     setName("");
     setPhoneRaw("");
-    setSource("instagram"); // IMPORTANTE: não deixar vazio, pq é obrigatório
+    setSource("instagram");
     setInterest("");
-    setStageId((prev) => prev); // mantém o stage atual (ou você pode resetar pro primeiro)
     setCampaign("");
     setResponsibleId("");
-
     setNextActionEnabled(false);
     setNextActionType("whatsapp");
     setNextActionAt("");
-
     setTimeout(() => nameRef.current?.focus(), 50);
   }
 
@@ -494,7 +488,8 @@ export default function NewLeadPage() {
     if (nextActionEnabled) {
       if (!nextActionType) return false;
       if (!nextActionAt) return false;
-      const iso = formatDatetimeLocalToISO(nextActionAt);
+
+      const iso = formatDateToISO(nextActionAt);
       if (!iso) return false;
     }
 
@@ -523,56 +518,94 @@ export default function NewLeadPage() {
     const cleanCampaign = campaign.trim();
     const cleanResponsibleId = responsibleId.trim();
 
-    if (!cleanName)
-      return showToast("Preencha o nome.", { variant: "error", title: "Campos obrigatórios" });
-    if (!cleanPhoneRaw)
-      return showToast("Preencha o telefone.", { variant: "error", title: "Campos obrigatórios" });
-    if (!phoneE164)
+    if (!cleanName) {
+      return showToast("Preencha o nome.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+    }
+
+    if (!cleanPhoneRaw) {
+      return showToast("Preencha o telefone.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+    }
+
+    if (!phoneE164) {
       return showToast("Telefone inválido. Ex: (15) 9xxxx-xxxx", {
         variant: "error",
         title: "Telefone",
       });
-    if (!cleanSource)
-      return showToast("Preencha a origem.", { variant: "error", title: "Campos obrigatórios" });
-    if (!cleanInterest)
-      return showToast("Preencha o interesse.", { variant: "error", title: "Campos obrigatórios" });
-    if (!stageId)
-      return showToast("Selecione a etapa.", { variant: "error", title: "Campos obrigatórios" });
+    }
 
-    let nextActionPayload: { next_action_type?: string; next_action_at?: string } = {};
+    if (!cleanSource) {
+      return showToast("Preencha a origem.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+    }
+
+    if (!cleanInterest) {
+      return showToast("Preencha o interesse.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+    }
+
+    if (!stageId) {
+      return showToast("Selecione a etapa.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+    }
+
+    let nextActionPayload: Record<string, any> = {};
+
     if (nextActionEnabled) {
-      if (!nextActionAt)
-        return showToast("Escolha data/hora da próxima ação.", {
+      if (!nextActionAt) {
+        return showToast("Escolha a data da próxima ação.", {
           variant: "error",
           title: "Próxima ação",
         });
-      const iso = formatDatetimeLocalToISO(nextActionAt);
-      if (!iso)
-        return showToast("Data/hora inválida.", { variant: "error", title: "Próxima ação" });
-      nextActionPayload = { next_action_type: nextActionType, next_action_at: iso };
+      }
+
+      const iso = formatDateToISO(nextActionAt);
+
+      if (!iso) {
+        return showToast("Data inválida.", {
+          variant: "error",
+          title: "Próxima ação",
+        });
+      }
+
+      nextActionPayload = {
+        next_action_type: nextActionType,
+        next_action_at: iso,
+      };
     }
 
     setSaving(true);
 
-    const { error: insertErr } = await supabase.from("leads").insert({
+    const payload: Record<string, any> = {
       name: cleanName,
       phone_raw: cleanPhoneRaw,
       phone_e164: phoneE164,
       source: cleanSource,
       interest: cleanInterest,
       stage_id: stageId,
-
-      // NOVOS CAMPOS (batem com suas colunas reais)
-      campaign: cleanCampaign ? cleanCampaign : null,
-      responsible_id: cleanResponsibleId ? cleanResponsibleId : null,
-
       ...nextActionPayload,
-    });
+    };
+
+    if (cleanCampaign) payload.campaign = cleanCampaign;
+    if (cleanResponsibleId) payload.responsible_id = cleanResponsibleId;
+
+    const { error: insertErr } = await supabase.from("leads").insert(payload);
 
     setSaving(false);
 
     if (insertErr) {
-      console.error("insert lead error:", insertErr);
+      console.error("insert lead error:", JSON.stringify(insertErr, null, 2));
       showToast(insertErr.message ?? "Erro ao criar lead (RLS/policy?)", {
         title: "Não consegui criar",
         variant: "error",
@@ -752,7 +785,6 @@ export default function NewLeadPage() {
               </div>
             </div>
 
-            {/* NOVOS CAMPOS (campanha + responsável) */}
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={labelStyle}>Campanha (opcional)</div>
@@ -804,6 +836,7 @@ export default function NewLeadPage() {
                 }}
               >
                 <div style={{ fontWeight: 950 }}>Próxima ação (opcional)</div>
+
                 <label
                   style={{
                     display: "inline-flex",
@@ -846,9 +879,9 @@ export default function NewLeadPage() {
                   </div>
 
                   <div style={{ display: "grid", gap: 10 }}>
-                    <div style={labelStyle}>Data/Hora</div>
+                    <div style={labelStyle}>Data</div>
                     <input
-                      type="datetime-local"
+                      type="date"
                       style={inputStyle}
                       value={nextActionAt}
                       onChange={(e) => setNextActionAt(e.target.value)}
@@ -857,8 +890,7 @@ export default function NewLeadPage() {
 
                   <div style={{ gridColumn: "1 / -1", fontSize: 12, opacity: 0.75 }}>
                     Se você preencher a próxima ação no INSERT, seu trigger deve registrar{" "}
-                    <span style={{ fontWeight: 900 }}>next_action_set</span>{" "}
-                    automaticamente.
+                    <span style={{ fontWeight: 900 }}>next_action_set</span> automaticamente.
                   </div>
                 </div>
               ) : null}

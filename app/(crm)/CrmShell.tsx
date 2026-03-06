@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import React from "react";
+import { useAdminAccess } from "./_hooks/useAdminAccess";
 
 export default function CrmShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { isAdmin, loadingRole } = useAdminAccess();
 
   const header: React.CSSProperties = {
     display: "flex",
@@ -15,6 +17,8 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     borderBottom: "1px solid rgba(255,255,255,0.10)",
     background:
       "radial-gradient(1200px 600px at 30% 0%, rgba(140,80,255,0.25) 0%, rgba(10,10,16,0.92) 55%, rgba(10,10,16,0.98) 100%)",
+    gap: 16,
+    flexWrap: "wrap",
   };
 
   const left: React.CSSProperties = {
@@ -42,6 +46,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     border: "1px solid rgba(255,255,255,0.14)",
     background: "rgba(255,255,255,0.06)",
     color: "rgba(255,255,255,0.92)",
+    whiteSpace: "nowrap",
   };
 
   const btnActive: React.CSSProperties = {
@@ -55,7 +60,9 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     if (href === "/home") return pathname === "/home";
     if (href === "/dashboard") return pathname.startsWith("/dashboard");
     if (href === "/leads") return pathname.startsWith("/leads");
+    if (href === "/vendas") return pathname.startsWith("/vendas");
     if (href === "/recorrencias") return pathname.startsWith("/recorrencias");
+    if (href === "/relatorios") return pathname.startsWith("/relatorios");
     return false;
   };
 
@@ -69,7 +76,6 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     <div>
       <div style={header}>
         <div style={left}>
-          {/* Aqui fica seu logo atual (se você já tem um componente/IMG, mantenha). */}
           <img
             src="/logo-gio.png"
             alt="GIO"
@@ -87,7 +93,14 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
           <NavBtn href="/home" label="Home" />
           <NavBtn href="/dashboard" label="Kanban" />
           <NavBtn href="/leads" label="Contatos" />
-          <NavBtn href="/recorrencias" label="Recorrências" />
+
+          {!loadingRole && isAdmin ? (
+            <>
+              <NavBtn href="/vendas" label="Vendas" />
+              <NavBtn href="/recorrencias" label="Recorrências" />
+              <NavBtn href="/relatorios" label="Relatórios" />
+            </>
+          ) : null}
         </div>
       </div>
 

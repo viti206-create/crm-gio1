@@ -52,6 +52,17 @@ function formatDateShort(iso: string) {
   }
 }
 
+function formatMonthLabel(iso: string) {
+  try {
+    const d = new Date(iso);
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${mm}/${yyyy}`;
+  } catch {
+    return iso;
+  }
+}
+
 function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
   return {
     fontSize: 12,
@@ -83,7 +94,9 @@ export default function RelatoriosPremium() {
   const [daily, setDaily] = useState<AnyRow[]>([]);
   const [funnelPeriod, setFunnelPeriod] = useState<AnyRow[]>([]);
 
-  // filtros simples para a tabela do funil por período
+  const [forecastSummary, setForecastSummary] = useState<any | null>(null);
+  const [forecastMonthly, setForecastMonthly] = useState<any[]>([]);
+
   const [sourceFilter, setSourceFilter] = useState("all");
   const [campaignFilter, setCampaignFilter] = useState("all");
   const [monthFilter, setMonthFilter] = useState("all");
@@ -111,16 +124,42 @@ export default function RelatoriosPremium() {
       .order("month", { ascending: false })
       .limit(2000);
 
+    const forecastSummaryRes = await supabase
+      .from("v_recorrencias_forecast_summary")
+      .select("*")
+      .limit(1);
+
+    // Se você criou a view agregada por mês, troque aqui por:
+    // .from("v_recorrencias_forecast_by_month")
+    const forecastMonthlyRes = await supabase
+      .from("v_recorrencias_forecast_monthly")
+      .select("*")
+      .order("month", { ascending: true })
+      .limit(24);
+
     if (dashRes.error) console.error(dashRes.error);
     if (dailyRes.error) console.error(dailyRes.error);
     if (periodRes.error) console.error(periodRes.error);
+    if (forecastSummaryRes.error) console.error(forecastSummaryRes.error);
+    if (forecastMonthlyRes.error) console.error(forecastMonthlyRes.error);
 
-    const anyError = dashRes.error || dailyRes.error || periodRes.error;
-    if (anyError) setErr(anyError.message || "Erro ao carregar relatórios");
+    const anyError =
+      dashRes.error ||
+      dailyRes.error ||
+      periodRes.error ||
+      forecastSummaryRes.error ||
+      forecastMonthlyRes.error;
+
+    if (anyError) {
+      setErr(anyError.message || "Erro ao carregar relatórios");
+    }
 
     setDash((dashRes.data?.[0] as AnyRow) ?? null);
     setDaily((dailyRes.data as AnyRow[]) ?? []);
     setFunnelPeriod((periodRes.data as AnyRow[]) ?? []);
+    setForecastSummary((forecastSummaryRes.data?.[0] as AnyRow) ?? null);
+    setForecastMonthly((forecastMonthlyRes.data as AnyRow[]) ?? []);
+
     setLoading(false);
   }
 
@@ -134,6 +173,23 @@ export default function RelatoriosPremium() {
       return { day: dayIso ? formatDateShort(dayIso) : "", leads, sales, revenue };
     });
   }, [daily]);
+
+  const forecastMonthlyChart = useMemo(() => {
+    const grouped = new Map<string, number>();
+
+    for (const r of forecastMonthly ?? []) {
+      const month = s(r, ["month"], "");
+      const value = n(r, ["expected_revenue"], 0);
+      if (!month) continue;
+      grouped.set(month, (grouped.get(month) ?? 0) + value);
+    }
+
+    return Array.from(grouped.entries()).map(([month, expected_revenue]) => ({
+      month,
+      label: formatMonthLabel(month),
+      expected_revenue,
+    }));
+  }, [forecastMonthly]);
 
   const kpis = useMemo(() => {
     if (dash) {
@@ -230,7 +286,6 @@ export default function RelatoriosPremium() {
     return arr;
   }, [filteredPeriod]);
 
-  // estilos premium
   const page: React.CSSProperties = { padding: 16, color: "white" };
 
   const shell: React.CSSProperties = {
@@ -307,7 +362,7 @@ export default function RelatoriosPremium() {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div style={{ display: "grid", gap: 6 }}>
             <div style={title}>Relatórios</div>
-            <div style={soft}>Visão de funil, conversões e performance diária</div>
+            <div style={soft}>Visão de funil, conversões, performance diária e previsão recorrente</div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
@@ -365,6 +420,52 @@ export default function RelatoriosPremium() {
             <div style={kpiTitle}>Receita</div>
             <div style={kpiValue}>{formatBRL(kpis.revenue)}</div>
             <div style={soft}>Se a view retornar receita</div>
+          </div>
+        </div>
+
+        {/* Previsão recorrências */}
+        <div
+          style={{
+            display: "grid",
+            gap: 12,
+            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+            marginTop: 12,
+          }}
+        >
+          <div style={card}>
+            <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 900 }}>
+              Previsão este mês
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 950, marginTop: 6, lineHeight: "32px" }}>
+              {formatBRL(Number(forecastSummary?.expected_this_month ?? 0))}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Recorrências ativas previstas no mês atual
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 900 }}>
+              Previsão próximo mês
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 950, marginTop: 6, lineHeight: "32px" }}>
+              {formatBRL(Number(forecastSummary?.expected_next_month ?? 0))}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Recorrências previstas para o mês seguinte
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontSize: 12, opacity: 0.8, fontWeight: 900 }}>
+              Previsão próximos 90 dias
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 950, marginTop: 6, lineHeight: "32px" }}>
+              {formatBRL(Number(forecastSummary?.expected_next_90_days ?? 0))}
+            </div>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Soma projetada das recorrências futuras
+            </div>
           </div>
         </div>
 
@@ -480,6 +581,34 @@ export default function RelatoriosPremium() {
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 10 }}>
               <span style={chipStyle("muted")}>Cada barra = quantidade no status</span>
             </div>
+          </div>
+        </div>
+
+        {/* Previsão mensal recorrências */}
+        <div style={{ ...card, marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+            <div style={{ fontWeight: 950, fontSize: 16 }}>Previsão mensal das recorrências</div>
+            <div style={soft}>próximos {forecastMonthlyChart.length} meses</div>
+          </div>
+
+          <div style={{ height: 280, marginTop: 10 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={forecastMonthlyChart}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                <XAxis dataKey="label" tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 12 }} />
+                <YAxis tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 12 }} />
+                <Tooltip
+                  formatter={(value: any) => formatBRL(Number(value ?? 0))}
+                  contentStyle={{
+                    background: "rgba(10,8,14,0.95)",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    borderRadius: 12,
+                    color: "white",
+                  }}
+                />
+                <Bar dataKey="expected_revenue" />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
