@@ -84,6 +84,19 @@ function toNumberOrZero(v: string | number | null | undefined) {
   return Number.isFinite(n) ? n : 0;
 }
 
+function formatPaymentMethod(v: string | null | undefined) {
+  const key = String(v ?? "").trim().toLowerCase();
+
+  if (key === "pix") return "Pix";
+  if (key === "cartao") return "Cartão";
+  if (key === "cartao_recorrente") return "Cartão Recorrente";
+  if (key === "debito") return "Débito";
+  if (key === "dinheiro") return "Dinheiro";
+  if (key === "boleto") return "Boleto";
+
+  return v || "—";
+}
+
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "9px 10px",
@@ -188,8 +201,6 @@ export default function VendasPage() {
   const [sellerName, setSellerName] = useState("");
   const [source, setSource] = useState("");
   const [notes, setNotes] = useState("");
-
-  const [createRecorrencia, setCreateRecorrencia] = useState(false);
   const [recStatus, setRecStatus] = useState("ativo");
 
   useEffect(() => {
@@ -307,7 +318,6 @@ export default function VendasPage() {
     setSellerName("");
     setSource("");
     setNotes("");
-    setCreateRecorrencia(false);
     setRecStatus("ativo");
     setErrorMsg("");
   }
@@ -322,11 +332,12 @@ export default function VendasPage() {
     setGrossValue(String(row.value_gross ?? row.value ?? ""));
     setNetValue(String(row.value_net ?? row.value ?? ""));
     setFeePercentValue(String(row.fee_percent ?? ""));
-    setClosedAt(row.closed_at ? String(row.closed_at).slice(0, 10) : todayInputValue());
+    setClosedAt(
+      row.closed_at ? String(row.closed_at).slice(0, 10) : todayInputValue()
+    );
     setSellerName(row.seller_name || "");
     setSource(row.source || "");
     setNotes(row.notes || "");
-    setCreateRecorrencia(Boolean(row.recorrencia_id));
     setRecStatus(row.recorrencias?.status || "ativo");
     setErrorMsg("");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -389,8 +400,7 @@ export default function VendasPage() {
     const net = Number(netValue || grossValue || 0);
     const feePercent =
       gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
-    const shouldCreateOrKeepRecorrencia =
-      saleType === "recorrencia" || createRecorrencia;
+    const isRecorrencia = saleType === "recorrencia";
 
     if (!leadId) {
       setErrorMsg("Selecione o cliente.");
@@ -428,7 +438,7 @@ export default function VendasPage() {
       let recorrenciaId: string | null =
         rows.find((x) => x.id === editingId)?.recorrencia_id ?? null;
 
-      if (shouldCreateOrKeepRecorrencia) {
+      if (isRecorrencia) {
         const installmentsTotal = parseInstallmentsTotal(installmentsLabel);
         const pricePerInstallment =
           installmentsTotal > 0 ? gross / installmentsTotal : gross;
@@ -486,7 +496,7 @@ export default function VendasPage() {
       const payload = {
         lead_id: leadId,
         recorrencia_id: recorrenciaId,
-        sale_type: shouldCreateOrKeepRecorrencia ? "recorrencia" : "avulsa",
+        sale_type: isRecorrencia ? "recorrencia" : "avulsa",
         procedure: procedure.trim(),
         value: gross,
         value_gross: gross,
@@ -779,26 +789,6 @@ export default function VendasPage() {
           </div>
         </div>
 
-        <div
-          style={{
-            marginTop: 12,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            fontSize: 13,
-          }}
-        >
-          <input
-            id="create-recorrencia"
-            type="checkbox"
-            checked={createRecorrencia}
-            onChange={(e) => setCreateRecorrencia(e.target.checked)}
-          />
-          <label htmlFor="create-recorrencia" style={{ cursor: "pointer" }}>
-            Criar recorrência junto com esta venda
-          </label>
-        </div>
-
         {errorMsg ? (
           <div
             style={{
@@ -916,7 +906,7 @@ export default function VendasPage() {
                         borderTop: "1px solid rgba(255,255,255,0.06)",
                       }}
                     >
-                      <div>{r.payment_method ?? "—"}</div>
+                      <div>{formatPaymentMethod(r.payment_method)}</div>
                       <div style={{ fontSize: 12, opacity: 0.7 }}>
                         {r.installments_label ?? "—"}
                       </div>
