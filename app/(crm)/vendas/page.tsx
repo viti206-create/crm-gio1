@@ -228,6 +228,8 @@ export default function VendasPage() {
 
     const gross = Number(grossValue || 0);
     const net = Number(netValue || grossValue || 0);
+    const shouldCreateRecorrencia =
+      saleType === "recorrencia" || createRecorrencia;
 
     if (!leadId) {
       setErrorMsg("Selecione o cliente.");
@@ -264,7 +266,7 @@ export default function VendasPage() {
     try {
       let recorrenciaId: string | null = null;
 
-      if (createRecorrencia) {
+      if (shouldCreateRecorrencia) {
         const installmentsTotal =
           Number(recInstallmentsTotal) > 0
             ? Number(recInstallmentsTotal)
@@ -296,7 +298,7 @@ export default function VendasPage() {
       const { error: saleError } = await supabase.from("sales").insert({
         lead_id: leadId,
         recorrencia_id: recorrenciaId,
-        sale_type: createRecorrencia ? "recorrencia" : saleType,
+        sale_type: shouldCreateRecorrencia ? "recorrencia" : saleType,
         procedure: procedure.trim(),
         value: gross,
         value_gross: gross,
@@ -603,7 +605,7 @@ export default function VendasPage() {
           </label>
         </div>
 
-        {createRecorrencia && (
+        {(createRecorrencia || saleType === "recorrencia") && (
           <div
             style={{
               marginTop: 14,
