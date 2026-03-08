@@ -5,11 +5,13 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminAccess } from "../_hooks/useAdminAccess";
 
-type ForecastSummaryRow = Record<string, any>;
-
-type ForecastMonthlyRawRow = {
-  month: string | null;
-  expected_revenue: number | null;
+type RecorrenciaJoin = {
+  id: string;
+  status: string | null;
+  start_date: string | null;
+  installments_total: number | null;
+  installments_done: number | null;
+  price_per_installment: number | null;
 };
 
 type SaleRow = {
@@ -28,6 +30,7 @@ type SaleRow = {
   procedure: string | null;
   notes: string | null;
   closed_at: string | null;
+  recorrencias?: RecorrenciaJoin | null;
 };
 
 type RecRow = {
@@ -62,6 +65,16 @@ type MonthlySalesRow = {
   avulsas: number;
 };
 
+type ExpandedSaleMetric = {
+  seller_name: string | null;
+  source: string | null;
+  payment_method: string | null;
+  month: string;
+  effectiveGross: number;
+  effectiveNet: number;
+  isRecurring: boolean;
+};
+
 function formatBRL(v: number | null | undefined) {
   const n = Number(v ?? 0);
   if (!Number.isFinite(n)) return "—";
@@ -92,13 +105,57 @@ function formatMonthLabel(v: string | null | undefined) {
   return text;
 }
 
-function monthKeyFromDate(v: string | null | undefined) {
+function monthKeyFromDate(v: string | Date | null | undefined) {
   if (!v) return "";
-  const d = new Date(v);
+  const d = typeof v === "string" ? new Date(v) : v;
   if (Number.isNaN(d.getTime())) return "";
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const yyyy = d.getFullYear();
   return `${yyyy}-${mm}`;
+}
+
+function addMonths(dt: Date, months: number) {
+  const x = new Date(dt.getTime());
+  x.setMonth(x.getMonth() + months);
+  return x;
+}
+
+function firstDayOfMonth(dt: Date) {
+  return new Date(dt.getFullYear(), dt.getMonth(), 1, 0, 0, 0, 0);
+}
+
+function normalizeRecStatus(status: string | null | undefined) {
+  const s = String(status ?? "").trim().toLowerCase();
+
+  if (["ativo", "ativa"].includes(s)) return "ativo";
+  if (
+    [
+      "encerrado",
+      "encerrada",
+      "concluido",
+      "concluida",
+      "concluído",
+      "concluída",
+    ].includes(s)
+  ) {
+    return "encerrado";
+  }
+  if (s === "pausada") return "pausada";
+  if (s === "cancelada") return "cancelada";
+  return s || "ativo";
+}
+
+function formatPaymentMethod(v: string | null | undefined) {
+  const key = String(v ?? "").trim().toLowerCase();
+
+  if (key === "pix") return "Pix";
+  if (key === "cartao") return "Cartão";
+  if (key === "cartao_recorrente") return "Cartão recorrente";
+  if (key === "debito") return "Débito";
+  if (key === "dinheiro") return "Dinheiro";
+  if (key === "boleto") return "Boleto";
+
+  return v || "—";
 }
 
 function chipStyle(
@@ -138,27 +195,11 @@ function chipStyle(
   };
 }
 
-function normalizeRecStatus(status: string | null | undefined) {
-  const s = String(status ?? "")
-    .trim()
-    .toLowerCase();
-
-  if (["ativo", "ativa"].includes(s)) return "ativo";
-  if (["encerrado", "encerrada", "concluido", "concluida", "concluído", "concluída"].includes(s)) {
-    return "encerrado";
-  }
-  if (s === "pausada") return "pausada";
-  if (s === "cancelada") return "cancelada";
-  return s || "ativo";
-}
-
 export default function RelatoriosPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
 
   const [loading, setLoading] = useState(true);
-  const [forecastSummary, setForecastSummary] = useState<ForecastSummaryRow | null>(null);
-  const [forecastMonthlyRaw, setForecastMonthlyRaw] = useState<ForecastMonthlyRawRow[]>([]);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [recorrencias, setRecorrencias] = useState<RecRow[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
@@ -173,46 +214,23 @@ export default function RelatoriosPage() {
     setLoading(true);
     setErrors([]);
 
-    const [
-      { data: summaryData, error: summaryErr },
-      { data: monthlyData, error: monthlyErr },
-      { data: salesData, error: salesErr },
-      { data: recData, error: recErr },
-    ] = await Promise.all([
-      supabase
-        .from("v_recorrencias_forecast_summary")
-        .select("*")
-        .limit(1)
-        .maybeSingle(),
-      supabase
-        .from("v_recorrencias_forecast_monthly")
-        .select("month,expected_revenue")
-        .order("month", { ascending: true }),
-      supabase
-        .from("sales")
-        .select(
-          "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at"
-        )
-        .order("closed_at", { ascending: false }),
-      supabase
-        .from("recorrencias")
-        .select(
-          "id,lead_id,status,start_date,installments_total,installments_done,price_per_installment"
-        )
-        .order("start_date", { ascending: false }),
-    ]);
+    const [{ data: salesData, error: salesErr }, { data: recData, error: recErr }] =
+      await Promise.all([
+        supabase
+          .from("sales")
+          .select(
+            "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at,recorrencias(id,status,start_date,installments_total,installments_done,price_per_installment)"
+          )
+          .order("closed_at", { ascending: false }),
+        supabase
+          .from("recorrencias")
+          .select(
+            "id,lead_id,status,start_date,installments_total,installments_done,price_per_installment"
+          )
+          .order("start_date", { ascending: false }),
+      ]);
 
     const nextErrors: string[] = [];
-
-    if (summaryErr) {
-      console.error("forecast summary error:", JSON.stringify(summaryErr, null, 2));
-      nextErrors.push("Resumo do forecast não carregou.");
-    }
-
-    if (monthlyErr) {
-      console.error("forecast monthly error:", JSON.stringify(monthlyErr, null, 2));
-      nextErrors.push("Forecast mensal não carregou.");
-    }
 
     if (salesErr) {
       console.error("sales error:", JSON.stringify(salesErr, null, 2));
@@ -224,8 +242,6 @@ export default function RelatoriosPage() {
       nextErrors.push("Recorrências não carregaram.");
     }
 
-    setForecastSummary((summaryData as any) ?? null);
-    setForecastMonthlyRaw((monthlyData as any) ?? []);
     setSales((salesData as any) ?? []);
     setRecorrencias((recData as any) ?? []);
     setErrors(nextErrors);
@@ -238,51 +254,157 @@ export default function RelatoriosPage() {
     }
   }, [isAdmin]);
 
+  const now = useMemo(() => new Date(), []);
+  const currentMonthStart = useMemo(() => firstDayOfMonth(now), [now]);
+
+  const expandedMetrics = useMemo<ExpandedSaleMetric[]>(() => {
+    const out: ExpandedSaleMetric[] = [];
+
+    for (const row of sales) {
+      if (!row.closed_at) continue;
+
+      const saleDate = new Date(row.closed_at);
+      if (Number.isNaN(saleDate.getTime())) continue;
+
+      const isRecurring = row.sale_type === "recorrencia" || !!row.recorrencia_id;
+      const grossTotal = Number(row.value_gross ?? row.value ?? 0);
+      const netTotal = Number(row.value_net ?? 0);
+      const feePercent = Number(row.fee_percent ?? 0);
+
+      if (!isRecurring) {
+        if (saleDate > now) continue;
+
+        out.push({
+          seller_name: row.seller_name ?? null,
+          source: row.source ?? null,
+          payment_method: row.payment_method ?? null,
+          month: monthKeyFromDate(saleDate),
+          effectiveGross: grossTotal,
+          effectiveNet:
+            netTotal > 0
+              ? netTotal
+              : Number((grossTotal * (1 - feePercent / 100)).toFixed(2)),
+          isRecurring: false,
+        });
+        continue;
+      }
+
+      const totalInstallments =
+        Number(row.recorrencias?.installments_total ?? 0) ||
+        Number((row.installments_label || "").replace(/\D/g, "")) ||
+        1;
+
+      const monthlyGross =
+        totalInstallments > 0 ? Number((grossTotal / totalInstallments).toFixed(2)) : grossTotal;
+      const monthlyNet =
+        totalInstallments > 0
+          ? Number((netTotal / totalInstallments).toFixed(2))
+          : Number((monthlyGross * (1 - feePercent / 100)).toFixed(2));
+
+      for (let i = 0; i < totalInstallments; i += 1) {
+        const installmentDate = addMonths(saleDate, i);
+        if (installmentDate > now) break;
+
+        out.push({
+          seller_name: row.seller_name ?? null,
+          source: row.source ?? null,
+          payment_method: row.payment_method ?? null,
+          month: monthKeyFromDate(installmentDate),
+          effectiveGross: monthlyGross,
+          effectiveNet:
+            monthlyNet > 0
+              ? monthlyNet
+              : Number((monthlyGross * (1 - feePercent / 100)).toFixed(2)),
+          isRecurring: true,
+        });
+      }
+    }
+
+    return out;
+  }, [sales, now]);
+
   const forecastMonthly = useMemo<ForecastMonthlyGroupedRow[]>(() => {
     const map = new Map<string, ForecastMonthlyGroupedRow>();
 
-    for (const row of forecastMonthlyRaw) {
-      const month = String(row.month ?? "").trim();
-      if (!month) continue;
+    for (const row of recorrencias) {
+      const status = normalizeRecStatus(row.status);
+      if (status !== "ativo") continue;
 
-      const expected = Number(row.expected_revenue ?? 0);
+      const startDate = row.start_date ? new Date(row.start_date) : null;
+      if (!startDate || Number.isNaN(startDate.getTime())) continue;
 
-      if (!map.has(month)) {
-        map.set(month, {
-          month,
-          expected_amount: 0,
-          active_count: 0,
-        });
+      const total = Number(row.installments_total ?? 0);
+      const done = Number(row.installments_done ?? 0);
+      const monthly = Number(row.price_per_installment ?? 0);
+
+      if (!total || !monthly) continue;
+
+      for (let idx = Math.max(done - 1, 0); idx < total; idx += 1) {
+        const paymentDate = addMonths(startDate, idx);
+        if (paymentDate < currentMonthStart) continue;
+
+        const month = monthKeyFromDate(paymentDate);
+        if (!month) continue;
+
+        if (!map.has(month)) {
+          map.set(month, {
+            month,
+            expected_amount: 0,
+            active_count: 0,
+          });
+        }
+
+        const current = map.get(month)!;
+        current.expected_amount += monthly;
+        current.active_count += 1;
       }
-
-      const current = map.get(month)!;
-      current.expected_amount += expected;
-      current.active_count += 1;
     }
 
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
-  }, [forecastMonthlyRaw]);
+  }, [recorrencias, currentMonthStart]);
 
-  const salesSummary = useMemo(() => {
-    const gross = sales.reduce((sum, row) => sum + Number(row.value_gross ?? row.value ?? 0), 0);
-    const net = sales.reduce((sum, row) => sum + Number(row.value_net ?? row.value ?? 0), 0);
-    const recorrentes = sales.filter(
-      (row) => row.sale_type === "recorrencia" || !!row.recorrencia_id
-    ).length;
-    const avulsas = sales.length - recorrentes;
+  const forecastSummary = useMemo(() => {
+    const currentMonthKey = monthKeyFromDate(currentMonthStart);
+    const nextMonthKey = monthKeyFromDate(addMonths(currentMonthStart, 1));
 
-    const feesAvg =
-      gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
+    let expectedThis = 0;
+    let expectedNext = 0;
+    let expectedNext3 = 0;
+
+    for (const row of forecastMonthly) {
+      if (row.month === currentMonthKey) expectedThis += row.expected_amount;
+      if (row.month === nextMonthKey) expectedNext += row.expected_amount;
+    }
+
+    for (let i = 1; i <= 3; i += 1) {
+      const key = monthKeyFromDate(addMonths(currentMonthStart, i));
+      const found = forecastMonthly.find((x) => x.month === key);
+      expectedNext3 += Number(found?.expected_amount ?? 0);
+    }
 
     return {
-      count: sales.length,
+      expectedThis,
+      expectedNext,
+      expectedNext3,
+    };
+  }, [forecastMonthly, currentMonthStart]);
+
+  const salesSummary = useMemo(() => {
+    const gross = expandedMetrics.reduce((sum, row) => sum + row.effectiveGross, 0);
+    const net = expandedMetrics.reduce((sum, row) => sum + row.effectiveNet, 0);
+    const recorrentes = expandedMetrics.filter((row) => row.isRecurring).length;
+    const avulsas = expandedMetrics.length - recorrentes;
+    const feesAvg = gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
+
+    return {
+      count: expandedMetrics.length,
       gross,
       net,
       recorrentes,
       avulsas,
       feesAvg,
     };
-  }, [sales]);
+  }, [expandedMetrics]);
 
   const recorrenciasSummary = useMemo(() => {
     let ativas = 0;
@@ -319,43 +441,44 @@ export default function RelatoriosPage() {
   const bySeller = useMemo<GroupAmountRow[]>(() => {
     const map = new Map<string, GroupAmountRow>();
 
-    for (const row of sales) {
+    for (const row of expandedMetrics) {
       const key = String(row.seller_name || "Sem vendedor").trim() || "Sem vendedor";
+
       if (!map.has(key)) {
         map.set(key, { label: key, count: 0, gross: 0, net: 0 });
       }
 
       const current = map.get(key)!;
       current.count += 1;
-      current.gross += Number(row.value_gross ?? row.value ?? 0);
-      current.net += Number(row.value_net ?? row.value ?? 0);
+      current.gross += row.effectiveGross;
+      current.net += row.effectiveNet;
     }
 
     return Array.from(map.values()).sort((a, b) => b.net - a.net);
-  }, [sales]);
+  }, [expandedMetrics]);
 
   const byPayment = useMemo<GroupAmountRow[]>(() => {
     const map = new Map<string, GroupAmountRow>();
 
-    for (const row of sales) {
-      const key = String(row.payment_method || "Não informado").trim() || "Não informado";
+    for (const row of expandedMetrics) {
+      const key = formatPaymentMethod(row.payment_method);
       if (!map.has(key)) {
         map.set(key, { label: key, count: 0, gross: 0, net: 0 });
       }
 
       const current = map.get(key)!;
       current.count += 1;
-      current.gross += Number(row.value_gross ?? row.value ?? 0);
-      current.net += Number(row.value_net ?? row.value ?? 0);
+      current.gross += row.effectiveGross;
+      current.net += row.effectiveNet;
     }
 
     return Array.from(map.values()).sort((a, b) => b.net - a.net);
-  }, [sales]);
+  }, [expandedMetrics]);
 
   const bySource = useMemo<GroupAmountRow[]>(() => {
     const map = new Map<string, GroupAmountRow>();
 
-    for (const row of sales) {
+    for (const row of expandedMetrics) {
       const key = String(row.source || "Não informada").trim() || "Não informada";
       if (!map.has(key)) {
         map.set(key, { label: key, count: 0, gross: 0, net: 0 });
@@ -363,23 +486,22 @@ export default function RelatoriosPage() {
 
       const current = map.get(key)!;
       current.count += 1;
-      current.gross += Number(row.value_gross ?? row.value ?? 0);
-      current.net += Number(row.value_net ?? row.value ?? 0);
+      current.gross += row.effectiveGross;
+      current.net += row.effectiveNet;
     }
 
     return Array.from(map.values()).sort((a, b) => b.net - a.net);
-  }, [sales]);
+  }, [expandedMetrics]);
 
   const monthlySales = useMemo<MonthlySalesRow[]>(() => {
     const map = new Map<string, MonthlySalesRow>();
 
-    for (const row of sales) {
-      const month = monthKeyFromDate(row.closed_at);
-      if (!month) continue;
+    for (const row of expandedMetrics) {
+      if (!row.month) continue;
 
-      if (!map.has(month)) {
-        map.set(month, {
-          month,
+      if (!map.has(row.month)) {
+        map.set(row.month, {
+          month: row.month,
           gross: 0,
           net: 0,
           count: 0,
@@ -388,37 +510,17 @@ export default function RelatoriosPage() {
         });
       }
 
-      const current = map.get(month)!;
-      current.gross += Number(row.value_gross ?? row.value ?? 0);
-      current.net += Number(row.value_net ?? row.value ?? 0);
+      const current = map.get(row.month)!;
+      current.gross += row.effectiveGross;
+      current.net += row.effectiveNet;
       current.count += 1;
 
-      if (row.sale_type === "recorrencia" || row.recorrencia_id) {
-        current.recorrentes += 1;
-      } else {
-        current.avulsas += 1;
-      }
+      if (row.isRecurring) current.recorrentes += 1;
+      else current.avulsas += 1;
     }
 
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
-  }, [sales]);
-
-  const summaryCards = useMemo(() => {
-    const expectedThis = Number(forecastSummary?.expected_this ?? 0);
-    const expectedNext = Number(forecastSummary?.expected_next ?? 0);
-    const expectedNext3 = Number(
-      forecastSummary?.expected_next_3 ??
-        forecastSummary?.expected_next_three ??
-        forecastSummary?.expected_3_months ??
-        0
-    );
-
-    return {
-      expectedThis,
-      expectedNext,
-      expectedNext3,
-    };
-  }, [forecastSummary]);
+  }, [expandedMetrics]);
 
   const page: React.CSSProperties = {
     padding: 16,
@@ -509,12 +611,10 @@ export default function RelatoriosPage() {
                 Recorrência ativa/mês: {formatBRL(recorrenciasSummary.mensalPrevistoAtivo)}
               </span>
               <span style={chipStyle("muted")}>
-                Próx. 3 meses: {formatBRL(summaryCards.expectedNext3)}
+                Próx. 3 meses: {formatBRL(forecastSummary.expectedNext3)}
               </span>
               {!!errors.length && (
-                <span style={chipStyle("danger")}>
-                  {errors.length} aviso(s)
-                </span>
+                <span style={chipStyle("danger")}>{errors.length} aviso(s)</span>
               )}
             </div>
           </div>
@@ -561,7 +661,7 @@ export default function RelatoriosPage() {
               {formatBRL(salesSummary.gross)}
             </div>
             <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-              {salesSummary.count} venda(s)
+              {salesSummary.count} lançamento(s)
             </div>
           </div>
 
@@ -588,10 +688,10 @@ export default function RelatoriosPage() {
           <div style={miniCard}>
             <div style={{ fontSize: 12, opacity: 0.72 }}>Forecast deste mês</div>
             <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-              {formatBRL(summaryCards.expectedThis)}
+              {formatBRL(forecastSummary.expectedThis)}
             </div>
             <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-              Próximo: {formatBRL(summaryCards.expectedNext)}
+              Próximo: {formatBRL(forecastSummary.expectedNext)}
             </div>
           </div>
         </div>
@@ -907,21 +1007,21 @@ export default function RelatoriosPage() {
               <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.72 }}>Este mês</div>
                 <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-                  {formatBRL(summaryCards.expectedThis)}
+                  {formatBRL(forecastSummary.expectedThis)}
                 </div>
               </div>
 
               <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.72 }}>Próximo mês</div>
                 <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-                  {formatBRL(summaryCards.expectedNext)}
+                  {formatBRL(forecastSummary.expectedNext)}
                 </div>
               </div>
 
               <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.72 }}>Próximos 3 meses</div>
                 <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-                  {formatBRL(summaryCards.expectedNext3)}
+                  {formatBRL(forecastSummary.expectedNext3)}
                 </div>
               </div>
             </div>

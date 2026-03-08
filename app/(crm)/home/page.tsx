@@ -22,12 +22,30 @@ type Lead = {
   stage_id: string;
   next_action_type?: string | null;
   next_action_at?: string | null;
+  created_at?: string | null;
+};
+
+type Sale = {
+  id: string;
+  value: number | null;
+  value_gross: number | null;
+  seller_name: string | null;
+  sale_type: string | null;
+  recorrencia_id: string | null;
+  closed_at: string | null;
+  installments_label?: string | null;
 };
 
 type GroupItem = {
   label: string;
   count: number;
   pct: number;
+};
+
+type SellerItem = {
+  seller: string;
+  amount: number;
+  count: number;
 };
 
 function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
@@ -110,6 +128,28 @@ function buildGroupedFunnel(values: Array<string | null | undefined>, total: num
     }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
     .slice(0, top);
+}
+
+function addMonths(dt: Date, months: number) {
+  const x = new Date(dt.getTime());
+  x.setMonth(x.getMonth() + months);
+  return x;
+}
+
+function formatBRL(v: number | null | undefined) {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return "R$ 0,00";
+  return n.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function parseInstallmentsTotal(label?: string | null) {
+  if (!label || label === "À vista") return 1;
+  const m = String(label).match(/^(\d+)x/i);
+  if (!m) return 1;
+  return Number(m[1]);
 }
 
 function MiniFunnelCard({
@@ -196,6 +236,7 @@ function MiniFunnelCard({
 export default function HomePage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -208,26 +249,43 @@ export default function HomePage() {
     setLoading(true);
     setErr(null);
 
-    const { data: stagesData, error: stagesErr } = await supabase
-      .from("stages")
-      .select("id,name,position,is_final")
-      .order("position", { ascending: true });
-
-    const { data: leadsData, error: leadsErr } = await supabase
-      .from("leads")
-      .select(
-        "id,name,phone_raw,phone_e164,source,interest,campaign,stage_id,next_action_type,next_action_at"
-      );
+    const [
+      { data: stagesData, error: stagesErr },
+      { data: leadsData, error: leadsErr },
+      { data: salesData, error: salesErr },
+    ] = await Promise.all([
+      supabase
+        .from("stages")
+        .select("id,name,position,is_final")
+        .order("position", { ascending: true }),
+      supabase
+        .from("leads")
+        .select(
+          "id,name,phone_raw,phone_e164,source,interest,campaign,stage_id,next_action_type,next_action_at,created_at"
+        ),
+      supabase
+        .from("sales")
+        .select(
+          "id,value,value_gross,seller_name,sale_type,recorrencia_id,closed_at,installments_label"
+        ),
+    ]);
 
     if (stagesErr) console.error(stagesErr);
     if (leadsErr) console.error(leadsErr);
+    if (salesErr) console.error(salesErr);
 
-    if (stagesErr || leadsErr) {
-      setErr(stagesErr?.message || leadsErr?.message || "Erro ao carregar dados");
+    if (stagesErr || leadsErr || salesErr) {
+      setErr(
+        stagesErr?.message ||
+          leadsErr?.message ||
+          salesErr?.message ||
+          "Erro ao carregar dados"
+      );
     }
 
     setStages((stagesData as any) ?? []);
     setLeads((leadsData as any) ?? []);
+    setSales((salesData as any) ?? []);
     setLoading(false);
   }
 
@@ -249,6 +307,21 @@ export default function HomePage() {
   }, [leads, finalStageIds]);
 
   const now = useMemo(() => new Date(), [loading]);
+  const currentMonth = useMemo(
+    () => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
+    [now]
+  );
+
+  const newClientsThisMonth = useMemo(() => {
+    return leads.filter((l) => {
+      if (!l.created_at) return false;
+      const d = new Date(l.created_at);
+      if (Number.isNaN(d.getTime())) return false;
+      const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      return mk === currentMonth;
+    }).length;
+  }, [leads, currentMonth]);
+
   const todayStart = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -343,6 +416,67 @@ export default function HomePage() {
       5
     );
   }, [leads, totalLeads]);
+
+  const salesBySeller = useMemo<SellerItem[]>(() => {
+    const map = new Map<string, { amount: number; count: number }>();
+
+    for (const sale of sales) {
+      if (!sale.closed_at) continue;
+
+      const seller = (sale.seller_name || "Sem vendedor").trim() || "Sem vendedor";
+      const d = new Date(sale.closed_at);
+      if (Number.isNaN(d.getTime())) continue;
+
+      const gross = Number(sale.value_gross ?? sale.value ?? 0);
+      const isRecurring = sale.sale_type === "recorrencia" || !!sale.recorrencia_id;
+      const installmentsTotal = parseInstallmentsTotal(sale.installments_label);
+      const monthlyValue =
+        isRecurring && installmentsTotal > 0
+          ? Number((gross / installmentsTotal).toFixed(2))
+          : gross;
+
+      if (!isRecurring) {
+        const saleMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        if (saleMonth !== currentMonth) continue;
+
+        if (!map.has(seller)) {
+          map.set(seller, { amount: 0, count: 0 });
+        }
+
+        const cur = map.get(seller)!;
+        cur.amount += monthlyValue;
+        cur.count += 1;
+        continue;
+      }
+
+      for (let i = 0; i < installmentsTotal; i += 1) {
+        const installmentDate = addMonths(d, i);
+        if (installmentDate > now) break;
+
+        const installmentMonth = `${installmentDate.getFullYear()}-${String(
+          installmentDate.getMonth() + 1
+        ).padStart(2, "0")}`;
+
+        if (installmentMonth !== currentMonth) continue;
+
+        if (!map.has(seller)) {
+          map.set(seller, { amount: 0, count: 0 });
+        }
+
+        const cur = map.get(seller)!;
+        cur.amount += monthlyValue;
+        cur.count += 1;
+      }
+    }
+
+    return Array.from(map.entries())
+      .map(([seller, v]) => ({
+        seller,
+        amount: Number(v.amount.toFixed(2)),
+        count: v.count,
+      }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [sales, currentMonth, now]);
 
   const pageTitle: React.CSSProperties = {
     fontSize: 18,
@@ -448,9 +582,9 @@ export default function HomePage() {
 
       <div style={gridTop}>
         <div style={card}>
-          <div style={cardTitle}>Total de leads</div>
-          <div style={cardValue}>{totalLeads}</div>
-          <div style={cardHint}>Base total cadastrada</div>
+          <div style={cardTitle}>Novos clientes</div>
+          <div style={cardValue}>{newClientsThisMonth}</div>
+          <div style={cardHint}>Criados no mês atual</div>
         </div>
 
         <div style={card}>
@@ -470,6 +604,39 @@ export default function HomePage() {
           <div style={cardValue}>{overdue.length}</div>
           <div style={cardHint}>Precisa agir agora</div>
         </div>
+      </div>
+
+      <div style={{ ...card, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+          <div style={sectionTitle}>Vendas por vendedoras</div>
+          <div style={soft}>Mês atual</div>
+        </div>
+
+        {salesBySeller.length === 0 ? (
+          <div style={soft}>Nenhuma venda no mês.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {salesBySeller.map((s) => (
+              <div
+                key={s.seller}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  borderRadius: 12,
+                  padding: 10,
+                  background: "rgba(255,255,255,0.03)",
+                }}
+              >
+                <div style={{ fontWeight: 900 }}>{s.seller}</div>
+                <div style={{ fontSize: 13 }}>
+                  {s.count} venda(s) • {formatBRL(s.amount)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div style={gridMain}>
