@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Stage = { id: string; name: string; position: number; is_final?: boolean };
-type Profile = { id: string; name: string | null };
+type ComboOption = { value: string; label: string };
 
 function toE164BR(input: string) {
   const digits = (input || "").replace(/\D/g, "");
@@ -17,6 +17,36 @@ function toE164BR(input: string) {
   }
   if (digits.length === 10 || digits.length === 11) return `+55${digits}`;
   return "";
+}
+
+function normalizeCpf(input: string) {
+  return (input || "").replace(/\D/g, "").slice(0, 11);
+}
+
+function formatCpf(input: string) {
+  const digits = normalizeCpf(input);
+  return digits
+    .replace(/^(\d{3})(\d)/, "$1.$2")
+    .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1-$2");
+}
+
+function uniqueNormalizedOptions(values: Array<string | null | undefined>) {
+  const map = new Map<string, string>();
+
+  for (const raw of values) {
+    const clean = String(raw ?? "").trim();
+    if (!clean) continue;
+
+    const key = clean.toLocaleLowerCase("pt-BR");
+    if (!map.has(key)) {
+      map.set(key, clean);
+    }
+  }
+
+  return Array.from(map.values())
+    .sort((a, b) => a.localeCompare(b, "pt-BR"))
+    .map((x) => ({ value: x, label: x }));
 }
 
 function Select({
@@ -139,6 +169,142 @@ function Select({
   );
 }
 
+function ComboCreatable({
+  value,
+  onChange,
+  options,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: ComboOption[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState(value);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setQuery(value);
+  }, [value]);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("pt-BR");
+    if (!q) return options.slice(0, 8);
+
+    return options
+      .filter((o) => o.label.toLocaleLowerCase("pt-BR").includes(q))
+      .slice(0, 8);
+  }, [options, query]);
+
+  const exactExists = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("pt-BR");
+    if (!q) return false;
+    return options.some((o) => o.label.toLocaleLowerCase("pt-BR") === q);
+  }, [options, query]);
+
+  const inputStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.12)",
+    padding: "10px 12px",
+    borderRadius: 12,
+    outline: "none",
+    width: "100%",
+  };
+
+  const menuStyle: React.CSSProperties = {
+    position: "absolute",
+    top: "calc(100% + 8px)",
+    left: 0,
+    right: 0,
+    zIndex: 50,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(10,10,14,0.96)",
+    backdropFilter: "blur(12px)",
+    boxShadow: "0 24px 80px rgba(0,0,0,0.65)",
+    overflow: "hidden",
+    maxHeight: 260,
+    overflowY: "auto",
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input
+        style={inputStyle}
+        value={query}
+        placeholder={placeholder}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          const v = e.target.value;
+          setQuery(v);
+          onChange(v);
+          setOpen(true);
+        }}
+      />
+
+      {open ? (
+        <div style={menuStyle}>
+          {filtered.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              onClick={() => {
+                setQuery(o.label);
+                onChange(o.value);
+                setOpen(false);
+              }}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 12px",
+                cursor: "pointer",
+                background: "transparent",
+                border: "none",
+                color: "rgba(255,255,255,0.92)",
+                fontWeight: 850,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "rgba(255,255,255,0.06)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "transparent";
+              }}
+            >
+              {o.label}
+            </button>
+          ))}
+
+          {query.trim() && !exactExists ? (
+            <div
+              style={{
+                padding: "10px 12px",
+                borderTop: "1px solid rgba(255,255,255,0.08)",
+                fontSize: 12,
+                opacity: 0.82,
+              }}
+            >
+              Novo valor: <b>{query.trim()}</b>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function EditLeadPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -149,15 +315,20 @@ export default function EditLeadPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const [stages, setStages] = useState<Stage[]>([]);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [currentUserName, setCurrentUserName] = useState("");
 
   const [name, setName] = useState("");
   const [phoneRaw, setPhoneRaw] = useState("");
+  const [cpf, setCpf] = useState("");
+  const [birthDate, setBirthDate] = useState("");
   const [source, setSource] = useState("instagram");
   const [interest, setInterest] = useState("");
   const [stageId, setStageId] = useState("");
   const [campaign, setCampaign] = useState("");
-  const [responsibleId, setResponsibleId] = useState("");
+
+  const [existingCampaigns, setExistingCampaigns] = useState<ComboOption[]>([]);
+  const [existingInterests, setExistingInterests] = useState<ComboOption[]>([]);
 
   const sourceOptions = useMemo(
     () => [
@@ -176,16 +347,6 @@ export default function EditLeadPage() {
     [stages]
   );
 
-  const responsibleOptions = useMemo(() => {
-    const opts = profiles
-      .map((p) => ({
-        value: p.id,
-        label: (p.name ?? "").trim() ? (p.name as string) : p.id,
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-    return [{ value: "", label: "— Não definido —" }, ...opts];
-  }, [profiles]);
-
   useEffect(() => {
     if (!leadId) return;
     void bootstrap();
@@ -196,25 +357,46 @@ export default function EditLeadPage() {
     setLoading(true);
     setErr(null);
 
-    const [st, pr, lead] = await Promise.all([
+    const [{ data: authData }, st, lead, leadsOptions] = await Promise.all([
+      supabase.auth.getUser(),
       supabase.from("stages").select("id,name,position,is_final").order("position", { ascending: true }),
-      supabase.from("profiles").select("id,name").order("name", { ascending: true }),
       supabase
         .from("leads")
-        .select("id,name,phone_raw,source,interest,stage_id,campaign,responsible_id")
+        .select("id,name,phone_raw,source,interest,stage_id,campaign,cpf,birth_date")
         .eq("id", leadId)
         .single(),
+      supabase.from("leads").select("campaign,interest"),
     ]);
 
-    const anyError = st.error || pr.error || lead.error;
+    const anyError = st.error || lead.error || leadsOptions.error;
     if (anyError) {
       setErr(anyError.message ?? "Erro ao carregar lead");
       setLoading(false);
       return;
     }
 
+    const uid = authData.user?.id ?? "";
+    setCurrentUserId(uid);
+
+    if (uid) {
+      const { data: profileData } = await supabase
+        .from("profiles")
+        .select("name")
+        .eq("id", uid)
+        .maybeSingle();
+
+      setCurrentUserName((profileData as any)?.name ?? "");
+    }
+
     setStages((st.data ?? []) as Stage[]);
-    setProfiles((pr.data ?? []) as Profile[]);
+
+    const optionsRows = (leadsOptions.data ?? []) as Array<{
+      campaign?: string | null;
+      interest?: string | null;
+    }>;
+
+    setExistingCampaigns(uniqueNormalizedOptions(optionsRows.map((r) => r.campaign)));
+    setExistingInterests(uniqueNormalizedOptions(optionsRows.map((r) => r.interest)));
 
     const l = lead.data as any;
     setName(l?.name ?? "");
@@ -223,7 +405,8 @@ export default function EditLeadPage() {
     setInterest(l?.interest ?? "");
     setStageId(l?.stage_id ?? "");
     setCampaign(l?.campaign ?? "");
-    setResponsibleId(l?.responsible_id ?? "");
+    setCpf(formatCpf(l?.cpf ?? ""));
+    setBirthDate(l?.birth_date ? String(l.birth_date).slice(0, 10) : "");
 
     setLoading(false);
   }
@@ -236,8 +419,9 @@ export default function EditLeadPage() {
     if (!stageId) return false;
     const e164 = toE164BR(phoneRaw);
     if (!e164) return false;
+    if (cpf.trim() && normalizeCpf(cpf).length !== 11) return false;
     return true;
-  }, [loading, saving, name, interest, source, stageId, phoneRaw]);
+  }, [loading, saving, name, interest, source, stageId, phoneRaw, cpf]);
 
   async function handleSave() {
     if (!leadId || saving) return;
@@ -249,9 +433,16 @@ export default function EditLeadPage() {
     const phoneE164 = toE164BR(cleanPhoneRaw);
     const cleanSource = source.trim();
     const cleanInterest = interest.trim();
+    const cleanCpf = normalizeCpf(cpf);
 
     if (!phoneE164) {
       setErr("Telefone inválido. Ex: (15) 9xxxx-xxxx");
+      setSaving(false);
+      return;
+    }
+
+    if (cleanCpf && cleanCpf.length !== 11) {
+      setErr("CPF inválido.");
       setSaving(false);
       return;
     }
@@ -262,11 +453,13 @@ export default function EditLeadPage() {
         name: cleanName,
         phone_raw: cleanPhoneRaw,
         phone_e164: phoneE164,
+        cpf: cleanCpf || null,
+        birth_date: birthDate || null,
         source: cleanSource,
         interest: cleanInterest,
         stage_id: stageId,
         campaign: campaign.trim() ? campaign.trim() : null,
-        responsible_id: responsibleId.trim() ? responsibleId.trim() : null,
+        responsible_id: currentUserId || null,
       })
       .eq("id", leadId);
 
@@ -356,9 +549,47 @@ export default function EditLeadPage() {
             <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
           </div>
 
-          <div style={{ display: "grid", gap: 10 }}>
-            <div style={labelStyle}>Telefone (BR) *</div>
-            <input style={inputStyle} value={phoneRaw} onChange={(e) => setPhoneRaw(e.target.value)} />
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={labelStyle}>Telefone (BR) *</div>
+              <input style={inputStyle} value={phoneRaw} onChange={(e) => setPhoneRaw(e.target.value)} />
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={labelStyle}>CPF</div>
+              <input
+                style={inputStyle}
+                value={cpf}
+                onChange={(e) => setCpf(formatCpf(e.target.value))}
+                placeholder="000.000.000-00"
+                inputMode="numeric"
+              />
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={labelStyle}>Data de nascimento</div>
+              <input
+                type="date"
+                style={inputStyle}
+                value={birthDate}
+                onChange={(e) => setBirthDate(e.target.value)}
+              />
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={labelStyle}>Responsável</div>
+              <input
+                style={{
+                  ...inputStyle,
+                  opacity: 0.82,
+                  cursor: "not-allowed",
+                }}
+                value={currentUserName || currentUserId || "Usuário logado"}
+                readOnly
+              />
+            </div>
           </div>
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
@@ -369,20 +600,23 @@ export default function EditLeadPage() {
 
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>Interesse *</div>
-              <input style={inputStyle} value={interest} onChange={(e) => setInterest(e.target.value)} />
+              <ComboCreatable
+                value={interest}
+                onChange={setInterest}
+                options={existingInterests}
+                placeholder="Ex: Botox, Depilação, Bioestimulador..."
+              />
             </div>
           </div>
 
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={labelStyle}>Campanha (opcional)</div>
-              <input style={inputStyle} value={campaign} onChange={(e) => setCampaign(e.target.value)} />
-            </div>
-
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={labelStyle}>Responsável (opcional)</div>
-              <Select value={responsibleId} onChange={setResponsibleId} options={responsibleOptions} disabled={profiles.length === 0} />
-            </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            <div style={labelStyle}>Campanha (opcional)</div>
+            <ComboCreatable
+              value={campaign}
+              onChange={setCampaign}
+              options={existingCampaigns}
+              placeholder="Ex: MARÇO - LASER PERNAS"
+            />
           </div>
 
           <div style={{ display: "grid", gap: 10 }}>
