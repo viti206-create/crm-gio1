@@ -14,6 +14,13 @@ type LeadRow = {
   phone_e164?: string | null;
 };
 
+type RecorrenciaJoin = {
+  id: string;
+  status: string | null;
+  start_date: string | null;
+  installments_total: number | null;
+};
+
 type SaleRow = {
   id: string;
   lead_id: string;
@@ -31,6 +38,7 @@ type SaleRow = {
   notes: string | null;
   closed_at: string | null;
   leads?: LeadRow | null;
+  recorrencias?: RecorrenciaJoin | null;
 };
 
 function formatDateBR(d: string | null) {
@@ -133,15 +141,35 @@ function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
   };
 }
 
+const smallBtn: React.CSSProperties = {
+  background: "rgba(255,255,255,0.08)",
+  border: "1px solid rgba(255,255,255,0.14)",
+  color: "white",
+  padding: "5px 8px",
+  borderRadius: 8,
+  cursor: "pointer",
+  fontSize: 11,
+  fontWeight: 800,
+  lineHeight: 1.1,
+};
+
+const dangerBtn: React.CSSProperties = {
+  ...smallBtn,
+  border: "1px solid rgba(255,120,120,0.28)",
+  background: "rgba(255,120,120,0.10)",
+};
+
 export default function VendasPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [rows, setRows] = useState<SaleRow[]>([]);
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [leadId, setLeadId] = useState("");
   const [procedure, setProcedure] = useState("");
@@ -172,7 +200,7 @@ export default function VendasPage() {
     const { data, error } = await supabase
       .from("sales")
       .select(
-        "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at,leads(id,name,phone_raw,phone_e164)"
+        "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at,leads(id,name,phone_raw,phone_e164),recorrencias(id,status,start_date,installments_total)"
       )
       .order("closed_at", { ascending: false });
 
@@ -222,13 +250,109 @@ export default function VendasPage() {
     return Number.isFinite(pct) ? pct : 0;
   }, [grossValue, netValue]);
 
+  function resetForm() {
+    setEditingId(null);
+    setLeadId("");
+    setProcedure("");
+    setPaymentMethod("pix");
+    setInstallmentsLabel("À vista");
+    setSaleType("avulsa");
+    setGrossValue("");
+    setNetValue("");
+    setClosedAt(todayInputValue());
+    setSellerName("");
+    setSource("");
+    setNotes("");
+    setCreateRecorrencia(false);
+    setRecStatus("ativo");
+    setRecStartDate(todayInputValue());
+    setRecInstallmentsTotal("12");
+    setErrorMsg("");
+  }
+
+  function startEdit(row: SaleRow) {
+    setEditingId(row.id);
+    setLeadId(row.lead_id || "");
+    setProcedure(row.procedure || "");
+    setPaymentMethod(row.payment_method || "pix");
+    setInstallmentsLabel(row.installments_label || "À vista");
+    setSaleType(row.sale_type === "recorrencia" ? "recorrencia" : "avulsa");
+    setGrossValue(String(row.value_gross ?? row.value ?? ""));
+    setNetValue(String(row.value_net ?? row.value ?? ""));
+    setClosedAt(row.closed_at ? String(row.closed_at).slice(0, 10) : todayInputValue());
+    setSellerName(row.seller_name || "");
+    setSource(row.source || "");
+    setNotes(row.notes || "");
+    setCreateRecorrencia(Boolean(row.recorrencia_id));
+    setRecStatus(row.recorrencias?.status || "ativo");
+    setRecStartDate(
+      row.recorrencias?.start_date
+        ? String(row.recorrencias.start_date).slice(0, 10)
+        : row.closed_at
+        ? String(row.closed_at).slice(0, 10)
+        : todayInputValue()
+    );
+    setRecInstallmentsTotal(String(row.recorrencias?.installments_total ?? parseInstallmentsTotal(row.installments_label || "À vista")));
+    setErrorMsg("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function handleDelete(row: SaleRow) {
+    const ok = window.confirm("Excluir esta venda?");
+    if (!ok) return;
+
+    setDeletingId(row.id);
+    setErrorMsg("");
+
+    try {
+      const recorrenciaId = row.recorrencia_id;
+
+      const { error: saleDeleteError } = await supabase
+        .from("sales")
+        .delete()
+        .eq("id", row.id);
+
+      if (saleDeleteError) throw saleDeleteError;
+
+      if (recorrenciaId) {
+        const { count, error: countError } = await supabase
+          .from("sales")
+          .select("id", { count: "exact", head: true })
+          .eq("recorrencia_id", recorrenciaId);
+
+        if (countError) throw countError;
+
+        if ((count ?? 0) === 0) {
+          const { error: recDeleteError } = await supabase
+            .from("recorrencias")
+            .delete()
+            .eq("id", recorrenciaId);
+
+          if (recDeleteError) throw recDeleteError;
+        }
+      }
+
+      if (editingId === row.id) {
+        resetForm();
+      }
+
+      await fetchSales();
+      await fetchLeads();
+    } catch (e: any) {
+      console.error(e);
+      setErrorMsg(e?.message ?? "Erro ao excluir venda.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setErrorMsg("");
 
     const gross = Number(grossValue || 0);
     const net = Number(netValue || grossValue || 0);
-    const shouldCreateRecorrencia =
+    const shouldCreateOrKeepRecorrencia =
       saleType === "recorrencia" || createRecorrencia;
 
     if (!leadId) {
@@ -264,41 +388,72 @@ export default function VendasPage() {
     setSaving(true);
 
     try {
-      let recorrenciaId: string | null = null;
+      let recorrenciaId: string | null =
+        rows.find((x) => x.id === editingId)?.recorrencia_id ?? null;
 
-      if (shouldCreateRecorrencia) {
+      if (shouldCreateOrKeepRecorrencia) {
         const installmentsTotal =
           Number(recInstallmentsTotal) > 0
             ? Number(recInstallmentsTotal)
             : parseInstallmentsTotal(installmentsLabel);
 
-        const { data: recData, error: recError } = await supabase
-          .from("recorrencias")
-          .insert({
-            lead_id: leadId,
-            status: recStatus,
-            start_date: recStartDate || closedAt,
-            installments_total: installmentsTotal,
-            installments_done: 1,
-            price_per_installment: gross,
-          })
-          .select("id")
-          .single();
+        if (recorrenciaId) {
+          const { error: recUpdateError } = await supabase
+            .from("recorrencias")
+            .update({
+              lead_id: leadId,
+              status: recStatus,
+              start_date: recStartDate || closedAt,
+              installments_total: installmentsTotal,
+              price_per_installment: gross,
+            })
+            .eq("id", recorrenciaId);
 
-        if (recError) {
-          throw recError;
+          if (recUpdateError) throw recUpdateError;
+        } else {
+          const { data: recData, error: recError } = await supabase
+            .from("recorrencias")
+            .insert({
+              lead_id: leadId,
+              status: recStatus,
+              start_date: recStartDate || closedAt,
+              installments_total: installmentsTotal,
+              installments_done: 1,
+              price_per_installment: gross,
+            })
+            .select("id")
+            .single();
+
+          if (recError) throw recError;
+          recorrenciaId = recData?.id ?? null;
+        }
+      } else if (editingId && recorrenciaId) {
+        const { count, error: countError } = await supabase
+          .from("sales")
+          .select("id", { count: "exact", head: true })
+          .eq("recorrencia_id", recorrenciaId);
+
+        if (countError) throw countError;
+
+        if ((count ?? 0) <= 1) {
+          const { error: recDeleteError } = await supabase
+            .from("recorrencias")
+            .delete()
+            .eq("id", recorrenciaId);
+
+          if (recDeleteError) throw recDeleteError;
         }
 
-        recorrenciaId = recData?.id ?? null;
+        recorrenciaId = null;
       }
 
       const feePercent =
         gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
 
-      const { error: saleError } = await supabase.from("sales").insert({
+      const payload = {
         lead_id: leadId,
         recorrencia_id: recorrenciaId,
-        sale_type: shouldCreateRecorrencia ? "recorrencia" : saleType,
+        sale_type: shouldCreateOrKeepRecorrencia ? "recorrencia" : "avulsa",
         procedure: procedure.trim(),
         value: gross,
         value_gross: gross,
@@ -310,28 +465,24 @@ export default function VendasPage() {
         source: source.trim() || null,
         notes: notes.trim() || null,
         closed_at: closedAt,
-      });
+      };
 
-      if (saleError) {
-        throw saleError;
+      if (editingId) {
+        const { error: saleUpdateError } = await supabase
+          .from("sales")
+          .update(payload)
+          .eq("id", editingId);
+
+        if (saleUpdateError) throw saleUpdateError;
+      } else {
+        const { error: saleInsertError } = await supabase
+          .from("sales")
+          .insert(payload);
+
+        if (saleInsertError) throw saleInsertError;
       }
 
-      setLeadId("");
-      setProcedure("");
-      setPaymentMethod("pix");
-      setInstallmentsLabel("À vista");
-      setSaleType("avulsa");
-      setGrossValue("");
-      setNetValue("");
-      setClosedAt(todayInputValue());
-      setSellerName("");
-      setSource("");
-      setNotes("");
-      setCreateRecorrencia(false);
-      setRecStatus("ativo");
-      setRecStartDate(todayInputValue());
-      setRecInstallmentsTotal("12");
-
+      resetForm();
       await fetchSales();
       await fetchLeads();
     } catch (e: any) {
@@ -400,9 +551,23 @@ export default function VendasPage() {
             fontSize: 18,
             fontWeight: 900,
             marginBottom: 14,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
           }}
         >
-          Nova venda
+          <span>{editingId ? "Editar venda" : "Nova venda"}</span>
+
+          {editingId ? (
+            <button
+              type="button"
+              onClick={resetForm}
+              style={smallBtn}
+            >
+              Cancelar edição
+            </button>
+          ) : null}
         </div>
 
         <div
@@ -691,26 +856,30 @@ export default function VendasPage() {
           style={{
             display: "flex",
             justifyContent: "flex-end",
+            gap: 8,
             marginTop: 14,
           }}
         >
+          {editingId ? (
+            <button
+              type="button"
+              onClick={resetForm}
+              style={smallBtn}
+            >
+              Cancelar
+            </button>
+          ) : null}
+
           <button
             type="submit"
             disabled={saving}
             style={{
-              background: "rgba(255,255,255,0.08)",
-              border: "1px solid rgba(255,255,255,0.14)",
-              color: "white",
-              padding: "6px 10px",
-              borderRadius: 8,
-              cursor: saving ? "not-allowed" : "pointer",
-              fontSize: 12,
-              fontWeight: 800,
-              lineHeight: 1.1,
+              ...smallBtn,
               opacity: saving ? 0.7 : 1,
+              cursor: saving ? "not-allowed" : "pointer",
             }}
           >
-            {saving ? "Salvando..." : "Salvar venda"}
+            {saving ? "Salvando..." : editingId ? "Salvar edição" : "Salvar venda"}
           </button>
         </div>
       </form>
@@ -756,6 +925,9 @@ export default function VendasPage() {
                 </th>
                 <th style={{ textAlign: "left", paddingBottom: 10 }}>
                   Data
+                </th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                  Ações
                 </th>
               </tr>
             </thead>
@@ -828,13 +1000,39 @@ export default function VendasPage() {
                     >
                       {formatDateBR(r.closed_at)}
                     </td>
+
+                    <td
+                      style={{
+                        padding: "10px 0",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={smallBtn}
+                          onClick={() => startEdit(r)}
+                        >
+                          Editar
+                        </button>
+
+                        <button
+                          type="button"
+                          style={dangerBtn}
+                          disabled={deletingId === r.id}
+                          onClick={() => handleDelete(r)}
+                        >
+                          {deletingId === r.id ? "Excluindo..." : "Excluir"}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
 
               {!rows.length ? (
                 <tr>
-                  <td colSpan={5} style={{ paddingTop: 12, opacity: 0.7 }}>
+                  <td colSpan={6} style={{ paddingTop: 12, opacity: 0.7 }}>
                     Nenhuma venda encontrada.
                   </td>
                 </tr>
