@@ -79,6 +79,11 @@ function parseInstallmentsTotal(label: string) {
   return Number(match[1] ?? 1);
 }
 
+function toNumberOrZero(v: string | number | null | undefined) {
+  const n = Number(v ?? 0);
+  return Number.isFinite(n) ? n : 0;
+}
+
 const inputStyle: React.CSSProperties = {
   width: "100%",
   padding: "9px 10px",
@@ -178,6 +183,7 @@ export default function VendasPage() {
   const [saleType, setSaleType] = useState("avulsa");
   const [grossValue, setGrossValue] = useState("");
   const [netValue, setNetValue] = useState("");
+  const [feePercentValue, setFeePercentValue] = useState("");
   const [closedAt, setClosedAt] = useState(todayInputValue());
   const [sellerName, setSellerName] = useState("");
   const [source, setSource] = useState("");
@@ -185,8 +191,6 @@ export default function VendasPage() {
 
   const [createRecorrencia, setCreateRecorrencia] = useState(false);
   const [recStatus, setRecStatus] = useState("ativo");
-  const [recStartDate, setRecStartDate] = useState(todayInputValue());
-  const [recInstallmentsTotal, setRecInstallmentsTotal] = useState("12");
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -243,12 +247,66 @@ export default function VendasPage() {
 
   const feePercentPreview = useMemo(() => {
     const gross = Number(grossValue || 0);
-    const net = Number(netValue || grossValue || 0);
+    const net = Number(netValue || 0);
 
     if (!gross || gross <= 0) return 0;
+    if (!net || net < 0) return 0;
+
     const pct = ((gross - net) / gross) * 100;
     return Number.isFinite(pct) ? pct : 0;
   }, [grossValue, netValue]);
+
+  function handleGrossChange(nextGrossRaw: string) {
+    setGrossValue(nextGrossRaw);
+
+    const nextGross = toNumberOrZero(nextGrossRaw);
+    const currentNet = toNumberOrZero(netValue);
+    const currentFee = toNumberOrZero(feePercentValue);
+
+    if (!nextGross || nextGross <= 0) {
+      return;
+    }
+
+    if (currentNet > 0) {
+      const pct = ((nextGross - currentNet) / nextGross) * 100;
+      setFeePercentValue(Number.isFinite(pct) ? pct.toFixed(2) : "");
+      return;
+    }
+
+    if (currentFee >= 0) {
+      const calculatedNet = nextGross * (1 - currentFee / 100);
+      setNetValue(calculatedNet.toFixed(2));
+    }
+  }
+
+  function handleNetChange(nextNetRaw: string) {
+    setNetValue(nextNetRaw);
+
+    const gross = toNumberOrZero(grossValue);
+    const nextNet = toNumberOrZero(nextNetRaw);
+
+    if (!gross || gross <= 0 || nextNet < 0) {
+      setFeePercentValue("");
+      return;
+    }
+
+    const pct = ((gross - nextNet) / gross) * 100;
+    setFeePercentValue(Number.isFinite(pct) ? pct.toFixed(2) : "");
+  }
+
+  function handleFeePercentChange(nextFeeRaw: string) {
+    setFeePercentValue(nextFeeRaw);
+
+    const gross = toNumberOrZero(grossValue);
+    const nextFee = toNumberOrZero(nextFeeRaw);
+
+    if (!gross || gross <= 0 || nextFee < 0) {
+      return;
+    }
+
+    const calculatedNet = gross * (1 - nextFee / 100);
+    setNetValue(calculatedNet.toFixed(2));
+  }
 
   function resetForm() {
     setEditingId(null);
@@ -259,14 +317,13 @@ export default function VendasPage() {
     setSaleType("avulsa");
     setGrossValue("");
     setNetValue("");
+    setFeePercentValue("");
     setClosedAt(todayInputValue());
     setSellerName("");
     setSource("");
     setNotes("");
     setCreateRecorrencia(false);
     setRecStatus("ativo");
-    setRecStartDate(todayInputValue());
-    setRecInstallmentsTotal("12");
     setErrorMsg("");
   }
 
@@ -279,20 +336,13 @@ export default function VendasPage() {
     setSaleType(row.sale_type === "recorrencia" ? "recorrencia" : "avulsa");
     setGrossValue(String(row.value_gross ?? row.value ?? ""));
     setNetValue(String(row.value_net ?? row.value ?? ""));
+    setFeePercentValue(String(row.fee_percent ?? ""));
     setClosedAt(row.closed_at ? String(row.closed_at).slice(0, 10) : todayInputValue());
     setSellerName(row.seller_name || "");
     setSource(row.source || "");
     setNotes(row.notes || "");
     setCreateRecorrencia(Boolean(row.recorrencia_id));
     setRecStatus(row.recorrencias?.status || "ativo");
-    setRecStartDate(
-      row.recorrencias?.start_date
-        ? String(row.recorrencias.start_date).slice(0, 10)
-        : row.closed_at
-        ? String(row.closed_at).slice(0, 10)
-        : todayInputValue()
-    );
-    setRecInstallmentsTotal(String(row.recorrencias?.installments_total ?? parseInstallmentsTotal(row.installments_label || "À vista")));
     setErrorMsg("");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -352,6 +402,8 @@ export default function VendasPage() {
 
     const gross = Number(grossValue || 0);
     const net = Number(netValue || grossValue || 0);
+    const feePercent =
+      gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
     const shouldCreateOrKeepRecorrencia =
       saleType === "recorrencia" || createRecorrencia;
 
@@ -392,10 +444,7 @@ export default function VendasPage() {
         rows.find((x) => x.id === editingId)?.recorrencia_id ?? null;
 
       if (shouldCreateOrKeepRecorrencia) {
-        const installmentsTotal =
-          Number(recInstallmentsTotal) > 0
-            ? Number(recInstallmentsTotal)
-            : parseInstallmentsTotal(installmentsLabel);
+        const installmentsTotal = parseInstallmentsTotal(installmentsLabel);
 
         if (recorrenciaId) {
           const { error: recUpdateError } = await supabase
@@ -403,7 +452,7 @@ export default function VendasPage() {
             .update({
               lead_id: leadId,
               status: recStatus,
-              start_date: recStartDate || closedAt,
+              start_date: closedAt,
               installments_total: installmentsTotal,
               price_per_installment: gross,
             })
@@ -416,7 +465,7 @@ export default function VendasPage() {
             .insert({
               lead_id: leadId,
               status: recStatus,
-              start_date: recStartDate || closedAt,
+              start_date: closedAt,
               installments_total: installmentsTotal,
               installments_done: 1,
               price_per_installment: gross,
@@ -446,9 +495,6 @@ export default function VendasPage() {
 
         recorrenciaId = null;
       }
-
-      const feePercent =
-        gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
 
       const payload = {
         lead_id: leadId,
@@ -560,11 +606,7 @@ export default function VendasPage() {
           <span>{editingId ? "Editar venda" : "Nova venda"}</span>
 
           {editingId ? (
-            <button
-              type="button"
-              onClick={resetForm}
-              style={smallBtn}
-            >
+            <button type="button" onClick={resetForm} style={smallBtn}>
               Cancelar edição
             </button>
           ) : null}
@@ -651,9 +693,10 @@ export default function VendasPage() {
               options={[
                 { value: "pix", label: "Pix" },
                 { value: "cartao", label: "Cartão" },
+                { value: "cartao_recorrente", label: "Cartão Recorrente" },
+                { value: "debito", label: "Débito" },
                 { value: "dinheiro", label: "Dinheiro" },
                 { value: "boleto", label: "Boleto" },
-                { value: "transferencia", label: "Transferência" },
               ]}
             />
           </div>
@@ -686,7 +729,7 @@ export default function VendasPage() {
               min="0"
               step="0.01"
               value={grossValue}
-              onChange={(e) => setGrossValue(e.target.value)}
+              onChange={(e) => handleGrossChange(e.target.value)}
               style={inputStyle}
               placeholder="0,00"
             />
@@ -699,14 +742,27 @@ export default function VendasPage() {
               min="0"
               step="0.01"
               value={netValue}
-              onChange={(e) => setNetValue(e.target.value)}
+              onChange={(e) => handleNetChange(e.target.value)}
               style={inputStyle}
               placeholder="0,00"
             />
           </div>
 
           <div>
-            <label style={labelStyle}>Taxa</label>
+            <label style={labelStyle}>Taxa (%)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={feePercentValue}
+              onChange={(e) => handleFeePercentChange(e.target.value)}
+              style={inputStyle}
+              placeholder="0,00"
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Prévia taxa</label>
             <div
               style={{
                 ...inputStyle,
@@ -773,69 +829,19 @@ export default function VendasPage() {
         {(createRecorrencia || saleType === "recorrencia") && (
           <div
             style={{
-              marginTop: 14,
-              padding: 12,
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.10)",
-              background: "rgba(255,255,255,0.03)",
+              marginTop: 12,
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
             }}
           >
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 800,
-                marginBottom: 10,
-              }}
-            >
-              Dados da recorrência
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                gap: 10,
-              }}
-            >
-              <div>
-                <label style={labelStyle}>Status</label>
-                <SelectDark
-                  value={recStatus}
-                  onChange={setRecStatus}
-                  placeholder="Status"
-                  searchable={false}
-                  minWidth={160}
-                  options={[
-                    { value: "ativo", label: "Ativo" },
-                    { value: "pausada", label: "Pausada" },
-                    { value: "cancelada", label: "Cancelada" },
-                    { value: "encerrado", label: "Encerrado" },
-                  ]}
-                />
-              </div>
-
-              <div>
-                <label style={labelStyle}>Início</label>
-                <input
-                  type="date"
-                  value={recStartDate}
-                  onChange={(e) => setRecStartDate(e.target.value)}
-                  style={inputStyle}
-                />
-              </div>
-
-              <div>
-                <label style={labelStyle}>Total parcelas</label>
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={recInstallmentsTotal}
-                  onChange={(e) => setRecInstallmentsTotal(e.target.value)}
-                  style={inputStyle}
-                />
-              </div>
-            </div>
+            <span style={chipStyle("primary")}>
+              Início: {formatDateBR(closedAt)}
+            </span>
+            <span style={chipStyle("muted")}>
+              Parcelas: {parseInstallmentsTotal(installmentsLabel)}
+            </span>
+            <span style={chipStyle("muted")}>Status: {recStatus}</span>
           </div>
         )}
 
@@ -861,11 +867,7 @@ export default function VendasPage() {
           }}
         >
           {editingId ? (
-            <button
-              type="button"
-              onClick={resetForm}
-              style={smallBtn}
-            >
+            <button type="button" onClick={resetForm} style={smallBtn}>
               Cancelar
             </button>
           ) : null}
@@ -911,24 +913,12 @@ export default function VendasPage() {
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                  Cliente
-                </th>
-                <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                  Procedimento
-                </th>
-                <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                  Pagamento
-                </th>
-                <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                  Valor
-                </th>
-                <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                  Data
-                </th>
-                <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                  Ações
-                </th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>Cliente</th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>Procedimento</th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>Pagamento</th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor</th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>Data</th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
               </tr>
             </thead>
 
