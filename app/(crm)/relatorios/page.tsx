@@ -12,10 +12,54 @@ type ForecastMonthlyRawRow = {
   expected_revenue: number | null;
 };
 
+type SaleRow = {
+  id: string;
+  lead_id: string | null;
+  recorrencia_id: string | null;
+  value: number | null;
+  value_gross: number | null;
+  value_net: number | null;
+  fee_percent: number | null;
+  payment_method: string | null;
+  installments_label: string | null;
+  sale_type: string | null;
+  seller_name: string | null;
+  source: string | null;
+  procedure: string | null;
+  notes: string | null;
+  closed_at: string | null;
+};
+
+type RecRow = {
+  id: string;
+  lead_id: string | null;
+  status: string | null;
+  start_date: string | null;
+  installments_total: number | null;
+  installments_done: number | null;
+  price_per_installment: number | null;
+};
+
 type ForecastMonthlyGroupedRow = {
   month: string;
   expected_amount: number;
   active_count: number;
+};
+
+type GroupAmountRow = {
+  label: string;
+  count: number;
+  gross: number;
+  net: number;
+};
+
+type MonthlySalesRow = {
+  month: string;
+  gross: number;
+  net: number;
+  count: number;
+  recorrentes: number;
+  avulsas: number;
 };
 
 function formatBRL(v: number | null | undefined) {
@@ -39,6 +83,7 @@ function formatMonthLabel(v: string | null | undefined) {
 
   if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
     const d = new Date(text);
+    if (Number.isNaN(d.getTime())) return text;
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     const yyyy = d.getFullYear();
     return `${mm}/${yyyy}`;
@@ -47,7 +92,18 @@ function formatMonthLabel(v: string | null | undefined) {
   return text;
 }
 
-function chipStyle(kind: "primary" | "muted" | "warn" = "muted"): React.CSSProperties {
+function monthKeyFromDate(v: string | null | undefined) {
+  if (!v) return "";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "";
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${yyyy}-${mm}`;
+}
+
+function chipStyle(
+  kind: "primary" | "muted" | "warn" | "danger" = "muted"
+): React.CSSProperties {
   let border = "1px solid rgba(255,255,255,0.10)";
   let bg = "rgba(255,255,255,0.04)";
 
@@ -59,6 +115,11 @@ function chipStyle(kind: "primary" | "muted" | "warn" = "muted"): React.CSSPrope
   if (kind === "warn") {
     border = "1px solid rgba(255,200,120,0.35)";
     bg = "rgba(255,200,120,0.10)";
+  }
+
+  if (kind === "danger") {
+    border = "1px solid rgba(255,120,120,0.35)";
+    bg = "rgba(255,120,120,0.10)";
   }
 
   return {
@@ -77,6 +138,20 @@ function chipStyle(kind: "primary" | "muted" | "warn" = "muted"): React.CSSPrope
   };
 }
 
+function normalizeRecStatus(status: string | null | undefined) {
+  const s = String(status ?? "")
+    .trim()
+    .toLowerCase();
+
+  if (["ativo", "ativa"].includes(s)) return "ativo";
+  if (["encerrado", "encerrada", "concluido", "concluida", "concluído", "concluída"].includes(s)) {
+    return "encerrado";
+  }
+  if (s === "pausada") return "pausada";
+  if (s === "cancelada") return "cancelada";
+  return s || "ativo";
+}
+
 export default function RelatoriosPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
@@ -84,6 +159,9 @@ export default function RelatoriosPage() {
   const [loading, setLoading] = useState(true);
   const [forecastSummary, setForecastSummary] = useState<ForecastSummaryRow | null>(null);
   const [forecastMonthlyRaw, setForecastMonthlyRaw] = useState<ForecastMonthlyRawRow[]>([]);
+  const [sales, setSales] = useState<SaleRow[]>([]);
+  const [recorrencias, setRecorrencias] = useState<RecRow[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -93,25 +171,64 @@ export default function RelatoriosPage() {
 
   async function fetchAll() {
     setLoading(true);
+    setErrors([]);
 
-    const [{ data: summaryData, error: summaryErr }, { data: monthlyData, error: monthlyErr }] =
-      await Promise.all([
-        supabase
-          .from("v_recorrencias_forecast_summary")
-          .select("*")
-          .limit(1)
-          .maybeSingle(),
-        supabase
-          .from("v_recorrencias_forecast_monthly")
-          .select("month,expected_revenue")
-          .order("month", { ascending: true }),
-      ]);
+    const [
+      { data: summaryData, error: summaryErr },
+      { data: monthlyData, error: monthlyErr },
+      { data: salesData, error: salesErr },
+      { data: recData, error: recErr },
+    ] = await Promise.all([
+      supabase
+        .from("v_recorrencias_forecast_summary")
+        .select("*")
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("v_recorrencias_forecast_monthly")
+        .select("month,expected_revenue")
+        .order("month", { ascending: true }),
+      supabase
+        .from("sales")
+        .select(
+          "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at"
+        )
+        .order("closed_at", { ascending: false }),
+      supabase
+        .from("recorrencias")
+        .select(
+          "id,lead_id,status,start_date,installments_total,installments_done,price_per_installment"
+        )
+        .order("start_date", { ascending: false }),
+    ]);
 
-    if (summaryErr) console.error("forecast summary error:", JSON.stringify(summaryErr, null, 2));
-    if (monthlyErr) console.error("forecast monthly error:", JSON.stringify(monthlyErr, null, 2));
+    const nextErrors: string[] = [];
+
+    if (summaryErr) {
+      console.error("forecast summary error:", JSON.stringify(summaryErr, null, 2));
+      nextErrors.push("Resumo do forecast não carregou.");
+    }
+
+    if (monthlyErr) {
+      console.error("forecast monthly error:", JSON.stringify(monthlyErr, null, 2));
+      nextErrors.push("Forecast mensal não carregou.");
+    }
+
+    if (salesErr) {
+      console.error("sales error:", JSON.stringify(salesErr, null, 2));
+      nextErrors.push("Vendas não carregaram.");
+    }
+
+    if (recErr) {
+      console.error("recorrencias error:", JSON.stringify(recErr, null, 2));
+      nextErrors.push("Recorrências não carregaram.");
+    }
 
     setForecastSummary((summaryData as any) ?? null);
     setForecastMonthlyRaw((monthlyData as any) ?? []);
+    setSales((salesData as any) ?? []);
+    setRecorrencias((recData as any) ?? []);
+    setErrors(nextErrors);
     setLoading(false);
   }
 
@@ -145,6 +262,146 @@ export default function RelatoriosPage() {
 
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
   }, [forecastMonthlyRaw]);
+
+  const salesSummary = useMemo(() => {
+    const gross = sales.reduce((sum, row) => sum + Number(row.value_gross ?? row.value ?? 0), 0);
+    const net = sales.reduce((sum, row) => sum + Number(row.value_net ?? row.value ?? 0), 0);
+    const recorrentes = sales.filter(
+      (row) => row.sale_type === "recorrencia" || !!row.recorrencia_id
+    ).length;
+    const avulsas = sales.length - recorrentes;
+
+    const feesAvg =
+      gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
+
+    return {
+      count: sales.length,
+      gross,
+      net,
+      recorrentes,
+      avulsas,
+      feesAvg,
+    };
+  }, [sales]);
+
+  const recorrenciasSummary = useMemo(() => {
+    let ativas = 0;
+    let pausadas = 0;
+    let canceladas = 0;
+    let encerradas = 0;
+    let mensalPrevistoAtivo = 0;
+
+    for (const row of recorrencias) {
+      const status = normalizeRecStatus(row.status);
+
+      if (status === "ativo") {
+        ativas += 1;
+        mensalPrevistoAtivo += Number(row.price_per_installment ?? 0);
+      } else if (status === "pausada") {
+        pausadas += 1;
+      } else if (status === "cancelada") {
+        canceladas += 1;
+      } else {
+        encerradas += 1;
+      }
+    }
+
+    return {
+      total: recorrencias.length,
+      ativas,
+      pausadas,
+      canceladas,
+      encerradas,
+      mensalPrevistoAtivo,
+    };
+  }, [recorrencias]);
+
+  const bySeller = useMemo<GroupAmountRow[]>(() => {
+    const map = new Map<string, GroupAmountRow>();
+
+    for (const row of sales) {
+      const key = String(row.seller_name || "Sem vendedor").trim() || "Sem vendedor";
+      if (!map.has(key)) {
+        map.set(key, { label: key, count: 0, gross: 0, net: 0 });
+      }
+
+      const current = map.get(key)!;
+      current.count += 1;
+      current.gross += Number(row.value_gross ?? row.value ?? 0);
+      current.net += Number(row.value_net ?? row.value ?? 0);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.net - a.net);
+  }, [sales]);
+
+  const byPayment = useMemo<GroupAmountRow[]>(() => {
+    const map = new Map<string, GroupAmountRow>();
+
+    for (const row of sales) {
+      const key = String(row.payment_method || "Não informado").trim() || "Não informado";
+      if (!map.has(key)) {
+        map.set(key, { label: key, count: 0, gross: 0, net: 0 });
+      }
+
+      const current = map.get(key)!;
+      current.count += 1;
+      current.gross += Number(row.value_gross ?? row.value ?? 0);
+      current.net += Number(row.value_net ?? row.value ?? 0);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.net - a.net);
+  }, [sales]);
+
+  const bySource = useMemo<GroupAmountRow[]>(() => {
+    const map = new Map<string, GroupAmountRow>();
+
+    for (const row of sales) {
+      const key = String(row.source || "Não informada").trim() || "Não informada";
+      if (!map.has(key)) {
+        map.set(key, { label: key, count: 0, gross: 0, net: 0 });
+      }
+
+      const current = map.get(key)!;
+      current.count += 1;
+      current.gross += Number(row.value_gross ?? row.value ?? 0);
+      current.net += Number(row.value_net ?? row.value ?? 0);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.net - a.net);
+  }, [sales]);
+
+  const monthlySales = useMemo<MonthlySalesRow[]>(() => {
+    const map = new Map<string, MonthlySalesRow>();
+
+    for (const row of sales) {
+      const month = monthKeyFromDate(row.closed_at);
+      if (!month) continue;
+
+      if (!map.has(month)) {
+        map.set(month, {
+          month,
+          gross: 0,
+          net: 0,
+          count: 0,
+          recorrentes: 0,
+          avulsas: 0,
+        });
+      }
+
+      const current = map.get(month)!;
+      current.gross += Number(row.value_gross ?? row.value ?? 0);
+      current.net += Number(row.value_net ?? row.value ?? 0);
+      current.count += 1;
+
+      if (row.sale_type === "recorrencia" || row.recorrencia_id) {
+        current.recorrentes += 1;
+      } else {
+        current.avulsas += 1;
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
+  }, [sales]);
 
   const summaryCards = useMemo(() => {
     const expectedThis = Number(forecastSummary?.expected_this ?? 0);
@@ -182,6 +439,13 @@ export default function RelatoriosPage() {
     borderRadius: 18,
     padding: 14,
     boxShadow: "0 22px 70px rgba(0,0,0,0.55)",
+  };
+
+  const miniCard: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.03)",
+    borderRadius: 14,
+    padding: 14,
   };
 
   const btn: React.CSSProperties = {
@@ -239,21 +503,96 @@ export default function RelatoriosPage() {
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <span style={chipStyle("primary")}>
-                Este mês: {formatBRL(summaryCards.expectedThis)}
+                Vendas líquidas: {formatBRL(salesSummary.net)}
               </span>
               <span style={chipStyle("warn")}>
-                Próximo mês: {formatBRL(summaryCards.expectedNext)}
+                Recorrência ativa/mês: {formatBRL(recorrenciasSummary.mensalPrevistoAtivo)}
               </span>
               <span style={chipStyle("muted")}>
                 Próx. 3 meses: {formatBRL(summaryCards.expectedNext3)}
               </span>
+              {!!errors.length && (
+                <span style={chipStyle("danger")}>
+                  {errors.length} aviso(s)
+                </span>
+              )}
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={fetchAll} style={btn}>
+              Atualizar
+            </button>
             <button onClick={() => router.push("/dashboard")} style={btn}>
               Voltar
             </button>
+          </div>
+        </div>
+
+        {!!errors.length && (
+          <div
+            style={{
+              ...card,
+              marginBottom: 14,
+              border: "1px solid rgba(255,120,120,0.20)",
+              background: "rgba(255,120,120,0.06)",
+            }}
+          >
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>Avisos de carregamento</div>
+            <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              {errors.map((err, idx) => (
+                <div key={idx}>• {err}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            marginBottom: 14,
+          }}
+        >
+          <div style={miniCard}>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>Vendas brutas</div>
+            <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
+              {formatBRL(salesSummary.gross)}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+              {salesSummary.count} venda(s)
+            </div>
+          </div>
+
+          <div style={miniCard}>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>Vendas líquidas</div>
+            <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
+              {formatBRL(salesSummary.net)}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+              Taxa média: {salesSummary.feesAvg.toFixed(2)}%
+            </div>
+          </div>
+
+          <div style={miniCard}>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>Recorrências ativas</div>
+            <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
+              {recorrenciasSummary.ativas}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+              Total recorrências: {recorrenciasSummary.total}
+            </div>
+          </div>
+
+          <div style={miniCard}>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>Forecast deste mês</div>
+            <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
+              {formatBRL(summaryCards.expectedThis)}
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+              Próximo: {formatBRL(summaryCards.expectedNext)}
+            </div>
           </div>
         </div>
 
@@ -262,12 +601,213 @@ export default function RelatoriosPage() {
             display: "grid",
             gap: 14,
             gridTemplateColumns: "1fr 1fr",
+            marginBottom: 14,
           }}
         >
           <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>
-              Forecast mensal
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Resumo de vendas</div>
+
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={miniCard}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Vendas avulsas</div>
+                <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+                  {salesSummary.avulsas}
+                </div>
+              </div>
+
+              <div style={miniCard}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>Vendas recorrentes</div>
+                <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+                  {salesSummary.recorrentes}
+                </div>
+              </div>
             </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Resumo de recorrências</div>
+
+            <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div style={miniCard}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Ativas</div>
+                  <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+                    {recorrenciasSummary.ativas}
+                  </div>
+                </div>
+
+                <div style={miniCard}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Pausadas</div>
+                  <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+                    {recorrenciasSummary.pausadas}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div style={miniCard}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Canceladas</div>
+                  <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+                    {recorrenciasSummary.canceladas}
+                  </div>
+                </div>
+
+                <div style={miniCard}>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>Encerradas</div>
+                  <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+                    {recorrenciasSummary.encerradas}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "1fr 1fr",
+            marginBottom: 14,
+          }}
+        >
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Vendas por vendedor</div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Vendedor</th>
+                    <th style={th}>Qtd.</th>
+                    <th style={th}>Bruto</th>
+                    <th style={th}>Líquido</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : bySeller.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    bySeller.map((row) => (
+                      <tr key={row.label}>
+                        <td style={td}>{row.label}</td>
+                        <td style={td}>{row.count}</td>
+                        <td style={td}>{formatBRL(row.gross)}</td>
+                        <td style={td}>{formatBRL(row.net)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Vendas por forma de pagamento</div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Pagamento</th>
+                    <th style={th}>Qtd.</th>
+                    <th style={th}>Bruto</th>
+                    <th style={th}>Líquido</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : byPayment.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    byPayment.map((row) => (
+                      <tr key={row.label}>
+                        <td style={td}>{row.label}</td>
+                        <td style={td}>{row.count}</td>
+                        <td style={td}>{formatBRL(row.gross)}</td>
+                        <td style={td}>{formatBRL(row.net)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "1fr 1fr",
+            marginBottom: 14,
+          }}
+        >
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Vendas por origem</div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Origem</th>
+                    <th style={th}>Qtd.</th>
+                    <th style={th}>Bruto</th>
+                    <th style={th}>Líquido</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : bySource.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    bySource.map((row) => (
+                      <tr key={row.label}>
+                        <td style={td}>{row.label}</td>
+                        <td style={td}>{row.count}</td>
+                        <td style={td}>{formatBRL(row.gross)}</td>
+                        <td style={td}>{formatBRL(row.net)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Forecast mensal</div>
 
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
@@ -305,49 +845,80 @@ export default function RelatoriosPage() {
               </table>
             </div>
           </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "1fr 1fr",
+          }}
+        >
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Vendas por mês</div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Mês</th>
+                    <th style={th}>Qtd.</th>
+                    <th style={th}>Avulsas</th>
+                    <th style={th}>Recorrentes</th>
+                    <th style={th}>Bruto</th>
+                    <th style={th}>Líquido</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={6}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : monthlySales.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={6}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    monthlySales.map((row) => (
+                      <tr key={row.month}>
+                        <td style={td}>{formatMonthLabel(row.month)}</td>
+                        <td style={td}>{row.count}</td>
+                        <td style={td}>{row.avulsas}</td>
+                        <td style={td}>{row.recorrentes}</td>
+                        <td style={td}>{formatBRL(row.gross)}</td>
+                        <td style={td}>{formatBRL(row.net)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
           <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>
-              Resumo do forecast
-            </div>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Resumo do forecast</div>
 
             <div style={{ display: "grid", gap: 12 }}>
-              <div
-                style={{
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(255,255,255,0.03)",
-                  borderRadius: 14,
-                  padding: 14,
-                }}
-              >
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.72 }}>Este mês</div>
                 <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
                   {formatBRL(summaryCards.expectedThis)}
                 </div>
               </div>
 
-              <div
-                style={{
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(255,255,255,0.03)",
-                  borderRadius: 14,
-                  padding: 14,
-                }}
-              >
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.72 }}>Próximo mês</div>
                 <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
                   {formatBRL(summaryCards.expectedNext)}
                 </div>
               </div>
 
-              <div
-                style={{
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(255,255,255,0.03)",
-                  borderRadius: 14,
-                  padding: 14,
-                }}
-              >
+              <div style={miniCard}>
                 <div style={{ fontSize: 12, opacity: 0.72 }}>Próximos 3 meses</div>
                 <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
                   {formatBRL(summaryCards.expectedNext3)}
