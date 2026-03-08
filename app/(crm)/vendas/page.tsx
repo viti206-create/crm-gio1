@@ -245,17 +245,6 @@ export default function VendasPage() {
     return rows.reduce((sum, r) => sum + Number(r.value ?? 0), 0);
   }, [rows]);
 
-  const feePercentPreview = useMemo(() => {
-    const gross = Number(grossValue || 0);
-    const net = Number(netValue || 0);
-
-    if (!gross || gross <= 0) return 0;
-    if (!net || net < 0) return 0;
-
-    const pct = ((gross - net) / gross) * 100;
-    return Number.isFinite(pct) ? pct : 0;
-  }, [grossValue, netValue]);
-
   function handleGrossChange(nextGrossRaw: string) {
     setGrossValue(nextGrossRaw);
 
@@ -263,9 +252,7 @@ export default function VendasPage() {
     const currentNet = toNumberOrZero(netValue);
     const currentFee = toNumberOrZero(feePercentValue);
 
-    if (!nextGross || nextGross <= 0) {
-      return;
-    }
+    if (!nextGross || nextGross <= 0) return;
 
     if (currentNet > 0) {
       const pct = ((nextGross - currentNet) / nextGross) * 100;
@@ -273,7 +260,7 @@ export default function VendasPage() {
       return;
     }
 
-    if (currentFee >= 0) {
+    if (currentFee >= 0 && feePercentValue !== "") {
       const calculatedNet = nextGross * (1 - currentFee / 100);
       setNetValue(calculatedNet.toFixed(2));
     }
@@ -300,9 +287,7 @@ export default function VendasPage() {
     const gross = toNumberOrZero(grossValue);
     const nextFee = toNumberOrZero(nextFeeRaw);
 
-    if (!gross || gross <= 0 || nextFee < 0) {
-      return;
-    }
+    if (!gross || gross <= 0 || nextFee < 0) return;
 
     const calculatedNet = gross * (1 - nextFee / 100);
     setNetValue(calculatedNet.toFixed(2));
@@ -445,6 +430,8 @@ export default function VendasPage() {
 
       if (shouldCreateOrKeepRecorrencia) {
         const installmentsTotal = parseInstallmentsTotal(installmentsLabel);
+        const pricePerInstallment =
+          installmentsTotal > 0 ? gross / installmentsTotal : gross;
 
         if (recorrenciaId) {
           const { error: recUpdateError } = await supabase
@@ -454,7 +441,7 @@ export default function VendasPage() {
               status: recStatus,
               start_date: closedAt,
               installments_total: installmentsTotal,
-              price_per_installment: gross,
+              price_per_installment: Number(pricePerInstallment.toFixed(2)),
             })
             .eq("id", recorrenciaId);
 
@@ -468,7 +455,7 @@ export default function VendasPage() {
               start_date: closedAt,
               installments_total: installmentsTotal,
               installments_done: 1,
-              price_per_installment: gross,
+              price_per_installment: Number(pricePerInstallment.toFixed(2)),
             })
             .select("id")
             .single();
@@ -762,20 +749,6 @@ export default function VendasPage() {
           </div>
 
           <div>
-            <label style={labelStyle}>Prévia taxa</label>
-            <div
-              style={{
-                ...inputStyle,
-                minHeight: 37,
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              {feePercentPreview.toFixed(2)}%
-            </div>
-          </div>
-
-          <div>
             <label style={labelStyle}>Vendedor</label>
             <input
               value={sellerName}
@@ -825,25 +798,6 @@ export default function VendasPage() {
             Criar recorrência junto com esta venda
           </label>
         </div>
-
-        {(createRecorrencia || saleType === "recorrencia") && (
-          <div
-            style={{
-              marginTop: 12,
-              display: "flex",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <span style={chipStyle("primary")}>
-              Início: {formatDateBR(closedAt)}
-            </span>
-            <span style={chipStyle("muted")}>
-              Parcelas: {parseInstallmentsTotal(installmentsLabel)}
-            </span>
-            <span style={chipStyle("muted")}>Status: {recStatus}</span>
-          </div>
-        )}
 
         {errorMsg ? (
           <div
