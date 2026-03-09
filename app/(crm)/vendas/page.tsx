@@ -402,6 +402,12 @@ export default function VendasPage() {
       gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
     const isRecorrencia = saleType === "recorrencia";
 
+    const normalizedProcedure = procedure
+      .split(";")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join("; ");
+
     if (!leadId) {
       setErrorMsg("Selecione o cliente.");
       return;
@@ -669,15 +675,29 @@ export default function VendasPage() {
             />
           </div>
 
-          <div style={{ gridColumn: "span 2" }}>
-            <label style={labelStyle}>Procedimento</label>
-            <input
-              value={procedure}
-              onChange={(e) => setProcedure(e.target.value)}
-              style={inputStyle}
-              placeholder="Ex.: Botox 3 áreas"
-            />
-          </div>
+          <div style={{ display: "grid", gap: 6 }}>
+  <label style={{ fontSize: 13, fontWeight: 800 }}>
+    Procedimentos
+  </label>
+
+  <input
+      value={procedure}
+      onChange={(e) => setProcedure(e.target.value)}
+      placeholder="Ex: Botox 3 áreas; Preenchimento labial; Limpeza de pele"
+      style={{
+        background: "rgba(255,255,255,0.06)",
+        border: "1px solid rgba(255,255,255,0.15)",
+        borderRadius: 10,
+        padding: "10px 12px",
+        color: "white",
+        fontSize: 14
+      }}
+    />
+
+    <div style={{ fontSize: 11, opacity: 0.6 }}>
+      Separe múltiplos procedimentos com <b>;</b>
+    </div>
+  </div>
 
           <div>
             <label style={labelStyle}>Pagamento</label>
