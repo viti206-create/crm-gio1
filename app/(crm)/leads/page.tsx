@@ -232,7 +232,7 @@ export default function LeadsListPage() {
   };
 
   function goEdit(id: string) {
-    router.push(`/leads/${id}`);
+    router.push(`/leads/${id}?returnTo=/contatos`);
   }
 
   return (
@@ -253,8 +253,8 @@ export default function LeadsListPage() {
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Link href="/leads/new?returnTo=/contatos" style={btnPrimary}>
-          + Novo lead
-        </Link>
+            + Novo lead
+          </Link>
         </div>
       </div>
 

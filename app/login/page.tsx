@@ -25,7 +25,7 @@ export default function LoginPage() {
       if (!mounted) return;
 
       if (session) {
-        router.replace("/dashboard");
+        router.replace("/home");
         return;
       }
 
@@ -58,7 +58,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.replace("/dashboard");
+    router.replace("/home");
     router.refresh();
   }
 

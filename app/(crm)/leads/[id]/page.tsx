@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Stage = { id: string; name: string; position: number; is_final?: boolean };
@@ -141,7 +141,14 @@ function Select({
 export default function EditLeadPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const leadId = params?.id;
+
+  const rawReturnTo = searchParams.get("returnTo") || "";
+  const safeReturnTo =
+    rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//")
+      ? rawReturnTo
+      : "/contatos";
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -184,6 +191,11 @@ export default function EditLeadPage() {
     () => stages.map((s) => ({ value: s.id, label: s.name })),
     [stages]
   );
+
+  function goBackToOrigin() {
+    router.push(safeReturnTo);
+    router.refresh();
+  }
 
   useEffect(() => {
     if (!leadId) return;
@@ -279,8 +291,7 @@ export default function EditLeadPage() {
       return;
     }
 
-    router.refresh();
-    router.push("/contatos");
+    goBackToOrigin();
   }
 
   const card: React.CSSProperties = {
@@ -337,7 +348,7 @@ export default function EditLeadPage() {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button onClick={() => router.back()} style={btn}>
+          <button onClick={goBackToOrigin} style={btn}>
             Voltar
           </button>
           <button onClick={handleSave} style={canSave ? btnPrimary : btnDisabled} disabled={!canSave}>

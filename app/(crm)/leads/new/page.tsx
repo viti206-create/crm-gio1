@@ -334,7 +334,7 @@ export default function NewLeadPage() {
   const safeReturnTo =
     rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//")
       ? rawReturnTo
-      : "/dashboard";
+      : "/home";
 
   const [stages, setStages] = useState<Stage[]>([]);
   const [loadingStages, setLoadingStages] = useState(false);
