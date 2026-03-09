@@ -75,6 +75,61 @@ type ExpandedSaleMetric = {
   isRecurring: boolean;
 };
 
+type FilterMode = "monthly" | "yearly";
+
+function FilterToggle({
+  options,
+  value,
+  onChange,
+}: {
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        gap: 8,
+        padding: 4,
+        borderRadius: 14,
+        border: "1px solid rgba(255,255,255,0.10)",
+        background: "rgba(255,255,255,0.04)",
+        flexWrap: "wrap",
+      }}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            style={{
+              background: active
+                ? "linear-gradient(180deg, rgba(180,120,255,0.20) 0%, rgba(180,120,255,0.08) 100%)"
+                : "rgba(255,255,255,0.06)",
+              color: "white",
+              border: active
+                ? "1px solid rgba(180,120,255,0.30)"
+                : "1px solid rgba(255,255,255,0.12)",
+              padding: "10px 14px",
+              borderRadius: 12,
+              cursor: "pointer",
+              fontWeight: 900,
+              fontSize: 13,
+              minWidth: 72,
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function formatBRL(v: number | null | undefined) {
   const n = Number(v ?? 0);
   if (!Number.isFinite(n)) return "—";
@@ -118,10 +173,6 @@ function addMonths(dt: Date, months: number) {
   const x = new Date(dt.getTime());
   x.setMonth(x.getMonth() + months);
   return x;
-}
-
-function firstDayOfMonth(dt: Date) {
-  return new Date(dt.getFullYear(), dt.getMonth(), 1, 0, 0, 0, 0);
 }
 
 function normalizeRecStatus(status: string | null | undefined) {
@@ -195,9 +246,24 @@ function chipStyle(
   };
 }
 
+function isInPeriod(date: Date, mode: FilterMode, year: number, month: number) {
+  if (mode === "yearly") return date.getFullYear() === year;
+  return date.getFullYear() === year && date.getMonth() === month;
+}
+
+function periodLabel(mode: FilterMode, year: number, month: number) {
+  if (mode === "yearly") return `Ano ${year}`;
+  return `${String(month + 1).padStart(2, "0")}/${year}`;
+}
+
 export default function RelatoriosPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
+
+  const todayRef = useMemo(() => new Date(), []);
+  const [filterMode, setFilterMode] = useState<FilterMode>("monthly");
+  const [selectedYear, setSelectedYear] = useState(todayRef.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(todayRef.getMonth());
 
   const [loading, setLoading] = useState(true);
   const [sales, setSales] = useState<SaleRow[]>([]);
@@ -254,8 +320,39 @@ export default function RelatoriosPage() {
     }
   }, [isAdmin]);
 
-  const now = useMemo(() => new Date(), []);
-  const currentMonthStart = useMemo(() => firstDayOfMonth(now), [now]);
+  const allYears = useMemo(() => {
+    const set = new Set<number>();
+    set.add(todayRef.getFullYear());
+
+    for (const s of sales) {
+      if (!s.closed_at) continue;
+      const d = new Date(s.closed_at);
+      if (!Number.isNaN(d.getTime())) set.add(d.getFullYear());
+    }
+
+    for (const r of recorrencias) {
+      if (!r.start_date) continue;
+      const d = new Date(r.start_date);
+      if (!Number.isNaN(d.getTime())) set.add(d.getFullYear());
+    }
+
+    return Array.from(set).sort((a, b) => b - a);
+  }, [sales, recorrencias, todayRef]);
+
+  const monthOptions = [
+    "Jan",
+    "Fev",
+    "Mar",
+    "Abr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Ago",
+    "Set",
+    "Out",
+    "Nov",
+    "Dez",
+  ];
 
   const expandedMetrics = useMemo<ExpandedSaleMetric[]>(() => {
     const out: ExpandedSaleMetric[] = [];
@@ -272,7 +369,8 @@ export default function RelatoriosPage() {
       const feePercent = Number(row.fee_percent ?? 0);
 
       if (!isRecurring) {
-        if (saleDate > now) continue;
+        if (saleDate > todayRef) continue;
+        if (!isInPeriod(saleDate, filterMode, selectedYear, selectedMonth)) continue;
 
         out.push({
           seller_name: row.seller_name ?? null,
@@ -303,7 +401,8 @@ export default function RelatoriosPage() {
 
       for (let i = 0; i < totalInstallments; i += 1) {
         const installmentDate = addMonths(saleDate, i);
-        if (installmentDate > now) break;
+        if (installmentDate > todayRef) break;
+        if (!isInPeriod(installmentDate, filterMode, selectedYear, selectedMonth)) continue;
 
         out.push({
           seller_name: row.seller_name ?? null,
@@ -321,9 +420,9 @@ export default function RelatoriosPage() {
     }
 
     return out;
-  }, [sales, now]);
+  }, [sales, todayRef, filterMode, selectedYear, selectedMonth]);
 
-  const forecastMonthly = useMemo<ForecastMonthlyGroupedRow[]>(() => {
+  const forecastMonthlyAll = useMemo<ForecastMonthlyGroupedRow[]>(() => {
     const map = new Map<string, ForecastMonthlyGroupedRow>();
 
     for (const row of recorrencias) {
@@ -341,8 +440,6 @@ export default function RelatoriosPage() {
 
       for (let idx = Math.max(done - 1, 0); idx < total; idx += 1) {
         const paymentDate = addMonths(startDate, idx);
-        if (paymentDate < currentMonthStart) continue;
-
         const month = monthKeyFromDate(paymentDate);
         if (!month) continue;
 
@@ -361,24 +458,44 @@ export default function RelatoriosPage() {
     }
 
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
-  }, [recorrencias, currentMonthStart]);
+  }, [recorrencias]);
+
+  const forecastMonthly = useMemo<ForecastMonthlyGroupedRow[]>(() => {
+    return forecastMonthlyAll.filter((row) => {
+      const [year, month] = row.month.split("-").map(Number);
+      if (!year || !month) return false;
+
+      const d = new Date(year, month - 1, 1);
+      return isInPeriod(d, filterMode, selectedYear, selectedMonth);
+    });
+  }, [forecastMonthlyAll, filterMode, selectedYear, selectedMonth]);
 
   const forecastSummary = useMemo(() => {
-    const currentMonthKey = monthKeyFromDate(currentMonthStart);
-    const nextMonthKey = monthKeyFromDate(addMonths(currentMonthStart, 1));
+    if (filterMode === "yearly") {
+      const total = forecastMonthly.reduce((sum, row) => sum + row.expected_amount, 0);
+      return {
+        expectedThis: total,
+        expectedNext: 0,
+        expectedNext3: 0,
+      };
+    }
+
+    const currentBase = new Date(selectedYear, selectedMonth, 1);
+    const currentMonthKey = monthKeyFromDate(currentBase);
+    const nextMonthKey = monthKeyFromDate(addMonths(currentBase, 1));
 
     let expectedThis = 0;
     let expectedNext = 0;
     let expectedNext3 = 0;
 
-    for (const row of forecastMonthly) {
+    for (const row of forecastMonthlyAll) {
       if (row.month === currentMonthKey) expectedThis += row.expected_amount;
       if (row.month === nextMonthKey) expectedNext += row.expected_amount;
     }
 
     for (let i = 1; i <= 3; i += 1) {
-      const key = monthKeyFromDate(addMonths(currentMonthStart, i));
-      const found = forecastMonthly.find((x) => x.month === key);
+      const key = monthKeyFromDate(addMonths(currentBase, i));
+      const found = forecastMonthlyAll.find((x) => x.month === key);
       expectedNext3 += Number(found?.expected_amount ?? 0);
     }
 
@@ -387,7 +504,7 @@ export default function RelatoriosPage() {
       expectedNext,
       expectedNext3,
     };
-  }, [forecastMonthly, currentMonthStart]);
+  }, [forecastMonthly, forecastMonthlyAll, filterMode, selectedYear, selectedMonth]);
 
   const salesSummary = useMemo(() => {
     const gross = expandedMetrics.reduce((sum, row) => sum + row.effectiveGross, 0);
@@ -415,6 +532,37 @@ export default function RelatoriosPage() {
 
     for (const row of recorrencias) {
       const status = normalizeRecStatus(row.status);
+      const startDate = row.start_date ? new Date(row.start_date) : null;
+      const inPeriodStart =
+        startDate && !Number.isNaN(startDate.getTime())
+          ? isInPeriod(startDate, filterMode, selectedYear, selectedMonth)
+          : false;
+
+      if (filterMode === "monthly" && !inPeriodStart) {
+        const possibleDates: Date[] = [];
+        const total = Number(row.installments_total ?? 0);
+        for (let i = 0; i < total; i += 1) {
+          if (!startDate) continue;
+          possibleDates.push(addMonths(startDate, i));
+        }
+        const touchesPeriod = possibleDates.some((d) =>
+          isInPeriod(d, filterMode, selectedYear, selectedMonth)
+        );
+        if (!touchesPeriod) continue;
+      }
+
+      if (filterMode === "yearly" && startDate && !isInPeriod(startDate, filterMode, selectedYear, selectedMonth)) {
+        const total = Number(row.installments_total ?? 0);
+        let touchesYear = false;
+        for (let i = 0; i < total; i += 1) {
+          const d = addMonths(startDate, i);
+          if (isInPeriod(d, filterMode, selectedYear, selectedMonth)) {
+            touchesYear = true;
+            break;
+          }
+        }
+        if (!touchesYear) continue;
+      }
 
       if (status === "ativo") {
         ativas += 1;
@@ -429,14 +577,14 @@ export default function RelatoriosPage() {
     }
 
     return {
-      total: recorrencias.length,
+      total: ativas + pausadas + canceladas + encerradas,
       ativas,
       pausadas,
       canceladas,
       encerradas,
       mensalPrevistoAtivo,
     };
-  }, [recorrencias]);
+  }, [recorrencias, filterMode, selectedYear, selectedMonth]);
 
   const bySeller = useMemo<GroupAmountRow[]>(() => {
     const map = new Map<string, GroupAmountRow>();
@@ -604,17 +752,87 @@ export default function RelatoriosPage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <span style={chipStyle("primary")}>
+              <FilterToggle
+                value={filterMode}
+                onChange={(v) => setFilterMode(v as FilterMode)}
+                options={[
+                  { value: "monthly", label: "Mensal" },
+                  { value: "yearly", label: "Anual" },
+                ]}
+              />
+
+              <FilterToggle
+                value={String(selectedYear)}
+                onChange={(v) => setSelectedYear(Number(v))}
+                options={allYears.map((year) => ({
+                  value: String(year),
+                  label: String(year),
+                }))}
+              />
+
+              {filterMode === "monthly" ? (
+                <FilterToggle
+                  value={String(selectedMonth)}
+                  onChange={(v) => setSelectedMonth(Number(v))}
+                  options={monthOptions.map((label, idx) => ({
+                    value: String(idx),
+                    label,
+                  }))}
+                />
+              ) : null}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+              <span
+                style={{
+                  ...chipStyle("muted"),
+                  padding: "2px 8px",
+                  fontSize: 11,
+                }}
+              >
+                Período: {periodLabel(filterMode, selectedYear, selectedMonth)}
+              </span>
+
+              <span
+                style={{
+                  ...chipStyle("primary"),
+                  padding: "2px 8px",
+                  fontSize: 11,
+                }}
+              >
                 Vendas líquidas: {formatBRL(salesSummary.net)}
               </span>
-              <span style={chipStyle("warn")}>
+
+              <span
+                style={{
+                  ...chipStyle("warn"),
+                  padding: "2px 8px",
+                  fontSize: 11,
+                }}
+              >
                 Recorrência ativa/mês: {formatBRL(recorrenciasSummary.mensalPrevistoAtivo)}
               </span>
-              <span style={chipStyle("muted")}>
+
+              <span
+                style={{
+                  ...chipStyle("muted"),
+                  padding: "2px 8px",
+                  fontSize: 11,
+                }}
+              >
                 Próx. 3 meses: {formatBRL(forecastSummary.expectedNext3)}
               </span>
+
               {!!errors.length && (
-                <span style={chipStyle("danger")}>{errors.length} aviso(s)</span>
+                <span
+                  style={{
+                    ...chipStyle("danger"),
+                    padding: "2px 8px",
+                    fontSize: 11,
+                  }}
+                >
+                  {errors.length} aviso(s)
+                </span>
               )}
             </div>
           </div>
@@ -686,7 +904,9 @@ export default function RelatoriosPage() {
           </div>
 
           <div style={miniCard}>
-            <div style={{ fontSize: 12, opacity: 0.72 }}>Forecast deste mês</div>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>
+              {filterMode === "monthly" ? "Forecast deste mês" : "Forecast do ano"}
+            </div>
             <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
               {formatBRL(forecastSummary.expectedThis)}
             </div>
@@ -907,7 +1127,9 @@ export default function RelatoriosPage() {
           </div>
 
           <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>Forecast mensal</div>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>
+              {filterMode === "monthly" ? "Forecast mensal" : "Forecast do ano"}
+            </div>
 
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
@@ -955,7 +1177,9 @@ export default function RelatoriosPage() {
           }}
         >
           <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>Vendas por mês</div>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>
+              {filterMode === "monthly" ? "Vendas por mês" : "Vendas por mês do ano"}
+            </div>
 
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
@@ -1005,7 +1229,9 @@ export default function RelatoriosPage() {
 
             <div style={{ display: "grid", gap: 12 }}>
               <div style={miniCard}>
-                <div style={{ fontSize: 12, opacity: 0.72 }}>Este mês</div>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>
+                  {filterMode === "monthly" ? "Este mês" : "Ano selecionado"}
+                </div>
                 <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
                   {formatBRL(forecastSummary.expectedThis)}
                 </div>

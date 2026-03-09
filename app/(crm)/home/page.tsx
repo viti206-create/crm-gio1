@@ -48,6 +48,61 @@ type SellerItem = {
   count: number;
 };
 
+type FilterMode = "monthly" | "yearly";
+
+function FilterToggle({
+  options,
+  value,
+  onChange,
+}: {
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        gap: 8,
+        padding: 4,
+        borderRadius: 14,
+        border: "1px solid rgba(255,255,255,0.10)",
+        background: "rgba(255,255,255,0.04)",
+        flexWrap: "wrap",
+      }}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            style={{
+              background: active
+                ? "linear-gradient(180deg, rgba(180,120,255,0.20) 0%, rgba(180,120,255,0.08) 100%)"
+                : "rgba(255,255,255,0.06)",
+              color: "white",
+              border: active
+                ? "1px solid rgba(180,120,255,0.30)"
+                : "1px solid rgba(255,255,255,0.12)",
+              padding: "10px 14px",
+              borderRadius: 12,
+              cursor: "pointer",
+              fontWeight: 900,
+              fontSize: 13,
+              minWidth: 72,
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
   return {
     fontSize: 12,
@@ -152,6 +207,16 @@ function parseInstallmentsTotal(label?: string | null) {
   return Number(m[1]);
 }
 
+function isInPeriod(date: Date, mode: FilterMode, year: number, month: number) {
+  if (mode === "yearly") return date.getFullYear() === year;
+  return date.getFullYear() === year && date.getMonth() === month;
+}
+
+function periodLabel(mode: FilterMode, year: number, month: number) {
+  if (mode === "yearly") return `Ano ${year}`;
+  return `${String(month + 1).padStart(2, "0")}/${year}`;
+}
+
 function MiniFunnelCard({
   title,
   items,
@@ -234,6 +299,11 @@ function MiniFunnelCard({
 }
 
 export default function HomePage() {
+  const todayRef = useMemo(() => new Date(), []);
+  const [filterMode, setFilterMode] = useState<FilterMode>("monthly");
+  const [selectedYear, setSelectedYear] = useState(todayRef.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(todayRef.getMonth());
+
   const [stages, setStages] = useState<Stage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
@@ -289,6 +359,40 @@ export default function HomePage() {
     setLoading(false);
   }
 
+  const allYears = useMemo(() => {
+    const set = new Set<number>();
+    set.add(todayRef.getFullYear());
+
+    for (const l of leads) {
+      if (!l.created_at) continue;
+      const d = new Date(l.created_at);
+      if (!Number.isNaN(d.getTime())) set.add(d.getFullYear());
+    }
+
+    for (const s of sales) {
+      if (!s.closed_at) continue;
+      const d = new Date(s.closed_at);
+      if (!Number.isNaN(d.getTime())) set.add(d.getFullYear());
+    }
+
+    return Array.from(set).sort((a, b) => b - a);
+  }, [leads, sales, todayRef]);
+
+  const monthOptions = [
+    "Jan",
+    "Fev",
+    "Mar",
+    "Abr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Ago",
+    "Set",
+    "Out",
+    "Nov",
+    "Dez",
+  ];
+
   const stageNameFromId = (id?: string | null) => {
     if (!id) return "—";
     return stages.find((s) => s.id === id)?.name ?? "—";
@@ -300,33 +404,42 @@ export default function HomePage() {
     return s;
   }, [stages]);
 
-  const totalLeads = leads.length;
-
-  const inProgress = useMemo(() => {
-    return leads.filter((l) => !finalStageIds.has(l.stage_id)).length;
-  }, [leads, finalStageIds]);
-
-  const now = useMemo(() => new Date(), [loading]);
-  const currentMonth = useMemo(
-    () => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`,
-    [now]
-  );
-
-  const newClientsThisMonth = useMemo(() => {
+  const filteredLeads = useMemo(() => {
     return leads.filter((l) => {
       if (!l.created_at) return false;
       const d = new Date(l.created_at);
       if (Number.isNaN(d.getTime())) return false;
-      const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-      return mk === currentMonth;
-    }).length;
-  }, [leads, currentMonth]);
+      return isInPeriod(d, filterMode, selectedYear, selectedMonth);
+    });
+  }, [leads, filterMode, selectedYear, selectedMonth]);
+
+  const totalLeads = filteredLeads.length;
+
+  const inProgress = useMemo(() => {
+    return filteredLeads.filter((l) => !finalStageIds.has(l.stage_id)).length;
+  }, [filteredLeads, finalStageIds]);
+
+  const newClientsInPeriod = totalLeads;
+
+  const periodStart = useMemo(() => {
+    if (filterMode === "yearly") {
+      return new Date(selectedYear, 0, 1, 0, 0, 0, 0);
+    }
+    return new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
+  }, [filterMode, selectedYear, selectedMonth]);
+
+  const periodEnd = useMemo(() => {
+    if (filterMode === "yearly") {
+      return new Date(selectedYear, 11, 31, 23, 59, 59, 999);
+    }
+    return new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59, 999);
+  }, [filterMode, selectedYear, selectedMonth]);
 
   const todayStart = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
     return d;
-  }, [loading]);
+  }, []);
 
   const todayEnd = useMemo(() => {
     const d = new Date(todayStart);
@@ -341,16 +454,17 @@ export default function HomePage() {
   }, [todayEnd]);
 
   const leadsWithNext = useMemo(() => {
-    return leads
+    return filteredLeads
       .filter((l) => !!l.next_action_at)
       .map((l) => ({ ...l, _next: new Date(l.next_action_at as string) }))
       .filter((l) => !isNaN((l as any)._next.getTime()))
+      .filter((l: any) => l._next.getTime() >= periodStart.getTime() && l._next.getTime() <= periodEnd.getTime())
       .sort((a: any, b: any) => a._next.getTime() - b._next.getTime());
-  }, [leads]);
+  }, [filteredLeads, periodStart, periodEnd]);
 
   const overdue = useMemo(
-    () => leadsWithNext.filter((l: any) => l._next.getTime() < now.getTime()),
-    [leadsWithNext, now]
+    () => leadsWithNext.filter((l: any) => l._next.getTime() < todayStart.getTime()),
+    [leadsWithNext, todayStart]
   );
 
   const today = useMemo(
@@ -374,9 +488,9 @@ export default function HomePage() {
   const countsByStage = useMemo(() => {
     const m = new Map<string, number>();
     for (const st of stages) m.set(st.id, 0);
-    for (const l of leads) m.set(l.stage_id, (m.get(l.stage_id) ?? 0) + 1);
+    for (const l of filteredLeads) m.set(l.stage_id, (m.get(l.stage_id) ?? 0) + 1);
     return m;
-  }, [stages, leads]);
+  }, [stages, filteredLeads]);
 
   const stageFunnel = useMemo(() => {
     return stages
@@ -395,27 +509,27 @@ export default function HomePage() {
 
   const campaignsFunnel = useMemo(() => {
     return buildGroupedFunnel(
-      leads.map((l) => l.campaign),
+      filteredLeads.map((l) => l.campaign),
       totalLeads,
       5
     );
-  }, [leads, totalLeads]);
+  }, [filteredLeads, totalLeads]);
 
   const sourceFunnel = useMemo(() => {
     return buildGroupedFunnel(
-      leads.map((l) => l.source),
+      filteredLeads.map((l) => l.source),
       totalLeads,
       5
     );
-  }, [leads, totalLeads]);
+  }, [filteredLeads, totalLeads]);
 
   const interestFunnel = useMemo(() => {
     return buildGroupedFunnel(
-      leads.map((l) => l.interest),
+      filteredLeads.map((l) => l.interest),
       totalLeads,
       5
     );
-  }, [leads, totalLeads]);
+  }, [filteredLeads, totalLeads]);
 
   const salesBySeller = useMemo<SellerItem[]>(() => {
     const map = new Map<string, { amount: number; count: number }>();
@@ -436,8 +550,7 @@ export default function HomePage() {
           : gross;
 
       if (!isRecurring) {
-        const saleMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-        if (saleMonth !== currentMonth) continue;
+        if (!isInPeriod(d, filterMode, selectedYear, selectedMonth)) continue;
 
         if (!map.has(seller)) {
           map.set(seller, { amount: 0, count: 0 });
@@ -451,13 +564,8 @@ export default function HomePage() {
 
       for (let i = 0; i < installmentsTotal; i += 1) {
         const installmentDate = addMonths(d, i);
-        if (installmentDate > now) break;
-
-        const installmentMonth = `${installmentDate.getFullYear()}-${String(
-          installmentDate.getMonth() + 1
-        ).padStart(2, "0")}`;
-
-        if (installmentMonth !== currentMonth) continue;
+        if (installmentDate > todayRef) break;
+        if (!isInPeriod(installmentDate, filterMode, selectedYear, selectedMonth)) continue;
 
         if (!map.has(seller)) {
           map.set(seller, { amount: 0, count: 0 });
@@ -476,7 +584,7 @@ export default function HomePage() {
         count: v.count,
       }))
       .sort((a, b) => b.amount - a.amount);
-  }, [sales, currentMonth, now]);
+  }, [sales, filterMode, selectedYear, selectedMonth, todayRef]);
 
   const pageTitle: React.CSSProperties = {
     fontSize: 18,
@@ -572,7 +680,49 @@ export default function HomePage() {
         CRM GIO • Home <span style={{ ...chipStyle("muted"), marginLeft: 6 }}>Boituva • Unidade</span>
       </div>
 
+      <div
+        style={{
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
+          marginBottom: 8,
+          alignItems: "center",
+        }}
+      >
+        <FilterToggle
+          value={filterMode}
+          onChange={(v) => setFilterMode(v as FilterMode)}
+          options={[
+            { value: "monthly", label: "Mensal" },
+            { value: "yearly", label: "Anual" },
+          ]}
+        />
+
+        <FilterToggle
+          value={String(selectedYear)}
+          onChange={(v) => setSelectedYear(Number(v))}
+          options={allYears.map((year) => ({
+            value: String(year),
+            label: String(year),
+          }))}
+        />
+
+        {filterMode === "monthly" ? (
+          <FilterToggle
+            value={String(selectedMonth)}
+            onChange={(v) => setSelectedMonth(Number(v))}
+            options={monthOptions.map((label, idx) => ({
+              value: String(idx),
+              label,
+            }))}
+          />
+        ) : null}
+      </div>
+
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
+        <span style={chipStyle("muted")}>
+          Período: {periodLabel(filterMode, selectedYear, selectedMonth)}
+        </span>
         <span style={chipStyle("muted")}>Leads: {totalLeads}</span>
         <span style={chipStyle("primary")}>Em progresso: {inProgress}</span>
       </div>
@@ -583,8 +733,10 @@ export default function HomePage() {
       <div style={gridTop}>
         <div style={card}>
           <div style={cardTitle}>Novos clientes</div>
-          <div style={cardValue}>{newClientsThisMonth}</div>
-          <div style={cardHint}>Criados no mês atual</div>
+          <div style={cardValue}>{newClientsInPeriod}</div>
+          <div style={cardHint}>
+            {filterMode === "monthly" ? "Criados no mês escolhido" : "Criados no ano escolhido"}
+          </div>
         </div>
 
         <div style={card}>
@@ -596,24 +748,24 @@ export default function HomePage() {
         <div style={card}>
           <div style={cardTitle}>Ações hoje</div>
           <div style={cardValue}>{today.length}</div>
-          <div style={cardHint}>Próximas ações no dia</div>
+          <div style={cardHint}>Dentro do período filtrado</div>
         </div>
 
         <div style={card}>
           <div style={cardTitle}>Atrasadas</div>
           <div style={cardValue}>{overdue.length}</div>
-          <div style={cardHint}>Precisa agir agora</div>
+          <div style={cardHint}>Dentro do período filtrado</div>
         </div>
       </div>
 
       <div style={{ ...card, marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
           <div style={sectionTitle}>Vendas por vendedoras</div>
-          <div style={soft}>Mês atual</div>
+          <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth)}</div>
         </div>
 
         {salesBySeller.length === 0 ? (
-          <div style={soft}>Nenhuma venda no mês.</div>
+          <div style={soft}>Nenhuma venda no período.</div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
             {salesBySeller.map((s) => (
@@ -752,7 +904,7 @@ export default function HomePage() {
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
             <div style={sectionTitle}>Funil de etapas</div>
-            <div style={soft}>Triangular • porcentagens</div>
+            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth)}</div>
           </div>
 
           {stageFunnel.length === 0 ? (
