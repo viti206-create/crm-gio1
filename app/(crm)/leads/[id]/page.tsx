@@ -1,10 +1,15 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
-type Stage = { id: string; name: string; position: number; is_final?: boolean };
+type Stage = {
+  id: string;
+  name: string;
+  position: number;
+  is_final?: boolean;
+};
 
 function toE164BR(input: string) {
   const digits = (input || "").replace(/\D/g, "");
@@ -141,14 +146,7 @@ function Select({
 export default function EditLeadPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
-  const searchParams = useSearchParams();
   const leadId = params?.id;
-
-  const rawReturnTo = searchParams.get("returnTo") || "";
-  const safeReturnTo =
-    rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//")
-      ? rawReturnTo
-      : "/contatos";
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -192,9 +190,8 @@ export default function EditLeadPage() {
     [stages]
   );
 
-  function goBackToOrigin() {
-    router.push(safeReturnTo);
-    router.refresh();
+  function goBackToLeads() {
+    router.replace("/leads");
   }
 
   useEffect(() => {
@@ -208,10 +205,15 @@ export default function EditLeadPage() {
     setErr(null);
 
     const [st, lead] = await Promise.all([
-      supabase.from("stages").select("id,name,position,is_final").order("position", { ascending: true }),
+      supabase
+        .from("stages")
+        .select("id,name,position,is_final")
+        .order("position", { ascending: true }),
       supabase
         .from("leads")
-        .select("id,name,phone_raw,source,interest,stage_id,campaign,responsible_id,cpf,birth_date,sex")
+        .select(
+          "id,name,phone_raw,source,interest,stage_id,campaign,responsible_id,cpf,birth_date,sex"
+        )
         .eq("id", leadId)
         .single(),
     ]);
@@ -291,7 +293,7 @@ export default function EditLeadPage() {
       return;
     }
 
-    goBackToOrigin();
+    router.replace("/leads");
   }
 
   const card: React.CSSProperties = {
@@ -337,21 +339,36 @@ export default function EditLeadPage() {
       "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
   };
 
-  const btnDisabled: React.CSSProperties = { ...btnPrimary, opacity: 0.55, cursor: "not-allowed" };
+  const btnDisabled: React.CSSProperties = {
+    ...btnPrimary,
+    opacity: 0.55,
+    cursor: "not-allowed",
+  };
 
   return (
     <div style={{ padding: 16, color: "white" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
         <div style={{ display: "grid", gap: 6 }}>
           <div style={{ fontSize: 18, fontWeight: 950 }}>Editar lead</div>
           <div style={{ fontSize: 12, opacity: 0.75 }}>{leadId}</div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button onClick={goBackToOrigin} style={btn}>
+          <button onClick={goBackToLeads} style={btn}>
             Voltar
           </button>
-          <button onClick={handleSave} style={canSave ? btnPrimary : btnDisabled} disabled={!canSave}>
+          <button
+            onClick={handleSave}
+            style={canSave ? btnPrimary : btnDisabled}
+            disabled={!canSave}
+          >
             {saving ? "Salvando..." : "Salvar"}
           </button>
         </div>
@@ -361,23 +378,45 @@ export default function EditLeadPage() {
 
       <div style={card}>
         {loading ? <div style={{ opacity: 0.8 }}>Carregando...</div> : null}
-        {err ? <div style={{ color: "#ff6b6b", fontSize: 12, marginBottom: 10 }}>{err}</div> : null}
+        {err ? (
+          <div style={{ color: "#ff6b6b", fontSize: 12, marginBottom: 10 }}>
+            {err}
+          </div>
+        ) : null}
 
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "grid", gap: 10 }}>
             <div style={labelStyle}>Nome *</div>
-            <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} />
+            <input
+              style={inputStyle}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
 
           <div style={{ display: "grid", gap: 10 }}>
             <div style={labelStyle}>Telefone (BR) *</div>
-            <input style={inputStyle} value={phoneRaw} onChange={(e) => setPhoneRaw(e.target.value)} />
+            <input
+              style={inputStyle}
+              value={phoneRaw}
+              onChange={(e) => setPhoneRaw(e.target.value)}
+            />
           </div>
 
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "1fr 1fr",
+            }}
+          >
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>CPF</div>
-              <input style={inputStyle} value={cpf} onChange={(e) => setCpf(e.target.value)} />
+              <input
+                style={inputStyle}
+                value={cpf}
+                onChange={(e) => setCpf(e.target.value)}
+              />
             </div>
 
             <div style={{ display: "grid", gap: 10 }}>
@@ -391,7 +430,13 @@ export default function EditLeadPage() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "1fr 1fr",
+            }}
+          >
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>Sexo</div>
               <Select
@@ -404,19 +449,37 @@ export default function EditLeadPage() {
 
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>Origem *</div>
-              <Select value={source} onChange={setSource} options={sourceOptions} />
+              <Select
+                value={source}
+                onChange={setSource}
+                options={sourceOptions}
+              />
             </div>
           </div>
 
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "1fr 1fr",
+            }}
+          >
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>Interesse *</div>
-              <input style={inputStyle} value={interest} onChange={(e) => setInterest(e.target.value)} />
+              <input
+                style={inputStyle}
+                value={interest}
+                onChange={(e) => setInterest(e.target.value)}
+              />
             </div>
 
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>Campanha (opcional)</div>
-              <input style={inputStyle} value={campaign} onChange={(e) => setCampaign(e.target.value)} />
+              <input
+                style={inputStyle}
+                value={campaign}
+                onChange={(e) => setCampaign(e.target.value)}
+              />
             </div>
           </div>
 
@@ -431,7 +494,12 @@ export default function EditLeadPage() {
 
           <div style={{ display: "grid", gap: 10 }}>
             <div style={labelStyle}>Etapa atual *</div>
-            <Select value={stageId} onChange={setStageId} options={stageOptions} disabled={stages.length === 0} />
+            <Select
+              value={stageId}
+              onChange={setStageId}
+              options={stageOptions}
+              disabled={stages.length === 0}
+            />
           </div>
         </div>
       </div>
