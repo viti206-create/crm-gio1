@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminAccess } from "../_hooks/useAdminAccess";
 
+type LeadRow = {
+  id: string;
+  sex: string | null;
+  birth_date: string | null;
+};
+
 type RecorrenciaJoin = {
   id: string;
   status: string | null;
@@ -66,6 +72,7 @@ type MonthlySalesRow = {
 };
 
 type ExpandedSaleMetric = {
+  lead_id: string | null;
   seller_name: string | null;
   source: string | null;
   payment_method: string | null;
@@ -209,6 +216,45 @@ function formatPaymentMethod(v: string | null | undefined) {
   return v || "—";
 }
 
+function normalizeSexLabel(v: string | null | undefined) {
+  const key = String(v ?? "").trim().toLowerCase();
+
+  if (key === "feminino") return "Feminino";
+  if (key === "masculino") return "Masculino";
+  return "Não informado";
+}
+
+function calculateAge(birthDate: string | null | undefined) {
+  if (!birthDate) return null;
+
+  const birth = new Date(birthDate);
+  if (Number.isNaN(birth.getTime())) return null;
+
+  const today = new Date();
+
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+
+  if (
+    monthDiff < 0 ||
+    (monthDiff === 0 && today.getDate() < birth.getDate())
+  ) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}
+
+function ageRange(age: number | null) {
+  if (age === null) return "Não informado";
+  if (age <= 17) return "Até 17";
+  if (age <= 24) return "18-24";
+  if (age <= 34) return "25-34";
+  if (age <= 44) return "35-44";
+  if (age <= 54) return "45-54";
+  return "55+";
+}
+
 function chipStyle(
   kind: "primary" | "muted" | "warn" | "danger" = "muted"
 ): React.CSSProperties {
@@ -268,6 +314,7 @@ export default function RelatoriosPage() {
   const [loading, setLoading] = useState(true);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [recorrencias, setRecorrencias] = useState<RecRow[]>([]);
+  const [leads, setLeads] = useState<LeadRow[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
 
   useEffect(() => {
@@ -280,21 +327,27 @@ export default function RelatoriosPage() {
     setLoading(true);
     setErrors([]);
 
-    const [{ data: salesData, error: salesErr }, { data: recData, error: recErr }] =
-      await Promise.all([
-        supabase
-          .from("sales")
-          .select(
-            "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at,recorrencias(id,status,start_date,installments_total,installments_done,price_per_installment)"
-          )
-          .order("closed_at", { ascending: false }),
-        supabase
-          .from("recorrencias")
-          .select(
-            "id,lead_id,status,start_date,installments_total,installments_done,price_per_installment"
-          )
-          .order("start_date", { ascending: false }),
-      ]);
+    const [
+      { data: salesData, error: salesErr },
+      { data: recData, error: recErr },
+      { data: leadsData, error: leadsErr },
+    ] = await Promise.all([
+      supabase
+        .from("sales")
+        .select(
+          "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at,recorrencias(id,status,start_date,installments_total,installments_done,price_per_installment)"
+        )
+        .order("closed_at", { ascending: false }),
+      supabase
+        .from("recorrencias")
+        .select(
+          "id,lead_id,status,start_date,installments_total,installments_done,price_per_installment"
+        )
+        .order("start_date", { ascending: false }),
+      supabase
+        .from("leads")
+        .select("id,sex,birth_date"),
+    ]);
 
     const nextErrors: string[] = [];
 
@@ -308,8 +361,14 @@ export default function RelatoriosPage() {
       nextErrors.push("Recorrências não carregaram.");
     }
 
+    if (leadsErr) {
+      console.error("leads error:", JSON.stringify(leadsErr, null, 2));
+      nextErrors.push("Leads não carregaram.");
+    }
+
     setSales((salesData as any) ?? []);
     setRecorrencias((recData as any) ?? []);
+    setLeads((leadsData as any) ?? []);
     setErrors(nextErrors);
     setLoading(false);
   }
@@ -373,6 +432,7 @@ export default function RelatoriosPage() {
         if (!isInPeriod(saleDate, filterMode, selectedYear, selectedMonth)) continue;
 
         out.push({
+          lead_id: row.lead_id ?? null,
           seller_name: row.seller_name ?? null,
           source: row.source ?? null,
           payment_method: row.payment_method ?? null,
@@ -405,6 +465,7 @@ export default function RelatoriosPage() {
         if (!isInPeriod(installmentDate, filterMode, selectedYear, selectedMonth)) continue;
 
         out.push({
+          lead_id: row.lead_id ?? null,
           seller_name: row.seller_name ?? null,
           source: row.source ?? null,
           payment_method: row.payment_method ?? null,
@@ -669,6 +730,61 @@ export default function RelatoriosPage() {
 
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
   }, [expandedMetrics]);
+
+  const leadsById = useMemo(() => {
+    const map = new Map<string, LeadRow>();
+    for (const lead of leads) {
+      map.set(lead.id, lead);
+    }
+    return map;
+  }, [leads]);
+
+  const uniqueLeadsInPeriod = useMemo(() => {
+    const ids = new Set<string>();
+
+    for (const row of expandedMetrics) {
+      if (row.lead_id) ids.add(row.lead_id);
+    }
+
+    return Array.from(ids)
+      .map((id) => leadsById.get(id))
+      .filter((lead): lead is LeadRow => !!lead);
+  }, [expandedMetrics, leadsById]);
+
+  const clientsBySex = useMemo(() => {
+    const order = ["Feminino", "Masculino", "Não informado"];
+    const map = new Map<string, number>();
+
+    for (const lead of uniqueLeadsInPeriod) {
+      const label = normalizeSexLabel(lead.sex);
+      map.set(label, (map.get(label) ?? 0) + 1);
+    }
+
+    return order
+      .filter((label) => map.has(label))
+      .map((label) => ({
+        label,
+        count: map.get(label) ?? 0,
+      }));
+  }, [uniqueLeadsInPeriod]);
+
+  const clientsByAge = useMemo(() => {
+    const order = ["Até 17", "18-24", "25-34", "35-44", "45-54", "55+", "Não informado"];
+    const map = new Map<string, number>();
+
+    for (const lead of uniqueLeadsInPeriod) {
+      const age = calculateAge(lead.birth_date);
+      const label = ageRange(age);
+      map.set(label, (map.get(label) ?? 0) + 1);
+    }
+
+    return order
+      .filter((label) => map.has(label))
+      .map((label) => ({
+        label,
+        count: map.get(label) ?? 0,
+      }));
+  }, [uniqueLeadsInPeriod]);
 
   const page: React.CSSProperties = {
     padding: 16,
@@ -1160,6 +1276,95 @@ export default function RelatoriosPage() {
                         <td style={td}>{formatMonthLabel(row.month)}</td>
                         <td style={td}>{formatBRL(row.expected_amount)}</td>
                         <td style={td}>{row.active_count}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "1fr 1fr",
+            marginBottom: 14,
+          }}
+        >
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>
+              Clientes por sexo
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Sexo</th>
+                    <th style={th}>Qtd.</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={2}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : clientsBySex.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={2}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    clientsBySex.map((row) => (
+                      <tr key={row.label}>
+                        <td style={td}>{row.label}</td>
+                        <td style={td}>{row.count}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>
+              Clientes por idade
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Faixa etária</th>
+                    <th style={th}>Qtd.</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={2}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : clientsByAge.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={2}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    clientsByAge.map((row) => (
+                      <tr key={row.label}>
+                        <td style={td}>{row.label}</td>
+                        <td style={td}>{row.count}</td>
                       </tr>
                     ))
                   )}

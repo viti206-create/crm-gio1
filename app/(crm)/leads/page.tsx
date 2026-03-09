@@ -25,6 +25,9 @@ type Lead = {
   responsible_id?: string | null;
   next_action_type?: string | null;
   next_action_at?: string | null;
+  cpf?: string | null;
+  birth_date?: string | null;
+  sex?: string | null;
 };
 
 function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
@@ -67,6 +70,34 @@ function formatWhen(iso: string) {
   }
 }
 
+function normalizeSexLabel(v?: string | null) {
+  const key = String(v ?? "").trim().toLowerCase();
+  if (key === "feminino") return "Feminino";
+  if (key === "masculino") return "Masculino";
+  return "Não informado";
+}
+
+function calculateAge(birthDate?: string | null) {
+  if (!birthDate) return null;
+
+  const birth = new Date(birthDate);
+  if (Number.isNaN(birth.getTime())) return null;
+
+  const today = new Date();
+
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+
+  if (
+    monthDiff < 0 ||
+    (monthDiff === 0 && today.getDate() < birth.getDate())
+  ) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}
+
 export default function LeadsListPage() {
   const router = useRouter();
 
@@ -95,7 +126,7 @@ export default function LeadsListPage() {
     const { data: leadsData, error: leadsErr } = await supabase
       .from("leads")
       .select(
-        "id,name,phone_raw,phone_e164,source,interest,stage_id,campaign,responsible_id,next_action_type,next_action_at"
+        "id,name,phone_raw,phone_e164,source,interest,stage_id,campaign,responsible_id,next_action_type,next_action_at,cpf,birth_date,sex"
       )
       .order("id", { ascending: false });
 
@@ -134,6 +165,9 @@ export default function LeadsListPage() {
 
       if (!query) return true;
 
+      const age = calculateAge(l.birth_date);
+      const sex = normalizeSexLabel(l.sex);
+
       const hay = [
         l.name ?? "",
         l.phone_raw ?? "",
@@ -143,6 +177,10 @@ export default function LeadsListPage() {
         stageNameFromId(l.stage_id) ?? "",
         l.campaign ?? "",
         l.responsible_id ?? "",
+        l.cpf ?? "",
+        l.birth_date ?? "",
+        sex,
+        age != null ? String(age) : "",
       ]
         .join(" ")
         .toLowerCase();
@@ -223,7 +261,7 @@ export default function LeadsListPage() {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
         <input
           style={inputStyle}
-          placeholder="Buscar (nome, telefone, origem, interesse...)"
+          placeholder="Buscar (nome, telefone, origem, interesse, sexo, idade...)"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -297,6 +335,8 @@ export default function LeadsListPage() {
           {filtered.map((l) => {
             const wa = `https://wa.me/${normalizePhoneForWa(l.phone_e164)}`;
             const stageName = stageNameFromId(l.stage_id);
+            const sexLabel = normalizeSexLabel(l.sex);
+            const age = calculateAge(l.birth_date);
 
             return (
               <div
@@ -319,6 +359,10 @@ export default function LeadsListPage() {
                       <span style={chipStyle("primary")}>{stageName}</span>
                       <span style={chipStyle("muted")}>{l.source}</span>
                       <span style={chipStyle("muted")}>{l.interest}</span>
+                      <span style={chipStyle("muted")}>{sexLabel}</span>
+                      <span style={chipStyle("muted")}>
+                        {age != null ? `${age} anos` : "Idade não informada"}
+                      </span>
 
                       {l.next_action_at ? (
                         <span style={chipStyle("muted")}>
@@ -329,7 +373,6 @@ export default function LeadsListPage() {
                   </div>
 
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-start" }}>
-                    {/* Editar (não dispara clique do card) */}
                     <button
                       style={btn}
                       onClick={(e) => {
@@ -341,7 +384,6 @@ export default function LeadsListPage() {
                       Editar
                     </button>
 
-                    {/* WhatsApp (não dispara clique do card) */}
                     <a
                       style={btnPrimary}
                       href={wa}

@@ -23,6 +23,8 @@ type Lead = {
   next_action_type?: string | null;
   next_action_at?: string | null;
   created_at?: string | null;
+  sex?: string | null;
+  birth_date?: string | null;
 };
 
 type Sale = {
@@ -217,6 +219,44 @@ function periodLabel(mode: FilterMode, year: number, month: number) {
   return `${String(month + 1).padStart(2, "0")}/${year}`;
 }
 
+function normalizeSexLabel(v?: string | null) {
+  const key = String(v ?? "").trim().toLowerCase();
+  if (key === "feminino") return "Feminino";
+  if (key === "masculino") return "Masculino";
+  return "Não informado";
+}
+
+function calculateAge(birthDate?: string | null) {
+  if (!birthDate) return null;
+
+  const birth = new Date(birthDate);
+  if (Number.isNaN(birth.getTime())) return null;
+
+  const today = new Date();
+
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+
+  if (
+    monthDiff < 0 ||
+    (monthDiff === 0 && today.getDate() < birth.getDate())
+  ) {
+    age -= 1;
+  }
+
+  return age >= 0 ? age : null;
+}
+
+function ageRange(age: number | null) {
+  if (age === null) return "Não informado";
+  if (age <= 17) return "Até 17";
+  if (age <= 24) return "18-24";
+  if (age <= 34) return "25-34";
+  if (age <= 44) return "35-44";
+  if (age <= 54) return "45-54";
+  return "55+";
+}
+
 function MiniFunnelCard({
   title,
   items,
@@ -331,7 +371,7 @@ export default function HomePage() {
       supabase
         .from("leads")
         .select(
-          "id,name,phone_raw,phone_e164,source,interest,campaign,stage_id,next_action_type,next_action_at,created_at"
+          "id,name,phone_raw,phone_e164,source,interest,campaign,stage_id,next_action_type,next_action_at,created_at,sex,birth_date"
         ),
       supabase
         .from("sales")
@@ -421,20 +461,6 @@ export default function HomePage() {
 
   const newClientsInPeriod = totalLeads;
 
-  const periodStart = useMemo(() => {
-    if (filterMode === "yearly") {
-      return new Date(selectedYear, 0, 1, 0, 0, 0, 0);
-    }
-    return new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
-  }, [filterMode, selectedYear, selectedMonth]);
-
-  const periodEnd = useMemo(() => {
-    if (filterMode === "yearly") {
-      return new Date(selectedYear, 11, 31, 23, 59, 59, 999);
-    }
-    return new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59, 999);
-  }, [filterMode, selectedYear, selectedMonth]);
-
   const todayStart = useMemo(() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -452,6 +478,20 @@ export default function HomePage() {
     d.setDate(d.getDate() + 7);
     return d;
   }, [todayEnd]);
+
+  const periodStart = useMemo(() => {
+    if (filterMode === "yearly") {
+      return new Date(selectedYear, 0, 1, 0, 0, 0, 0);
+    }
+    return new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
+  }, [filterMode, selectedYear, selectedMonth]);
+
+  const periodEnd = useMemo(() => {
+    if (filterMode === "yearly") {
+      return new Date(selectedYear, 11, 31, 23, 59, 59, 999);
+    }
+    return new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59, 999);
+  }, [filterMode, selectedYear, selectedMonth]);
 
   const leadsWithNext = useMemo(() => {
     return filteredLeads
@@ -585,6 +625,41 @@ export default function HomePage() {
       }))
       .sort((a, b) => b.amount - a.amount);
   }, [sales, filterMode, selectedYear, selectedMonth, todayRef]);
+
+  const clientsBySex = useMemo(() => {
+    const order = ["Feminino", "Masculino", "Não informado"];
+    const map = new Map<string, number>();
+
+    for (const lead of filteredLeads) {
+      const label = normalizeSexLabel(lead.sex);
+      map.set(label, (map.get(label) ?? 0) + 1);
+    }
+
+    return order
+      .filter((label) => map.has(label))
+      .map((label) => ({
+        label,
+        count: map.get(label) ?? 0,
+      }));
+  }, [filteredLeads]);
+
+  const clientsByAge = useMemo(() => {
+    const order = ["Até 17", "18-24", "25-34", "35-44", "45-54", "55+", "Não informado"];
+    const map = new Map<string, number>();
+
+    for (const lead of filteredLeads) {
+      const age = calculateAge(lead.birth_date);
+      const label = ageRange(age);
+      map.set(label, (map.get(label) ?? 0) + 1);
+    }
+
+    return order
+      .filter((label) => map.has(label))
+      .map((label) => ({
+        label,
+        count: map.get(label) ?? 0,
+      }));
+  }, [filteredLeads]);
 
   const pageTitle: React.CSSProperties = {
     fontSize: 18,
@@ -789,6 +864,77 @@ export default function HomePage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gap: 12,
+          gridTemplateColumns: "1fr 1fr",
+          marginBottom: 12,
+        }}
+      >
+        <div style={card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+            <div style={sectionTitle}>Clientes por sexo</div>
+            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth)}</div>
+          </div>
+
+          {clientsBySex.length === 0 ? (
+            <div style={soft}>Sem dados no período.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {clientsBySex.map((item) => (
+                <div
+                  key={item.label}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    borderRadius: 12,
+                    padding: 10,
+                    background: "rgba(255,255,255,0.03)",
+                  }}
+                >
+                  <div style={{ fontWeight: 900 }}>{item.label}</div>
+                  <div style={{ fontSize: 13 }}>{item.count} cliente(s)</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+            <div style={sectionTitle}>Clientes por idade</div>
+            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth)}</div>
+          </div>
+
+          {clientsByAge.length === 0 ? (
+            <div style={soft}>Sem dados no período.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              {clientsByAge.map((item) => (
+                <div
+                  key={item.label}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    borderRadius: 12,
+                    padding: 10,
+                    background: "rgba(255,255,255,0.03)",
+                  }}
+                >
+                  <div style={{ fontWeight: 900 }}>{item.label}</div>
+                  <div style={{ fontSize: 13 }}>{item.count} cliente(s)</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={gridMain}>
