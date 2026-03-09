@@ -252,9 +252,9 @@ export default function LeadsListPage() {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Link href="/leads/new" style={btnPrimary}>
-            + Novo lead
-          </Link>
+          <Link href="/leads/new?returnTo=/contatos" style={btnPrimary}>
+          + Novo lead
+        </Link>
         </div>
       </div>
 

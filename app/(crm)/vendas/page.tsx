@@ -1051,9 +1051,9 @@ export default function VendasPage() {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Link href="/leads/new" style={btnPrimary}>
-            + Novo lead
-          </Link>
+          <Link href="/leads/new?returnTo=/vendas" style={btnPrimary}>
+          + Novo lead
+        </Link>
         </div>
       </div>
 

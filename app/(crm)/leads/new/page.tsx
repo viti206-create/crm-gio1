@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Stage = {
@@ -328,6 +328,13 @@ function Select({
 
 export default function NewLeadPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const rawReturnTo = searchParams.get("returnTo") || "";
+  const safeReturnTo =
+    rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//")
+      ? rawReturnTo
+      : "/dashboard";
 
   const [stages, setStages] = useState<Stage[]>([]);
   const [loadingStages, setLoadingStages] = useState(false);
@@ -412,6 +419,11 @@ export default function NewLeadPage() {
   function closeToast() {
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
     setToast(null);
+  }
+
+  function goBackToOrigin() {
+    router.push(safeReturnTo);
+    router.refresh();
   }
 
   async function fetchStages() {
@@ -622,18 +634,15 @@ export default function NewLeadPage() {
           },
         },
         {
-          label: "Ir para Kanban",
+          label: "Voltar",
           variant: "ghost",
           onClick: () => {
             closeToast();
-            router.push("/dashboard");
-            router.refresh();
+            goBackToOrigin();
           },
         },
       ],
     });
-
-    resetForm();
   }
 
   const card: React.CSSProperties = {
@@ -718,7 +727,7 @@ export default function NewLeadPage() {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button onClick={() => router.push("/dashboard")} style={btn}>
+          <button onClick={goBackToOrigin} style={btn}>
             Voltar
           </button>
           <button
@@ -922,8 +931,8 @@ export default function NewLeadPage() {
             flexWrap: "wrap",
           }}
         >
-          <button onClick={() => router.push("/dashboard")} style={btn}>
-            Voltar pro Kanban
+          <button onClick={goBackToOrigin} style={btn}>
+            Voltar
           </button>
           <button
             onClick={handleSave}
