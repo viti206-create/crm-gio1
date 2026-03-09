@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Stage = {
@@ -9,6 +9,17 @@ type Stage = {
   name: string;
   position: number;
   is_final?: boolean;
+};
+
+type ProfileOption = {
+  id: string;
+  name: string | null;
+};
+
+type ToastAction = {
+  label: string;
+  onClick: () => void;
+  variant?: "primary" | "ghost";
 };
 
 function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
@@ -32,12 +43,6 @@ function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
     whiteSpace: "nowrap",
   };
 }
-
-type ToastAction = {
-  label: string;
-  onClick: () => void;
-  variant?: "primary" | "ghost";
-};
 
 function Toast({
   title,
@@ -326,17 +331,132 @@ function Select({
   );
 }
 
+function SuggestInput({
+  value,
+  onChange,
+  suggestions,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  suggestions: string[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const current = value.trim().toLowerCase();
+    const uniq = new Map<string, string>();
+
+    for (const item of suggestions) {
+      const clean = String(item || "").trim();
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      if (!uniq.has(key)) uniq.set(key, clean);
+    }
+
+    return Array.from(uniq.values())
+      .filter((item) => {
+        if (!current) return true;
+        return item.toLowerCase().includes(current);
+      })
+      .slice(0, 8);
+  }, [suggestions, value]);
+
+  const inputStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.12)",
+    padding: "10px 12px",
+    borderRadius: 12,
+    outline: "none",
+    width: "100%",
+  };
+
+  const menuStyle: React.CSSProperties = {
+    position: "absolute",
+    top: "calc(100% + 8px)",
+    left: 0,
+    right: 0,
+    zIndex: 60,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(10,10,14,0.96)",
+    backdropFilter: "blur(12px)",
+    boxShadow: "0 24px 80px rgba(0,0,0,0.65)",
+    overflow: "hidden",
+    maxHeight: 260,
+    overflowY: "auto",
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input
+        style={inputStyle}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+      />
+
+      {open && filtered.length > 0 ? (
+        <div style={menuStyle}>
+          {filtered.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => {
+                onChange(item);
+                setOpen(false);
+              }}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 12px",
+                cursor: "pointer",
+                background: "transparent",
+                border: "none",
+                color: "rgba(255,255,255,0.92)",
+                fontWeight: 850,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "rgba(255,255,255,0.06)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "transparent";
+              }}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function NewLeadPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const rawReturnTo = searchParams.get("returnTo") || "";
-  const safeReturnTo =
-    rawReturnTo.startsWith("/") && !rawReturnTo.startsWith("//")
-      ? rawReturnTo
-      : "/home";
 
   const [stages, setStages] = useState<Stage[]>([]);
+  const [profiles, setProfiles] = useState<ProfileOption[]>([]);
+  const [interestSuggestions, setInterestSuggestions] = useState<string[]>([]);
+  const [campaignSuggestions, setCampaignSuggestions] = useState<string[]>([]);
   const [loadingStages, setLoadingStages] = useState(false);
 
   const [name, setName] = useState("");
@@ -350,6 +470,9 @@ export default function NewLeadPage() {
   const [stageId, setStageId] = useState<string>("");
 
   const [campaign, setCampaign] = useState<string>("");
+
+  const [responsibleId, setResponsibleId] = useState<string>("");
+  const [responsibleName, setResponsibleName] = useState<string>("");
 
   const [nextActionEnabled, setNextActionEnabled] = useState(false);
   const [nextActionType, setNextActionType] = useState<string>("whatsapp");
@@ -421,40 +544,81 @@ export default function NewLeadPage() {
     setToast(null);
   }
 
-  function goBackToOrigin() {
-    router.push(safeReturnTo);
-    router.refresh();
-  }
-
-  async function fetchStages() {
+  async function fetchInitialData() {
     setLoadingStages(true);
 
-    const { data, error: err } = await supabase
-      .from("stages")
-      .select("id,name,position,is_final")
-      .order("position", { ascending: true });
+    const [stagesRes, profilesRes, leadsMetaRes, authRes] = await Promise.all([
+      supabase
+        .from("stages")
+        .select("id,name,position,is_final")
+        .order("position", { ascending: true }),
+      supabase.from("profiles").select("id,name"),
+      supabase.from("leads").select("interest,campaign"),
+      supabase.auth.getUser(),
+    ]);
 
     setLoadingStages(false);
 
-    if (err) {
-      console.error("stages error:", err);
-      showToast(err.message ?? "Erro ao carregar etapas", {
+    if (stagesRes.error) {
+      console.error("stages error:", stagesRes.error);
+      showToast(stagesRes.error.message ?? "Erro ao carregar etapas", {
         title: "Falha ao carregar",
         variant: "error",
       });
       return;
     }
 
-    const rows = (data ?? []) as Stage[];
+    const rows = (stagesRes.data ?? []) as Stage[];
     setStages(rows);
 
     if (!stageId && rows.length > 0) setStageId(rows[0].id);
+
+    setProfiles((profilesRes.data ?? []) as ProfileOption[]);
+
+    const allMeta = (leadsMetaRes.data ?? []) as Array<{
+      interest: string | null;
+      campaign: string | null;
+    }>;
+
+    const uniqueInterests = Array.from(
+      new Map(
+        allMeta
+          .map((x) => String(x.interest ?? "").trim())
+          .filter(Boolean)
+          .map((item) => [item.toLowerCase(), item])
+      ).values()
+    ).sort((a, b) => a.localeCompare(b));
+
+    const uniqueCampaigns = Array.from(
+      new Map(
+        allMeta
+          .map((x) => String(x.campaign ?? "").trim())
+          .filter(Boolean)
+          .map((item) => [item.toLowerCase(), item])
+      ).values()
+    ).sort((a, b) => a.localeCompare(b));
+
+    setInterestSuggestions(uniqueInterests);
+    setCampaignSuggestions(uniqueCampaigns);
+
+    const authUserId = authRes.data.user?.id ?? "";
+    setResponsibleId(authUserId);
+
+    if (authUserId) {
+      const found = (profilesRes.data ?? []).find((p: any) => p.id === authUserId);
+      if (found?.name?.trim()) {
+        setResponsibleName(found.name.trim());
+      } else {
+        setResponsibleName(authUserId);
+      }
+    } else {
+      setResponsibleName("Não definido");
+    }
   }
 
   useEffect(() => {
-    fetchStages();
+    fetchInitialData();
     setTimeout(() => nameRef.current?.focus(), 50);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function resetForm() {
@@ -508,12 +672,19 @@ export default function NewLeadPage() {
 
     const cleanName = name.trim();
     const cleanSource = source.trim();
-    const cleanInterest = interest.trim();
     const cleanPhoneRaw = phoneRaw.trim();
     const phoneE164 = toE164BR(cleanPhoneRaw);
-
-    const cleanCampaign = campaign.trim();
     const cleanCpf = cpf.trim();
+
+    const normalizedInterest =
+      interestSuggestions.find(
+        (item) => item.trim().toLowerCase() === interest.trim().toLowerCase()
+      ) ?? interest.trim();
+
+    const normalizedCampaign =
+      campaignSuggestions.find(
+        (item) => item.trim().toLowerCase() === campaign.trim().toLowerCase()
+      ) ?? campaign.trim();
 
     if (!cleanName) {
       return showToast("Preencha o nome.", {
@@ -543,7 +714,7 @@ export default function NewLeadPage() {
       });
     }
 
-    if (!cleanInterest) {
+    if (!normalizedInterest.trim()) {
       return showToast("Preencha o interesse.", {
         variant: "error",
         title: "Campos obrigatórios",
@@ -555,13 +726,6 @@ export default function NewLeadPage() {
         variant: "error",
         title: "Campos obrigatórios",
       });
-    }
-
-    let responsibleId: string | null = null;
-
-    const { data: authData, error: authError } = await supabase.auth.getUser();
-    if (!authError) {
-      responsibleId = authData.user?.id ?? null;
     }
 
     let nextActionPayload: Record<string, any> = {};
@@ -596,13 +760,13 @@ export default function NewLeadPage() {
       phone_raw: cleanPhoneRaw,
       phone_e164: phoneE164,
       source: cleanSource,
-      interest: cleanInterest,
+      interest: normalizedInterest,
       stage_id: stageId,
-      responsible_id: responsibleId,
+      responsible_id: responsibleId || null,
       ...nextActionPayload,
     };
 
-    if (cleanCampaign) payload.campaign = cleanCampaign;
+    if (normalizedCampaign) payload.campaign = normalizedCampaign;
     if (cleanCpf) payload.cpf = cleanCpf;
     if (birthDate) payload.birth_date = birthDate;
     if (sex) payload.sex = sex;
@@ -613,7 +777,7 @@ export default function NewLeadPage() {
 
     if (insertErr) {
       console.error("insert lead error:", JSON.stringify(insertErr, null, 2));
-      showToast(insertErr.message ?? "Erro ao criar lead (RLS/policy?)", {
+      showToast(insertErr.message ?? "Erro ao criar lead", {
         title: "Não consegui criar",
         variant: "error",
         durationMs: 6000,
@@ -638,7 +802,7 @@ export default function NewLeadPage() {
           variant: "ghost",
           onClick: () => {
             closeToast();
-            goBackToOrigin();
+            router.replace("/leads");
           },
         },
       ],
@@ -661,6 +825,20 @@ export default function NewLeadPage() {
     borderRadius: 12,
     outline: "none",
     width: "100%",
+  };
+
+  const smallLockedStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.12)",
+    padding: "10px 12px",
+    borderRadius: 12,
+    minHeight: 42,
+    display: "inline-flex",
+    alignItems: "center",
+    fontWeight: 900,
+    width: "fit-content",
+    minWidth: 160,
   };
 
   const labelStyle: React.CSSProperties = {
@@ -727,7 +905,7 @@ export default function NewLeadPage() {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <button onClick={goBackToOrigin} style={btn}>
+          <button onClick={() => router.replace("/leads")} style={btn}>
             Voltar
           </button>
           <button
@@ -814,34 +992,48 @@ export default function NewLeadPage() {
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={labelStyle}>Interesse *</div>
-                <input
-                  style={inputStyle}
+                <SuggestInput
                   value={interest}
-                  onChange={(e) => setInterest(e.target.value)}
-                  placeholder="Ex: Botox, Depilação, Bioestimulador..."
+                  onChange={setInterest}
+                  suggestions={interestSuggestions}
+                  placeholder="Digite ou selecione"
                 />
               </div>
 
               <div style={{ display: "grid", gap: 10 }}>
                 <div style={labelStyle}>Campanha (opcional)</div>
-                <input
-                  style={inputStyle}
+                <SuggestInput
                   value={campaign}
-                  onChange={(e) => setCampaign(e.target.value)}
-                  placeholder="Ex: MARÇO - LASER PERNAS"
+                  onChange={setCampaign}
+                  suggestions={campaignSuggestions}
+                  placeholder="Digite ou selecione"
                 />
               </div>
             </div>
 
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={labelStyle}>Etapa inicial *</div>
-              <Select
-                value={stageId}
-                onChange={setStageId}
-                placeholder={loadingStages ? "Carregando…" : "Selecione…"}
-                options={stageOptions}
-                disabled={loadingStages || stageOptions.length === 0}
-              />
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "220px 1fr",
+                alignItems: "end",
+              }}
+            >
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={labelStyle}>Responsável</div>
+                <div style={smallLockedStyle}>{responsibleName || "Não definido"}</div>
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                <div style={labelStyle}>Etapa inicial *</div>
+                <Select
+                  value={stageId}
+                  onChange={setStageId}
+                  placeholder={loadingStages ? "Carregando…" : "Selecione…"}
+                  options={stageOptions}
+                  disabled={loadingStages || stageOptions.length === 0}
+                />
+              </div>
             </div>
 
             <div
@@ -931,7 +1123,7 @@ export default function NewLeadPage() {
             flexWrap: "wrap",
           }}
         >
-          <button onClick={goBackToOrigin} style={btn}>
+          <button onClick={() => router.replace("/leads")} style={btn}>
             Voltar
           </button>
           <button

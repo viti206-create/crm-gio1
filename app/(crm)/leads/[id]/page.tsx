@@ -11,6 +11,11 @@ type Stage = {
   is_final?: boolean;
 };
 
+type ProfileOption = {
+  id: string;
+  name: string | null;
+};
+
 function toE164BR(input: string) {
   const digits = (input || "").replace(/\D/g, "");
   if (!digits) return "";
@@ -143,6 +148,125 @@ function Select({
   );
 }
 
+function SuggestInput({
+  value,
+  onChange,
+  suggestions,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  suggestions: string[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const current = value.trim().toLowerCase();
+    const uniq = new Map<string, string>();
+
+    for (const item of suggestions) {
+      const clean = String(item || "").trim();
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      if (!uniq.has(key)) uniq.set(key, clean);
+    }
+
+    return Array.from(uniq.values())
+      .filter((item) => {
+        if (!current) return true;
+        return item.toLowerCase().includes(current);
+      })
+      .slice(0, 8);
+  }, [suggestions, value]);
+
+  const inputStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.12)",
+    padding: "10px 12px",
+    borderRadius: 12,
+    outline: "none",
+    width: "100%",
+  };
+
+  const menuStyle: React.CSSProperties = {
+    position: "absolute",
+    top: "calc(100% + 8px)",
+    left: 0,
+    right: 0,
+    zIndex: 60,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(10,10,14,0.96)",
+    backdropFilter: "blur(12px)",
+    boxShadow: "0 24px 80px rgba(0,0,0,0.65)",
+    overflow: "hidden",
+    maxHeight: 260,
+    overflowY: "auto",
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input
+        style={inputStyle}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+      />
+
+      {open && filtered.length > 0 ? (
+        <div style={menuStyle}>
+          {filtered.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => {
+                onChange(item);
+                setOpen(false);
+              }}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 12px",
+                cursor: "pointer",
+                background: "transparent",
+                border: "none",
+                color: "rgba(255,255,255,0.92)",
+                fontWeight: 850,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "rgba(255,255,255,0.06)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "transparent";
+              }}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function EditLeadPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -153,6 +277,8 @@ export default function EditLeadPage() {
   const [err, setErr] = useState<string | null>(null);
 
   const [stages, setStages] = useState<Stage[]>([]);
+  const [profiles, setProfiles] = useState<ProfileOption[]>([]);
+  const [interestSuggestions, setInterestSuggestions] = useState<string[]>([]);
 
   const [name, setName] = useState("");
   const [phoneRaw, setPhoneRaw] = useState("");
@@ -164,6 +290,7 @@ export default function EditLeadPage() {
   const [stageId, setStageId] = useState("");
   const [campaign, setCampaign] = useState("");
   const [responsibleId, setResponsibleId] = useState("");
+  const [responsibleName, setResponsibleName] = useState("");
 
   const sourceOptions = useMemo(
     () => [
@@ -197,14 +324,27 @@ export default function EditLeadPage() {
   useEffect(() => {
     if (!leadId) return;
     void bootstrap();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leadId]);
+
+  useEffect(() => {
+    if (!responsibleId) {
+      setResponsibleName("Não definido");
+      return;
+    }
+
+    const found = profiles.find((p) => p.id === responsibleId);
+    if (found?.name?.trim()) {
+      setResponsibleName(found.name.trim());
+    } else {
+      setResponsibleName(responsibleId);
+    }
+  }, [profiles, responsibleId]);
 
   async function bootstrap() {
     setLoading(true);
     setErr(null);
 
-    const [st, lead] = await Promise.all([
+    const [st, lead, prof, interests] = await Promise.all([
       supabase
         .from("stages")
         .select("id,name,position,is_final")
@@ -216,6 +356,8 @@ export default function EditLeadPage() {
         )
         .eq("id", leadId)
         .single(),
+      supabase.from("profiles").select("id,name"),
+      supabase.from("leads").select("interest").not("interest", "is", null),
     ]);
 
     const anyError = st.error || lead.error;
@@ -226,6 +368,7 @@ export default function EditLeadPage() {
     }
 
     setStages((st.data ?? []) as Stage[]);
+    setProfiles((prof.data ?? []) as ProfileOption[]);
 
     const l = lead.data as any;
     setName(l?.name ?? "");
@@ -239,6 +382,16 @@ export default function EditLeadPage() {
     setCampaign(l?.campaign ?? "");
     setResponsibleId(l?.responsible_id ?? "");
 
+    const uniqueInterests = Array.from(
+      new Map(
+        ((interests.data ?? []) as Array<{ interest: string | null }>)
+          .map((x) => String(x.interest ?? "").trim())
+          .filter(Boolean)
+          .map((item) => [item.toLowerCase(), item])
+      ).values()
+    ).sort((a, b) => a.localeCompare(b));
+
+    setInterestSuggestions(uniqueInterests);
     setLoading(false);
   }
 
@@ -262,7 +415,11 @@ export default function EditLeadPage() {
     const cleanPhoneRaw = phoneRaw.trim();
     const phoneE164 = toE164BR(cleanPhoneRaw);
     const cleanSource = source.trim();
-    const cleanInterest = interest.trim();
+
+    const normalizedInterest =
+      interestSuggestions.find(
+        (item) => item.trim().toLowerCase() === interest.trim().toLowerCase()
+      ) ?? interest.trim();
 
     if (!phoneE164) {
       setErr("Telefone inválido. Ex: (15) 9xxxx-xxxx");
@@ -280,7 +437,7 @@ export default function EditLeadPage() {
         birth_date: birthDate || null,
         sex: sex || null,
         source: cleanSource,
-        interest: cleanInterest,
+        interest: normalizedInterest,
         stage_id: stageId,
         campaign: campaign.trim() ? campaign.trim() : null,
       })
@@ -313,6 +470,20 @@ export default function EditLeadPage() {
     borderRadius: 12,
     outline: "none",
     width: "100%",
+  };
+
+  const smallLockedStyle: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.12)",
+    padding: "10px 12px",
+    borderRadius: 12,
+    minHeight: 42,
+    display: "inline-flex",
+    alignItems: "center",
+    fontWeight: 900,
+    width: "fit-content",
+    minWidth: 160,
   };
 
   const labelStyle: React.CSSProperties = {
@@ -466,10 +637,11 @@ export default function EditLeadPage() {
           >
             <div style={{ display: "grid", gap: 10 }}>
               <div style={labelStyle}>Interesse *</div>
-              <input
-                style={inputStyle}
+              <SuggestInput
                 value={interest}
-                onChange={(e) => setInterest(e.target.value)}
+                onChange={setInterest}
+                suggestions={interestSuggestions}
+                placeholder="Digite ou selecione"
               />
             </div>
 
@@ -483,23 +655,28 @@ export default function EditLeadPage() {
             </div>
           </div>
 
-          <div style={{ display: "grid", gap: 10 }}>
-            <div style={labelStyle}>Responsável</div>
-            <input
-              style={{ ...inputStyle, opacity: 0.75 }}
-              value={responsibleId || "Não definido"}
-              readOnly
-            />
-          </div>
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "220px 1fr",
+              alignItems: "end",
+            }}
+          >
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={labelStyle}>Responsável</div>
+              <div style={smallLockedStyle}>{responsibleName || "Não definido"}</div>
+            </div>
 
-          <div style={{ display: "grid", gap: 10 }}>
-            <div style={labelStyle}>Etapa atual *</div>
-            <Select
-              value={stageId}
-              onChange={setStageId}
-              options={stageOptions}
-              disabled={stages.length === 0}
-            />
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={labelStyle}>Etapa atual *</div>
+              <Select
+                value={stageId}
+                onChange={setStageId}
+                options={stageOptions}
+                disabled={stages.length === 0}
+              />
+            </div>
           </div>
         </div>
       </div>
