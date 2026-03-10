@@ -169,8 +169,10 @@ function SuggestInput({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
+  const parts = value.split(";");
+  const lastPart = parts[parts.length - 1].trim().toLowerCase();
+
   const filtered = useMemo(() => {
-    const current = value.trim().toLowerCase();
     const uniq = new Map<string, string>();
 
     for (const item of suggestions) {
@@ -182,11 +184,18 @@ function SuggestInput({
 
     return Array.from(uniq.values())
       .filter((item) => {
-        if (!current) return true;
-        return item.toLowerCase().includes(current);
+        if (!lastPart) return true;
+        return item.toLowerCase().includes(lastPart);
       })
       .slice(0, 8);
-  }, [suggestions, value]);
+  }, [suggestions, lastPart]);
+
+  function insertSuggestion(s: string) {
+    const arr = value.split(";");
+    arr[arr.length - 1] = " " + s;
+    onChange(arr.join(";").replace(/^ /, ""));
+    setOpen(false);
+  }
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
@@ -206,7 +215,7 @@ function SuggestInput({
         placeholder={placeholder}
       />
 
-      {open && filtered.length > 0 ? (
+      {open && filtered.length > 0 && (
         <div
           style={{
             position: "absolute",
@@ -220,18 +229,13 @@ function SuggestInput({
             backdropFilter: "blur(12px)",
             boxShadow: "0 24px 80px rgba(0,0,0,0.65)",
             overflow: "hidden",
-            maxHeight: 260,
-            overflowY: "auto",
           }}
         >
           {filtered.map((item) => (
             <button
               key={item}
               type="button"
-              onClick={() => {
-                onChange(item);
-                setOpen(false);
-              }}
+              onClick={() => insertSuggestion(item)}
               style={{
                 width: "100%",
                 textAlign: "left",
@@ -242,20 +246,12 @@ function SuggestInput({
                 color: "rgba(255,255,255,0.92)",
                 fontWeight: 850,
               }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(255,255,255,0.06)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-              }}
             >
               {item}
             </button>
           ))}
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
