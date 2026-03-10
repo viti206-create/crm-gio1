@@ -1244,43 +1244,49 @@ export default function RelatoriosPage() {
 
           <div style={card}>
             <div style={{ fontWeight: 950, marginBottom: 10 }}>
-              {filterMode === "monthly" ? "Forecast mensal" : "Forecast do ano"}
+            {filterMode === "monthly" ? "Vendas por mês" : "Vendas por mês do ano"}
             </div>
 
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-                <thead>
-                  <tr>
-                    <th style={th}>Mês</th>
-                    <th style={th}>Previsto</th>
-                    <th style={th}>Qtd. lançamentos</th>
-                  </tr>
-                </thead>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+              <tr>
+              <th style={th}>Mês</th>
+      <th style={th}>Qtd.</th>
+      <th style={th}>Avulsas</th>
+      <th style={th}>Recorrentes</th>
+      <th style={th}>Bruto</th>
+      <th style={th}>Líquido</th>
+      </tr>
+      </thead>
 
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td style={td} colSpan={3}>
-                        Carregando...
-                      </td>
-                    </tr>
-                  ) : forecastMonthly.length === 0 ? (
-                    <tr>
-                      <td style={td} colSpan={3}>
-                        Nenhum dado encontrado.
-                      </td>
-                    </tr>
-                  ) : (
-                    forecastMonthly.map((row) => (
-                      <tr key={row.month}>
-                        <td style={td}>{formatMonthLabel(row.month)}</td>
-                        <td style={td}>{formatBRL(row.expected_amount)}</td>
-                        <td style={td}>{row.active_count}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+              <tbody>
+              {loading ? (
+                <tr>
+                <td style={td} colSpan={3}>
+                  Carregando...
+                </td>
+                </tr>
+              ) : forecastMonthly.length === 0 ? (
+                <tr>
+                <td style={td} colSpan={3}>
+                  Nenhum dado encontrado.
+                </td>
+                </tr>
+              ) : (
+                monthlySales.map((row) => (
+      <tr key={row.month}>
+      <td style={td}>{formatMonthLabel(row.month)}</td>
+      <td style={td}>{row.count}</td>
+      <td style={td}>{row.avulsas}</td>
+      <td style={td}>{row.recorrentes}</td>
+      <td style={td}>{formatBRL(row.gross)}</td>
+      <td style={td}>{formatBRL(row.net)}</td>
+      </tr>
+                ))
+              )}
+              </tbody>
+            </table>
             </div>
           </div>
         </div>
@@ -1381,82 +1387,7 @@ export default function RelatoriosPage() {
             gridTemplateColumns: "1fr 1fr",
           }}
         >
-          <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>
-              {filterMode === "monthly" ? "Vendas por mês" : "Vendas por mês do ano"}
-            </div>
-
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-                <thead>
-                  <tr>
-                    <th style={th}>Mês</th>
-                    <th style={th}>Qtd.</th>
-                    <th style={th}>Avulsas</th>
-                    <th style={th}>Recorrentes</th>
-                    <th style={th}>Bruto</th>
-                    <th style={th}>Líquido</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td style={td} colSpan={6}>
-                        Carregando...
-                      </td>
-                    </tr>
-                  ) : monthlySales.length === 0 ? (
-                    <tr>
-                      <td style={td} colSpan={6}>
-                        Nenhum dado encontrado.
-                      </td>
-                    </tr>
-                  ) : (
-                    monthlySales.map((row) => (
-                      <tr key={row.month}>
-                        <td style={td}>{formatMonthLabel(row.month)}</td>
-                        <td style={td}>{row.count}</td>
-                        <td style={td}>{row.avulsas}</td>
-                        <td style={td}>{row.recorrentes}</td>
-                        <td style={td}>{formatBRL(row.gross)}</td>
-                        <td style={td}>{formatBRL(row.net)}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>Resumo do forecast</div>
-
-            <div style={{ display: "grid", gap: 12 }}>
-              <div style={miniCard}>
-                <div style={{ fontSize: 12, opacity: 0.72 }}>
-                  {filterMode === "monthly" ? "Este mês" : "Ano selecionado"}
-                </div>
-                <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-                  {formatBRL(forecastSummary.expectedThis)}
-                </div>
-              </div>
-
-              <div style={miniCard}>
-                <div style={{ fontSize: 12, opacity: 0.72 }}>Próximo mês</div>
-                <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-                  {formatBRL(forecastSummary.expectedNext)}
-                </div>
-              </div>
-
-              <div style={miniCard}>
-                <div style={{ fontSize: 12, opacity: 0.72 }}>Próximos 3 meses</div>
-                <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-                  {formatBRL(forecastSummary.expectedNext3)}
-                </div>
-              </div>
-            </div>
-          </div>
+                        
         </div>
       </div>
     </div>
