@@ -208,6 +208,7 @@ function formatPaymentMethod(v: string | null | undefined) {
 
   if (key === "pix") return "Pix";
   if (key === "cartao") return "Cartão";
+  if (key === "cartao_gio") return "Cartão GIO";
   if (key === "cartao_recorrente") return "Cartão recorrente";
   if (key === "debito") return "Débito";
   if (key === "dinheiro") return "Dinheiro";
