@@ -78,6 +78,7 @@ function normalizePaymentLabel(v: string | null | undefined) {
   if (key === "pix") return "Pix";
   if (key === "cartao") return "Cartão";
   if (key === "cartao_recorrente") return "Cartão recorrente";
+  if (key === "cartao_gio") return "Cartão GIO";
   if (key === "debito") return "Débito";
   if (key === "dinheiro") return "Dinheiro";
   if (key === "boleto") return "Boleto";
@@ -124,6 +125,13 @@ const btnPrimary: React.CSSProperties = {
     "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
 };
 
+const btnDanger: React.CSSProperties = {
+  ...btn,
+  border: "1px solid rgba(255,120,120,0.30)",
+  background:
+    "linear-gradient(180deg, rgba(255,120,120,0.16) 0%, rgba(255,120,120,0.07) 100%)",
+};
+
 function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
   return {
     fontSize: 12,
@@ -151,11 +159,13 @@ function SuggestInput({
   onChange,
   suggestions,
   placeholder,
+  multipleWithSemicolon = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   suggestions: string[];
   placeholder?: string;
+  multipleWithSemicolon?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -169,8 +179,11 @@ function SuggestInput({
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  const parts = value.split(";");
-  const lastPart = parts[parts.length - 1].trim().toLowerCase();
+  const searchTerm = useMemo(() => {
+    if (!multipleWithSemicolon) return value.trim().toLowerCase();
+    const parts = value.split(";");
+    return parts[parts.length - 1].trim().toLowerCase();
+  }, [value, multipleWithSemicolon]);
 
   const filtered = useMemo(() => {
     const uniq = new Map<string, string>();
@@ -184,16 +197,22 @@ function SuggestInput({
 
     return Array.from(uniq.values())
       .filter((item) => {
-        if (!lastPart) return true;
-        return item.toLowerCase().includes(lastPart);
+        if (!searchTerm) return true;
+        return item.toLowerCase().includes(searchTerm);
       })
       .slice(0, 8);
-  }, [suggestions, lastPart]);
+  }, [suggestions, searchTerm]);
 
-  function insertSuggestion(s: string) {
-    const arr = value.split(";");
-    arr[arr.length - 1] = " " + s;
-    onChange(arr.join(";").replace(/^ /, ""));
+  function insertSuggestion(item: string) {
+    if (!multipleWithSemicolon) {
+      onChange(item);
+      setOpen(false);
+      return;
+    }
+
+    const parts = value.split(";");
+    parts[parts.length - 1] = ` ${item}`;
+    onChange(parts.join(";").replace(/^ /, ""));
     setOpen(false);
   }
 
@@ -215,7 +234,7 @@ function SuggestInput({
         placeholder={placeholder}
       />
 
-      {open && filtered.length > 0 && (
+      {open && filtered.length > 0 ? (
         <div
           style={{
             position: "absolute",
@@ -229,6 +248,8 @@ function SuggestInput({
             backdropFilter: "blur(12px)",
             boxShadow: "0 24px 80px rgba(0,0,0,0.65)",
             overflow: "hidden",
+            maxHeight: 260,
+            overflowY: "auto",
           }}
         >
           {filtered.map((item) => (
@@ -246,12 +267,20 @@ function SuggestInput({
                 color: "rgba(255,255,255,0.92)",
                 fontWeight: 850,
               }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "rgba(255,255,255,0.06)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "transparent";
+              }}
             >
               {item}
             </button>
           ))}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -269,13 +298,11 @@ export default function VendasPage() {
   const [procedureSuggestions, setProcedureSuggestions] = useState<string[]>([]);
   const [sourceSuggestions, setSourceSuggestions] = useState<string[]>([]);
   const [sellerSuggestions, setSellerSuggestions] = useState<string[]>([]);
-  const [indicatedClientSuggestions, setIndicatedClientSuggestions] = useState<
-    string[]
-  >([]);
-  const [
-    indicatedProfessionalSuggestions,
-    setIndicatedProfessionalSuggestions,
-  ] = useState<string[]>([]);
+  const [indicatedClientSuggestions, setIndicatedClientSuggestions] = useState<string[]>([]);
+  const [indicatedProfessionalSuggestions, setIndicatedProfessionalSuggestions] =
+    useState<string[]>([]);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [leadId, setLeadId] = useState("");
   const [procedure, setProcedure] = useState("");
@@ -297,6 +324,10 @@ export default function VendasPage() {
   const [lastEditedField, setLastEditedField] = useState<"net" | "percent" | null>(
     null
   );
+
+  const [filterQ, setFilterQ] = useState("");
+  const [filterType, setFilterType] = useState("all");
+  const [filterPayment, setFilterPayment] = useState("all");
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -396,7 +427,7 @@ export default function VendasPage() {
       ).values()
     ).sort((a, b) => a.localeCompare(b));
 
-    const indicatedClientUnique = Array.from(
+    const clientUnique = Array.from(
       new Map(
         rows
           .map((r) => String(r.indicated_client ?? "").trim())
@@ -405,7 +436,7 @@ export default function VendasPage() {
       ).values()
     ).sort((a, b) => a.localeCompare(b));
 
-    const indicatedProfessionalUnique = Array.from(
+    const professionalUnique = Array.from(
       new Map(
         rows
           .map((r) => String(r.indicated_professional ?? "").trim())
@@ -417,8 +448,8 @@ export default function VendasPage() {
     setProcedureSuggestions(procedureUnique);
     setSourceSuggestions(sourceUnique);
     setSellerSuggestions(sellerUnique);
-    setIndicatedClientSuggestions(indicatedClientUnique);
-    setIndicatedProfessionalSuggestions(indicatedProfessionalUnique);
+    setIndicatedClientSuggestions(clientUnique);
+    setIndicatedProfessionalSuggestions(professionalUnique);
   }
 
   useEffect(() => {
@@ -458,13 +489,51 @@ export default function VendasPage() {
     }
   }, [grossValue, netValue, feePercentInput, lastEditedField]);
 
-  const feePercentPreview = useMemo(() => {
-    const gross = Number(grossValue || 0);
-    const net = Number(netValue || 0);
-    if (!gross || gross <= 0) return 0;
-    const pct = ((gross - net) / gross) * 100;
-    return Number.isFinite(pct) ? pct : 0;
-  }, [grossValue, netValue]);
+  const filteredRows = useMemo(() => {
+    const q = filterQ.trim().toLowerCase();
+
+    return rows.filter((r) => {
+      if (filterType !== "all" && (r.sale_type ?? "") !== filterType) return false;
+      if (filterPayment !== "all" && (r.payment_method ?? "") !== filterPayment) return false;
+
+      if (!q) return true;
+
+      const hay = [
+        r.leads?.name ?? "",
+        r.leads?.phone_raw ?? "",
+        r.procedure ?? "",
+        r.seller_name ?? "",
+        r.source ?? "",
+        r.indicated_client ?? "",
+        r.indicated_professional ?? "",
+        normalizePaymentLabel(r.payment_method),
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return hay.includes(q);
+    });
+  }, [rows, filterQ, filterType, filterPayment]);
+
+  function resetForm() {
+    setEditingId(null);
+    setLeadId("");
+    setProcedure("");
+    setPaymentMethod("pix");
+    setInstallmentsLabel("À vista");
+    setSaleType("avulsa");
+    setGrossValue("");
+    setNetValue("");
+    setFeePercentInput("");
+    setClosedAt(todayInputValue());
+    setSellerName("");
+    setSource("");
+    setIndicatedClient("");
+    setIndicatedProfessional("");
+    setNotes("");
+    setLastEditedField(null);
+    setErrorMsg("");
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -540,69 +609,79 @@ export default function VendasPage() {
             s.trim().toLowerCase() === indicatedProfessional.trim().toLowerCase()
         ) ?? indicatedProfessional.trim();
 
-      let recorrenciaId: string | null = null;
-
-      if (saleType === "recorrencia") {
-        const monthlyGross =
-          installmentsTotal > 0 ? Number((gross / installmentsTotal).toFixed(2)) : gross;
-
-        const { data: recData, error: recError } = await supabase
-          .from("recorrencias")
-          .insert({
-            lead_id: leadId,
-            status: "ativo",
-            start_date: closedAt,
-            installments_total: installmentsTotal,
-            installments_done: 1,
-            price_per_installment: monthlyGross,
-          })
-          .select("id")
-          .single();
-
-        if (recError) throw recError;
-        recorrenciaId = recData?.id ?? null;
-      }
-
       const feePercent =
         gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
 
-      const { error: saleError } = await supabase.from("sales").insert({
-        lead_id: leadId,
-        recorrencia_id: recorrenciaId,
-        sale_type: saleType,
-        procedure: normalizedProcedure,
-        value: gross,
-        value_gross: gross,
-        value_net: net,
-        fee_percent: feePercent,
-        payment_method: paymentMethod.trim(),
-        installments_label: installmentsLabel,
-        seller_name: normalizedSeller || null,
-        source: normalizedSource || null,
-        indicated_client: normalizedIndicatedClient || null,
-        indicated_professional: normalizedIndicatedProfessional || null,
-        notes: notes.trim() || null,
-        closed_at: closedAt,
-      });
+      if (editingId) {
+        const { error: updateError } = await supabase
+          .from("sales")
+          .update({
+            lead_id: leadId,
+            sale_type: saleType,
+            procedure: normalizedProcedure,
+            value: gross,
+            value_gross: gross,
+            value_net: net,
+            fee_percent: feePercent,
+            payment_method: paymentMethod.trim(),
+            installments_label: installmentsLabel,
+            seller_name: normalizedSeller || null,
+            source: normalizedSource || null,
+            indicated_client: normalizedIndicatedClient || null,
+            indicated_professional: normalizedIndicatedProfessional || null,
+            notes: notes.trim() || null,
+            closed_at: closedAt,
+          })
+          .eq("id", editingId);
 
-      if (saleError) throw saleError;
+        if (updateError) throw updateError;
+      } else {
+        let recorrenciaId: string | null = null;
 
-      setLeadId("");
-      setProcedure("");
-      setPaymentMethod("pix");
-      setInstallmentsLabel("À vista");
-      setSaleType("avulsa");
-      setGrossValue("");
-      setNetValue("");
-      setFeePercentInput("");
-      setClosedAt(todayInputValue());
-      setSellerName("");
-      setSource("");
-      setIndicatedClient("");
-      setIndicatedProfessional("");
-      setNotes("");
-      setLastEditedField(null);
+        if (saleType === "recorrencia") {
+          const monthlyGross =
+            installmentsTotal > 0 ? Number((gross / installmentsTotal).toFixed(2)) : gross;
 
+          const { data: recData, error: recError } = await supabase
+            .from("recorrencias")
+            .insert({
+              lead_id: leadId,
+              status: "ativo",
+              start_date: closedAt,
+              installments_total: installmentsTotal,
+              installments_done: 1,
+              price_per_installment: monthlyGross,
+            })
+            .select("id")
+            .single();
+
+          if (recError) throw recError;
+          recorrenciaId = recData?.id ?? null;
+        }
+
+        const { error: saleError } = await supabase.from("sales").insert({
+          lead_id: leadId,
+          recorrencia_id: recorrenciaId,
+          sale_type: saleType,
+          procedure: normalizedProcedure,
+          value: gross,
+          value_gross: gross,
+          value_net: net,
+          fee_percent: feePercent,
+          payment_method: paymentMethod.trim(),
+          installments_label: installmentsLabel,
+          seller_name: normalizedSeller || null,
+          source: normalizedSource || null,
+          indicated_client: normalizedIndicatedClient || null,
+          indicated_professional: normalizedIndicatedProfessional || null,
+          notes: notes.trim() || null,
+          closed_at: closedAt,
+        });
+
+        if (saleError) throw saleError;
+      }
+
+      resetForm();
       await fetchSales();
       await fetchLeads();
       await fetchSuggestions();
@@ -611,6 +690,43 @@ export default function VendasPage() {
       setErrorMsg(e?.message ?? "Erro ao salvar venda.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  function handleEdit(row: SaleRow) {
+    setEditingId(row.id);
+    setLeadId(row.lead_id ?? "");
+    setProcedure(row.procedure ?? "");
+    setPaymentMethod(row.payment_method ?? "pix");
+    setInstallmentsLabel(row.installments_label ?? "À vista");
+    setSaleType(row.sale_type ?? "avulsa");
+    setGrossValue(String(row.value_gross ?? row.value ?? ""));
+    setNetValue(String(row.value_net ?? ""));
+    setFeePercentInput(String(row.fee_percent ?? ""));
+    setClosedAt(row.closed_at ? row.closed_at.slice(0, 10) : todayInputValue());
+    setSellerName(row.seller_name ?? "");
+    setSource(row.source ?? "");
+    setIndicatedClient(row.indicated_client ?? "");
+    setIndicatedProfessional(row.indicated_professional ?? "");
+    setNotes(row.notes ?? "");
+    setLastEditedField(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function handleDelete(row: SaleRow) {
+    const ok = window.confirm("Deseja realmente excluir esta venda?");
+    if (!ok) return;
+
+    try {
+      const { error } = await supabase.from("sales").delete().eq("id", row.id);
+      if (error) throw error;
+
+      if (editingId === row.id) resetForm();
+      await fetchSales();
+      await fetchSuggestions();
+    } catch (e: any) {
+      console.error(e);
+      setErrorMsg(e?.message ?? "Erro ao excluir venda.");
     }
   }
 
@@ -670,9 +786,18 @@ export default function VendasPage() {
             fontSize: 18,
             fontWeight: 900,
             marginBottom: 14,
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
           }}
         >
-          Nova venda
+          <span>{editingId ? "Editar venda" : "Nova venda"}</span>
+          {editingId ? (
+            <button type="button" onClick={resetForm} style={btn}>
+              Cancelar edição
+            </button>
+          ) : null}
         </div>
 
         <div
@@ -742,6 +867,7 @@ export default function VendasPage() {
               onChange={setProcedure}
               suggestions={procedureSuggestions}
               placeholder="Ex.: Botox 3 áreas; Preenchimento labial"
+              multipleWithSemicolon
             />
           </div>
 
@@ -757,6 +883,7 @@ export default function VendasPage() {
                 { value: "pix", label: "Pix" },
                 { value: "cartao", label: "Cartão" },
                 { value: "cartao_recorrente", label: "Cartão recorrente" },
+                { value: "cartao_gio", label: "Cartão GIO" },
                 { value: "debito", label: "Débito" },
                 { value: "dinheiro", label: "Dinheiro" },
                 { value: "boleto", label: "Boleto" },
@@ -929,7 +1056,11 @@ export default function VendasPage() {
               opacity: saving ? 0.7 : 1,
             }}
           >
-            {saving ? "Salvando..." : "Salvar venda"}
+            {saving
+              ? "Salvando..."
+              : editingId
+              ? "Salvar alterações"
+              : "Salvar venda"}
           </button>
         </div>
       </form>
@@ -949,10 +1080,76 @@ export default function VendasPage() {
             marginBottom: 16,
             display: "flex",
             justifyContent: "space-between",
+            gap: 10,
+            flexWrap: "wrap",
           }}
         >
           <span>Vendas</span>
           <span>{formatBRL(total)}</span>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.5fr 1fr 1fr auto",
+            gap: 10,
+            marginBottom: 14,
+          }}
+        >
+          <input
+            value={filterQ}
+            onChange={(e) => setFilterQ(e.target.value)}
+            placeholder="Buscar por cliente, procedimento, vendedor, origem..."
+            style={{
+              ...inputStyle,
+              borderRadius: 12,
+              border: "1px solid rgba(255,255,255,0.12)",
+              background: "rgba(255,255,255,0.06)",
+            }}
+          />
+
+          <SelectDark
+            value={filterType}
+            onChange={setFilterType}
+            placeholder="Tipo"
+            searchable={false}
+            minWidth={160}
+            options={[
+              { value: "all", label: "Todos os tipos" },
+              { value: "avulsa", label: "Avulsa" },
+              { value: "recorrencia", label: "Recorrência" },
+            ]}
+          />
+
+          <SelectDark
+            value={filterPayment}
+            onChange={setFilterPayment}
+            placeholder="Pagamento"
+            searchable={false}
+            minWidth={160}
+            options={[
+              { value: "all", label: "Todos pagamentos" },
+              { value: "pix", label: "Pix" },
+              { value: "cartao", label: "Cartão" },
+              { value: "cartao_recorrente", label: "Cartão recorrente" },
+              { value: "cartao_gio", label: "Cartão GIO" },
+              { value: "debito", label: "Débito" },
+              { value: "dinheiro", label: "Dinheiro" },
+              { value: "boleto", label: "Boleto" },
+            ]}
+          />
+
+          <button
+            type="button"
+            onClick={() => {
+              setFilterQ("");
+              setFilterType("all");
+              setFilterPayment("all");
+            }}
+            style={btn}
+          >
+            Limpar
+          </button>
         </div>
 
         {loading ? (
@@ -966,11 +1163,12 @@ export default function VendasPage() {
                 <th style={{ textAlign: "left", paddingBottom: 10 }}>Pagamento</th>
                 <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor</th>
                 <th style={{ textAlign: "left", paddingBottom: 10 }}>Data</th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
               </tr>
             </thead>
 
             <tbody>
-              {rows.map((r) => {
+              {filteredRows.map((r) => {
                 const leadName = r.leads?.name ?? "—";
                 const phone = normalizePhoneReadable(
                   r.leads?.phone_raw ?? null,
@@ -1050,13 +1248,37 @@ export default function VendasPage() {
                     >
                       {formatDateBR(r.closed_at)}
                     </td>
+
+                    <td
+                      style={{
+                        padding: "10px 0",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          style={btn}
+                          onClick={() => handleEdit(r)}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          style={btnDanger}
+                          onClick={() => handleDelete(r)}
+                        >
+                          Excluir
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 );
               })}
 
-              {!rows.length ? (
+              {!filteredRows.length ? (
                 <tr>
-                  <td colSpan={5} style={{ paddingTop: 12, opacity: 0.7 }}>
+                  <td colSpan={6} style={{ paddingTop: 12, opacity: 0.7 }}>
                     Nenhuma venda encontrada.
                   </td>
                 </tr>
