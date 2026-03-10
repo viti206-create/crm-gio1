@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 import { useRouter } from "next/navigation";
@@ -29,18 +29,10 @@ type SaleRow = {
   source: string | null;
   procedure: string | null;
   notes: string | null;
+  indicated_client?: string | null;
+  indicated_professional?: string | null;
   closed_at: string | null;
   leads?: LeadRow | null;
-};
-
-type ProcedureOption = {
-  value: string;
-  label: string;
-};
-
-type SingleOption = {
-  value: string;
-  label: string;
 };
 
 function formatDateBR(d: string | null) {
@@ -81,465 +73,15 @@ function parseInstallmentsTotal(label: string) {
   return Number(match[1] ?? 1);
 }
 
-function normalizeLabel(value: string) {
-  return value.trim().replace(/\s+/g, " ");
-}
-
-function normalizeKey(value: string) {
-  return normalizeLabel(value).toLocaleLowerCase("pt-BR");
-}
-
-function parseProcedureString(value: string | null | undefined) {
-  return String(value ?? "")
-    .split(";")
-    .map((item) => normalizeLabel(item))
-    .filter(Boolean);
-}
-
-function buildProcedureOptions(values: Array<string | null | undefined>) {
-  const map = new Map<string, string>();
-
-  for (const raw of values) {
-    for (const item of parseProcedureString(raw)) {
-      const key = normalizeKey(item);
-      if (!map.has(key)) {
-        map.set(key, item);
-      }
-    }
-  }
-
-  return Array.from(map.values())
-    .sort((a, b) => a.localeCompare(b, "pt-BR"))
-    .map((item) => ({
-      value: item,
-      label: item,
-    }));
-}
-
-function buildSingleOptions(values: Array<string | null | undefined>) {
-  const map = new Map<string, string>();
-
-  for (const raw of values) {
-    const clean = normalizeLabel(String(raw ?? ""));
-    if (!clean) continue;
-
-    const key = normalizeKey(clean);
-    if (!map.has(key)) {
-      map.set(key, clean);
-    }
-  }
-
-  return Array.from(map.values())
-    .sort((a, b) => a.localeCompare(b, "pt-BR"))
-    .map((item) => ({
-      value: item,
-      label: item,
-    }));
-}
-
-function paymentMethodLabel(value: string | null | undefined) {
-  const key = String(value ?? "").trim().toLowerCase();
-
+function normalizePaymentLabel(v: string | null | undefined) {
+  const key = String(v ?? "").trim().toLowerCase();
   if (key === "pix") return "Pix";
   if (key === "cartao") return "Cartão";
-  if (key === "cartao_recorrente") return "Cartão Recorrente";
+  if (key === "cartao_recorrente") return "Cartão recorrente";
   if (key === "debito") return "Débito";
   if (key === "dinheiro") return "Dinheiro";
   if (key === "boleto") return "Boleto";
-
-  return value || "—";
-}
-
-function ProcedureMultiCreatable({
-  value,
-  onChange,
-  options,
-  placeholder = "Digite e pressione Enter",
-}: {
-  value: string[];
-  onChange: (next: string[]) => void;
-  options: ProcedureOption[];
-  placeholder?: string;
-}) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const wrapRef = React.useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (!wrapRef.current) return;
-      if (!wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
-
-  const selectedKeys = useMemo(() => {
-    return new Set(value.map((item) => normalizeKey(item)));
-  }, [value]);
-
-  const filtered = useMemo(() => {
-    const q = normalizeKey(query);
-    let list = options.filter(
-      (opt) => !selectedKeys.has(normalizeKey(opt.value))
-    );
-
-    if (q) {
-      list = list.filter((opt) => normalizeKey(opt.label).includes(q));
-    }
-
-    return list.slice(0, 8);
-  }, [options, query, selectedKeys]);
-
-  const canCreate = useMemo(() => {
-    const clean = normalizeLabel(query);
-    if (!clean) return false;
-
-    const key = normalizeKey(clean);
-    if (selectedKeys.has(key)) return false;
-    if (options.some((opt) => normalizeKey(opt.value) === key)) return false;
-
-    return true;
-  }, [query, options, selectedKeys]);
-
-  function addItem(raw: string) {
-    const clean = normalizeLabel(raw);
-    if (!clean) return;
-
-    const key = normalizeKey(clean);
-    if (value.some((item) => normalizeKey(item) === key)) {
-      setQuery("");
-      return;
-    }
-
-    onChange([...value, clean]);
-    setQuery("");
-    setOpen(false);
-  }
-
-  function removeItem(raw: string) {
-    const key = normalizeKey(raw);
-    onChange(value.filter((item) => normalizeKey(item) !== key));
-  }
-
-  return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
-      <div
-        style={{
-          width: "100%",
-          minHeight: 42,
-          borderRadius: 10,
-          border: "1px solid rgba(255,255,255,0.10)",
-          background: "rgba(255,255,255,0.04)",
-          color: "white",
-          padding: "8px 10px",
-          display: "flex",
-          gap: 8,
-          flexWrap: "wrap",
-          alignItems: "center",
-        }}
-        onClick={() => setOpen(true)}
-      >
-        {value.map((item) => (
-          <span
-            key={item}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "6px 10px",
-              borderRadius: 999,
-              border: "1px solid rgba(180,120,255,0.28)",
-              background: "rgba(180,120,255,0.12)",
-              color: "white",
-              fontSize: 12,
-              fontWeight: 800,
-            }}
-          >
-            {item}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                removeItem(item);
-              }}
-              style={{
-                border: "none",
-                background: "transparent",
-                color: "rgba(255,255,255,0.80)",
-                cursor: "pointer",
-                fontWeight: 900,
-                padding: 0,
-                lineHeight: 1,
-              }}
-              title={`Remover ${item}`}
-            >
-              ×
-            </button>
-          </span>
-        ))}
-
-        <input
-          value={query}
-          onFocus={() => setOpen(true)}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === ";") {
-              e.preventDefault();
-              addItem(query);
-            }
-
-            if (e.key === "Backspace" && !query && value.length) {
-              removeItem(value[value.length - 1]);
-            }
-          }}
-          placeholder={value.length ? "" : placeholder}
-          style={{
-            background: "transparent",
-            border: "none",
-            outline: "none",
-            color: "white",
-            fontSize: 13,
-            minWidth: 180,
-            flex: 1,
-            padding: "2px 0",
-          }}
-        />
-      </div>
-
-      {open && (filtered.length > 0 || canCreate) ? (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 8px)",
-            left: 0,
-            right: 0,
-            zIndex: 50,
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: "rgba(10,10,14,0.96)",
-            backdropFilter: "blur(12px)",
-            boxShadow: "0 24px 80px rgba(0,0,0,0.65)",
-            overflow: "hidden",
-          }}
-        >
-          {filtered.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => addItem(opt.value)}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                padding: "10px 12px",
-                cursor: "pointer",
-                background: "transparent",
-                border: "none",
-                color: "rgba(255,255,255,0.92)",
-                fontWeight: 850,
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(255,255,255,0.06)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
-
-          {canCreate ? (
-            <button
-              type="button"
-              onClick={() => addItem(query)}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                padding: "10px 12px",
-                cursor: "pointer",
-                background: "rgba(180,120,255,0.10)",
-                border: "none",
-                borderTop: "1px solid rgba(255,255,255,0.08)",
-                color: "white",
-                fontWeight: 900,
-              }}
-            >
-              Criar: {normalizeLabel(query)}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function SingleCreatableDark({
-  value,
-  onChange,
-  options,
-  placeholder = "Digite para buscar",
-}: {
-  value: string;
-  onChange: (next: string) => void;
-  options: SingleOption[];
-  placeholder?: string;
-}) {
-  const [query, setQuery] = useState(value || "");
-  const [open, setOpen] = useState(false);
-  const wrapRef = React.useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    setQuery(value || "");
-  }, [value]);
-
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (!wrapRef.current) return;
-      if (!wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
-        setQuery(value || "");
-      }
-    }
-
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [value]);
-
-  const filtered = useMemo(() => {
-    const q = normalizeKey(query);
-    let list = options;
-
-    if (q) {
-      list = list.filter((opt) => normalizeKey(opt.label).includes(q));
-    }
-
-    return list.slice(0, 8);
-  }, [options, query]);
-
-  const canCreate = useMemo(() => {
-    const clean = normalizeLabel(query);
-    if (!clean) return false;
-
-    const key = normalizeKey(clean);
-    if (options.some((opt) => normalizeKey(opt.value) === key)) return false;
-
-    return true;
-  }, [query, options]);
-
-  function choose(raw: string) {
-    const clean = normalizeLabel(raw);
-    onChange(clean);
-    setQuery(clean);
-    setOpen(false);
-  }
-
-  return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
-      <input
-        value={query}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            choose(query);
-          }
-        }}
-        onBlur={() => {
-          if (query.trim()) onChange(normalizeLabel(query));
-        }}
-        placeholder={placeholder}
-        style={{
-          width: "100%",
-          padding: "9px 10px",
-          borderRadius: 8,
-          border: "1px solid rgba(255,255,255,0.10)",
-          background: "rgba(255,255,255,0.04)",
-          color: "white",
-          outline: "none",
-          fontSize: 13,
-        }}
-      />
-
-      {open && (filtered.length > 0 || canCreate) ? (
-        <div
-          style={{
-            position: "absolute",
-            top: "calc(100% + 8px)",
-            left: 0,
-            right: 0,
-            zIndex: 50,
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: "rgba(10,10,14,0.96)",
-            backdropFilter: "blur(12px)",
-            boxShadow: "0 24px 80px rgba(0,0,0,0.65)",
-            overflow: "hidden",
-          }}
-        >
-          {filtered.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => choose(opt.value)}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                padding: "10px 12px",
-                cursor: "pointer",
-                background: "transparent",
-                border: "none",
-                color: "rgba(255,255,255,0.92)",
-                fontWeight: 850,
-              }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "rgba(255,255,255,0.06)";
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "transparent";
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
-
-          {canCreate ? (
-            <button
-              type="button"
-              onClick={() => choose(query)}
-              style={{
-                width: "100%",
-                textAlign: "left",
-                padding: "10px 12px",
-                cursor: "pointer",
-                background: "rgba(180,120,255,0.10)",
-                border: "none",
-                borderTop: "1px solid rgba(255,255,255,0.08)",
-                color: "white",
-                fontWeight: 900,
-              }}
-            >
-              Criar: {normalizeLabel(query)}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
+  return v || "—";
 }
 
 const inputStyle: React.CSSProperties = {
@@ -565,16 +107,14 @@ const btn: React.CSSProperties = {
   background: "rgba(255,255,255,0.06)",
   color: "white",
   border: "1px solid rgba(255,255,255,0.12)",
-  padding: "8px 10px",
-  borderRadius: 10,
+  padding: "10px 12px",
+  borderRadius: 12,
   cursor: "pointer",
   fontWeight: 900,
   textDecoration: "none",
   display: "inline-flex",
   alignItems: "center",
   gap: 8,
-  fontSize: 12,
-  lineHeight: 1.1,
 };
 
 const btnPrimary: React.CSSProperties = {
@@ -582,13 +122,6 @@ const btnPrimary: React.CSSProperties = {
   border: "1px solid rgba(180,120,255,0.30)",
   background:
     "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
-};
-
-const btnDanger: React.CSSProperties = {
-  ...btn,
-  border: "1px solid rgba(255,120,120,0.25)",
-  background:
-    "linear-gradient(180deg, rgba(255,120,120,0.14) 0%, rgba(255,120,120,0.06) 100%)",
 };
 
 function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
@@ -613,6 +146,120 @@ function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
   };
 }
 
+function SuggestInput({
+  value,
+  onChange,
+  suggestions,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  suggestions: string[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const current = value.trim().toLowerCase();
+    const uniq = new Map<string, string>();
+
+    for (const item of suggestions) {
+      const clean = String(item || "").trim();
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      if (!uniq.has(key)) uniq.set(key, clean);
+    }
+
+    return Array.from(uniq.values())
+      .filter((item) => {
+        if (!current) return true;
+        return item.toLowerCase().includes(current);
+      })
+      .slice(0, 8);
+  }, [suggestions, value]);
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input
+        style={{
+          ...inputStyle,
+          borderRadius: 12,
+          border: "1px solid rgba(255,255,255,0.12)",
+          background: "rgba(255,255,255,0.06)",
+        }}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        placeholder={placeholder}
+      />
+
+      {open && filtered.length > 0 ? (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            left: 0,
+            right: 0,
+            zIndex: 60,
+            borderRadius: 12,
+            border: "1px solid rgba(255,255,255,0.12)",
+            background: "rgba(10,10,14,0.96)",
+            backdropFilter: "blur(12px)",
+            boxShadow: "0 24px 80px rgba(0,0,0,0.65)",
+            overflow: "hidden",
+            maxHeight: 260,
+            overflowY: "auto",
+          }}
+        >
+          {filtered.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => {
+                onChange(item);
+                setOpen(false);
+              }}
+              style={{
+                width: "100%",
+                textAlign: "left",
+                padding: "10px 12px",
+                cursor: "pointer",
+                background: "transparent",
+                border: "none",
+                color: "rgba(255,255,255,0.92)",
+                fontWeight: 850,
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "rgba(255,255,255,0.06)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "transparent";
+              }}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function VendasPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
@@ -621,28 +268,39 @@ export default function VendasPage() {
   const [saving, setSaving] = useState(false);
   const [rows, setRows] = useState<SaleRow[]>([]);
   const [leads, setLeads] = useState<LeadRow[]>([]);
-  const [procedureOptions, setProcedureOptions] = useState<ProcedureOption[]>(
-    []
-  );
-  const [sourceOptions, setSourceOptions] = useState<SingleOption[]>([]);
-  const [sellerOptions, setSellerOptions] = useState<SingleOption[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const [editingSaleId, setEditingSaleId] = useState<string | null>(null);
+  const [procedureSuggestions, setProcedureSuggestions] = useState<string[]>([]);
+  const [sourceSuggestions, setSourceSuggestions] = useState<string[]>([]);
+  const [sellerSuggestions, setSellerSuggestions] = useState<string[]>([]);
+  const [indicatedClientSuggestions, setIndicatedClientSuggestions] = useState<
+    string[]
+  >([]);
+  const [
+    indicatedProfessionalSuggestions,
+    setIndicatedProfessionalSuggestions,
+  ] = useState<string[]>([]);
 
   const [leadId, setLeadId] = useState("");
-  const [procedureItems, setProcedureItems] = useState<string[]>([]);
+  const [procedure, setProcedure] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("pix");
   const [installmentsLabel, setInstallmentsLabel] = useState("À vista");
   const [saleType, setSaleType] = useState("avulsa");
+
   const [grossValue, setGrossValue] = useState("");
   const [netValue, setNetValue] = useState("");
-  const [feePercentValue, setFeePercentValue] = useState("");
+  const [feePercentInput, setFeePercentInput] = useState("");
+
   const [closedAt, setClosedAt] = useState(todayInputValue());
   const [sellerName, setSellerName] = useState("");
   const [source, setSource] = useState("");
+  const [indicatedClient, setIndicatedClient] = useState("");
+  const [indicatedProfessional, setIndicatedProfessional] = useState("");
   const [notes, setNotes] = useState("");
-  const [recStatus, setRecStatus] = useState("ativo");
+
+  const [lastEditedField, setLastEditedField] = useState<"net" | "percent" | null>(
+    null
+  );
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -656,7 +314,7 @@ export default function VendasPage() {
     const { data, error } = await supabase
       .from("sales")
       .select(
-        "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at,leads(id,name,phone_raw,phone_e164)"
+        "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,indicated_client,indicated_professional,closed_at,leads(id,name,phone_raw,phone_e164)"
       )
       .order("closed_at", { ascending: false });
 
@@ -667,28 +325,14 @@ export default function VendasPage() {
       return;
     }
 
-    const nextRows = (data as any) ?? [];
-    setRows(nextRows);
-
-    setProcedureOptions(
-      buildProcedureOptions(nextRows.map((row: any) => row.procedure))
-    );
-
-    setSellerOptions(
-      buildSingleOptions(nextRows.map((row: any) => row.seller_name))
-    );
-
-    setSourceOptions(
-      buildSingleOptions(nextRows.map((row: any) => row.source))
-    );
-
+    setRows((data as any) ?? []);
     setLoading(false);
   }
 
   async function fetchLeads() {
     const { data, error } = await supabase
       .from("leads")
-      .select("id,name,phone_raw,phone_e164,source")
+      .select("id,name,phone_raw,phone_e164")
       .order("name", { ascending: true });
 
     if (error) {
@@ -697,21 +341,95 @@ export default function VendasPage() {
       return;
     }
 
-    const nextLeads = (data as LeadRow[]) ?? [];
-    setLeads(nextLeads);
+    setLeads((data as LeadRow[]) ?? []);
+  }
 
-    setSourceOptions((prev) =>
-      buildSingleOptions([
-        ...prev.map((x) => x.value),
-        ...(nextLeads as any[]).map((lead) => lead.source),
-      ])
-    );
+  async function fetchSuggestions() {
+    const { data, error } = await supabase
+      .from("sales")
+      .select(
+        "procedure,source,seller_name,indicated_client,indicated_professional"
+      );
+
+    if (error) {
+      console.error(error);
+      setProcedureSuggestions([]);
+      setSourceSuggestions([]);
+      setSellerSuggestions([]);
+      setIndicatedClientSuggestions([]);
+      setIndicatedProfessionalSuggestions([]);
+      return;
+    }
+
+    const rows = (data ?? []) as Array<{
+      procedure: string | null;
+      source: string | null;
+      seller_name: string | null;
+      indicated_client: string | null;
+      indicated_professional: string | null;
+    }>;
+
+    const splitProcedures = rows
+      .flatMap((r) =>
+        String(r.procedure ?? "")
+          .split(";")
+          .map((x) => x.trim())
+          .filter(Boolean)
+      )
+      .filter(Boolean);
+
+    const procedureUnique = Array.from(
+      new Map(splitProcedures.map((item) => [item.toLowerCase(), item])).values()
+    ).sort((a, b) => a.localeCompare(b));
+
+    const sourceUnique = Array.from(
+      new Map(
+        rows
+          .map((r) => String(r.source ?? "").trim())
+          .filter(Boolean)
+          .map((item) => [item.toLowerCase(), item])
+      ).values()
+    ).sort((a, b) => a.localeCompare(b));
+
+    const sellerUnique = Array.from(
+      new Map(
+        rows
+          .map((r) => String(r.seller_name ?? "").trim())
+          .filter(Boolean)
+          .map((item) => [item.toLowerCase(), item])
+      ).values()
+    ).sort((a, b) => a.localeCompare(b));
+
+    const indicatedClientUnique = Array.from(
+      new Map(
+        rows
+          .map((r) => String(r.indicated_client ?? "").trim())
+          .filter(Boolean)
+          .map((item) => [item.toLowerCase(), item])
+      ).values()
+    ).sort((a, b) => a.localeCompare(b));
+
+    const indicatedProfessionalUnique = Array.from(
+      new Map(
+        rows
+          .map((r) => String(r.indicated_professional ?? "").trim())
+          .filter(Boolean)
+          .map((item) => [item.toLowerCase(), item])
+      ).values()
+    ).sort((a, b) => a.localeCompare(b));
+
+    setProcedureSuggestions(procedureUnique);
+    setSourceSuggestions(sourceUnique);
+    setSellerSuggestions(sellerUnique);
+    setIndicatedClientSuggestions(indicatedClientUnique);
+    setIndicatedProfessionalSuggestions(indicatedProfessionalUnique);
   }
 
   useEffect(() => {
     if (isAdmin) {
       fetchSales();
       fetchLeads();
+      fetchSuggestions();
     }
   }, [isAdmin]);
 
@@ -719,73 +437,38 @@ export default function VendasPage() {
     return rows.reduce((sum, r) => sum + Number(r.value ?? 0), 0);
   }, [rows]);
 
-  function resetForm() {
-    setEditingSaleId(null);
-    setLeadId("");
-    setProcedureItems([]);
-    setPaymentMethod("pix");
-    setInstallmentsLabel("À vista");
-    setSaleType("avulsa");
-    setGrossValue("");
-    setNetValue("");
-    setFeePercentValue("");
-    setClosedAt(todayInputValue());
-    setSellerName("");
-    setSource("");
-    setNotes("");
-    setRecStatus("ativo");
-    setErrorMsg("");
-  }
+  useEffect(() => {
+    const gross = Number(grossValue || 0);
+    if (!gross || gross <= 0) {
+      if (!grossValue) {
+        setNetValue("");
+        setFeePercentInput("");
+      }
+      return;
+    }
 
-  function fillFormFromSale(row: SaleRow) {
-    setEditingSaleId(row.id);
-    setLeadId(row.lead_id ?? "");
-    setProcedureItems(parseProcedureString(row.procedure));
-    setPaymentMethod(row.payment_method ?? "pix");
-    setInstallmentsLabel(row.installments_label ?? "À vista");
-    setSaleType(row.sale_type ?? "avulsa");
-    setGrossValue(String(row.value_gross ?? row.value ?? ""));
-    setNetValue(String(row.value_net ?? ""));
-    setFeePercentValue(String(row.fee_percent ?? ""));
-    setClosedAt(
-      row.closed_at ? String(row.closed_at).slice(0, 10) : todayInputValue()
-    );
-    setSellerName(row.seller_name ?? "");
-    setSource(row.source ?? "");
-    setNotes(row.notes ?? "");
-    setErrorMsg("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  function updateByGrossAndNet(nextGrossRaw: string, nextNetRaw: string) {
-    const gross = Number(nextGrossRaw || 0);
-    const net = Number(nextNetRaw || 0);
-
-    setGrossValue(nextGrossRaw);
-    setNetValue(nextNetRaw);
-
-    if (gross > 0 && net >= 0) {
+    if (lastEditedField === "net") {
+      const net = Number(netValue || 0);
+      if (!Number.isFinite(net)) return;
       const pct = ((gross - net) / gross) * 100;
-      setFeePercentValue(Number.isFinite(pct) ? pct.toFixed(2) : "");
-    } else {
-      setFeePercentValue("");
+      setFeePercentInput(Number.isFinite(pct) ? pct.toFixed(2) : "");
     }
-  }
 
-  function updateByGrossAndFee(nextGrossRaw: string, nextFeeRaw: string) {
-    const gross = Number(nextGrossRaw || 0);
-    const fee = Number(nextFeeRaw || 0);
-
-    setGrossValue(nextGrossRaw);
-    setFeePercentValue(nextFeeRaw);
-
-    if (gross > 0 && fee >= 0) {
-      const net = gross * (1 - fee / 100);
-      setNetValue(Number.isFinite(net) ? net.toFixed(2) : "");
-    } else {
-      setNetValue("");
+    if (lastEditedField === "percent") {
+      const pct = Number(feePercentInput || 0);
+      if (!Number.isFinite(pct)) return;
+      const calculatedNet = gross * (1 - pct / 100);
+      setNetValue(Number.isFinite(calculatedNet) ? calculatedNet.toFixed(2) : "");
     }
-  }
+  }, [grossValue, netValue, feePercentInput, lastEditedField]);
+
+  const feePercentPreview = useMemo(() => {
+    const gross = Number(grossValue || 0);
+    const net = Number(netValue || 0);
+    if (!gross || gross <= 0) return 0;
+    const pct = ((gross - net) / gross) * 100;
+    return Number.isFinite(pct) ? pct : 0;
+  }, [grossValue, netValue]);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -793,23 +476,15 @@ export default function VendasPage() {
 
     const gross = Number(grossValue || 0);
     const net = Number(netValue || 0);
-    const shouldCreateOrUpdateRecorrencia = saleType === "recorrencia";
-
-    const normalizedProcedure = procedureItems
-      .map((item) => normalizeLabel(item))
-      .filter(Boolean)
-      .join("; ");
-
-    const normalizedSeller = normalizeLabel(sellerName);
-    const normalizedSource = normalizeLabel(source);
+    const installmentsTotal = parseInstallmentsTotal(installmentsLabel);
 
     if (!leadId) {
       setErrorMsg("Selecione o cliente.");
       return;
     }
 
-    if (!procedureItems.length) {
-      setErrorMsg("Informe pelo menos um procedimento.");
+    if (!procedure.trim()) {
+      setErrorMsg("Informe o procedimento.");
       return;
     }
 
@@ -836,176 +511,110 @@ export default function VendasPage() {
     setSaving(true);
 
     try {
-      const feePercent =
-        gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
+      const normalizedProcedure = procedure
+        .split(";")
+        .map((x) => x.trim())
+        .filter(Boolean)
+        .map((item) => {
+          const found = procedureSuggestions.find(
+            (s) => s.trim().toLowerCase() === item.trim().toLowerCase()
+          );
+          return found ?? item;
+        })
+        .join("; ");
 
-      const installmentsTotal =
-        Number(installmentsLabel.replace(/\D/g, "")) > 0
-          ? Number(installmentsLabel.replace(/\D/g, ""))
-          : 1;
+      const normalizedSource =
+        sourceSuggestions.find(
+          (s) => s.trim().toLowerCase() === source.trim().toLowerCase()
+        ) ?? source.trim();
+
+      const normalizedSeller =
+        sellerSuggestions.find(
+          (s) => s.trim().toLowerCase() === sellerName.trim().toLowerCase()
+        ) ?? sellerName.trim();
+
+      const normalizedIndicatedClient =
+        indicatedClientSuggestions.find(
+          (s) => s.trim().toLowerCase() === indicatedClient.trim().toLowerCase()
+        ) ?? indicatedClient.trim();
+
+      const normalizedIndicatedProfessional =
+        indicatedProfessionalSuggestions.find(
+          (s) =>
+            s.trim().toLowerCase() === indicatedProfessional.trim().toLowerCase()
+        ) ?? indicatedProfessional.trim();
 
       let recorrenciaId: string | null = null;
 
-      if (!editingSaleId) {
-        if (shouldCreateOrUpdateRecorrencia) {
-          const installmentValue =
-            installmentsTotal > 0
-              ? Number((gross / installmentsTotal).toFixed(2))
-              : gross;
+      if (saleType === "recorrencia") {
+        const monthlyGross =
+          installmentsTotal > 0 ? Number((gross / installmentsTotal).toFixed(2)) : gross;
 
-          const { data: recData, error: recError } = await supabase
-            .from("recorrencias")
-            .insert({
-              lead_id: leadId,
-              status: recStatus,
-              start_date: closedAt,
-              installments_total: installmentsTotal,
-              installments_done: 1,
-              price_per_installment: installmentValue,
-            })
-            .select("id")
-            .single();
-
-          if (recError) throw recError;
-          recorrenciaId = recData?.id ?? null;
-        }
-
-        const { error: saleError } = await supabase.from("sales").insert({
-          lead_id: leadId,
-          recorrencia_id: recorrenciaId,
-          sale_type: shouldCreateOrUpdateRecorrencia ? "recorrencia" : "avulsa",
-          procedure: normalizedProcedure,
-          value: gross,
-          value_gross: gross,
-          value_net: net,
-          fee_percent: feePercent,
-          payment_method: paymentMethod.trim(),
-          installments_label: installmentsLabel,
-          seller_name: normalizedSeller || null,
-          source: normalizedSource || null,
-          notes: notes.trim() || null,
-          closed_at: closedAt,
-        });
-
-        if (saleError) throw saleError;
-      } else {
-        const currentSale = rows.find((r) => r.id === editingSaleId) ?? null;
-        recorrenciaId = currentSale?.recorrencia_id ?? null;
-
-        if (shouldCreateOrUpdateRecorrencia) {
-          const installmentValue =
-            installmentsTotal > 0
-              ? Number((gross / installmentsTotal).toFixed(2))
-              : gross;
-
-          if (recorrenciaId) {
-            const { error: recUpdateError } = await supabase
-              .from("recorrencias")
-              .update({
-                lead_id: leadId,
-                status: recStatus,
-                start_date: closedAt,
-                installments_total: installmentsTotal,
-                price_per_installment: installmentValue,
-              })
-              .eq("id", recorrenciaId);
-
-            if (recUpdateError) throw recUpdateError;
-          } else {
-            const { data: recData, error: recError } = await supabase
-              .from("recorrencias")
-              .insert({
-                lead_id: leadId,
-                status: recStatus,
-                start_date: closedAt,
-                installments_total: installmentsTotal,
-                installments_done: 1,
-                price_per_installment: installmentValue,
-              })
-              .select("id")
-              .single();
-
-            if (recError) throw recError;
-            recorrenciaId = recData?.id ?? null;
-          }
-        }
-
-        const { error: saleUpdateError } = await supabase
-          .from("sales")
-          .update({
+        const { data: recData, error: recError } = await supabase
+          .from("recorrencias")
+          .insert({
             lead_id: leadId,
-            recorrencia_id: shouldCreateOrUpdateRecorrencia ? recorrenciaId : null,
-            sale_type: shouldCreateOrUpdateRecorrencia ? "recorrencia" : "avulsa",
-            procedure: normalizedProcedure,
-            value: gross,
-            value_gross: gross,
-            value_net: net,
-            fee_percent: feePercent,
-            payment_method: paymentMethod.trim(),
-            installments_label: installmentsLabel,
-            seller_name: normalizedSeller || null,
-            source: normalizedSource || null,
-            notes: notes.trim() || null,
-            closed_at: closedAt,
+            status: "ativo",
+            start_date: closedAt,
+            installments_total: installmentsTotal,
+            installments_done: 1,
+            price_per_installment: monthlyGross,
           })
-          .eq("id", editingSaleId);
+          .select("id")
+          .single();
 
-        if (saleUpdateError) throw saleUpdateError;
+        if (recError) throw recError;
+        recorrenciaId = recData?.id ?? null;
       }
 
-      resetForm();
+      const feePercent =
+        gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
+
+      const { error: saleError } = await supabase.from("sales").insert({
+        lead_id: leadId,
+        recorrencia_id: recorrenciaId,
+        sale_type: saleType,
+        procedure: normalizedProcedure,
+        value: gross,
+        value_gross: gross,
+        value_net: net,
+        fee_percent: feePercent,
+        payment_method: paymentMethod.trim(),
+        installments_label: installmentsLabel,
+        seller_name: normalizedSeller || null,
+        source: normalizedSource || null,
+        indicated_client: normalizedIndicatedClient || null,
+        indicated_professional: normalizedIndicatedProfessional || null,
+        notes: notes.trim() || null,
+        closed_at: closedAt,
+      });
+
+      if (saleError) throw saleError;
+
+      setLeadId("");
+      setProcedure("");
+      setPaymentMethod("pix");
+      setInstallmentsLabel("À vista");
+      setSaleType("avulsa");
+      setGrossValue("");
+      setNetValue("");
+      setFeePercentInput("");
+      setClosedAt(todayInputValue());
+      setSellerName("");
+      setSource("");
+      setIndicatedClient("");
+      setIndicatedProfessional("");
+      setNotes("");
+      setLastEditedField(null);
+
       await fetchSales();
       await fetchLeads();
+      await fetchSuggestions();
     } catch (e: any) {
       console.error(e);
       setErrorMsg(e?.message ?? "Erro ao salvar venda.");
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleDelete(row: SaleRow) {
-    const ok = window.confirm("Excluir esta venda?");
-    if (!ok) return;
-
-    try {
-      if (row.recorrencia_id) {
-        const { count } = await supabase
-          .from("sales")
-          .select("*", { count: "exact", head: true })
-          .eq("recorrencia_id", row.recorrencia_id);
-
-        const { error: saleDeleteError } = await supabase
-          .from("sales")
-          .delete()
-          .eq("id", row.id);
-
-        if (saleDeleteError) throw saleDeleteError;
-
-        if ((count ?? 0) <= 1) {
-          await supabase
-            .from("recorrencias")
-            .delete()
-            .eq("id", row.recorrencia_id);
-        }
-      } else {
-        const { error: saleDeleteError } = await supabase
-          .from("sales")
-          .delete()
-          .eq("id", row.id);
-
-        if (saleDeleteError) throw saleDeleteError;
-      }
-
-      if (editingSaleId === row.id) {
-        resetForm();
-      }
-
-      await fetchSales();
-      await fetchLeads();
-    } catch (e: any) {
-      console.error(e);
-      alert(e?.message ?? "Erro ao excluir venda.");
     }
   }
 
@@ -1039,21 +648,15 @@ export default function VendasPage() {
             {loading ? (
               <span style={chipStyle("primary")}>Carregando…</span>
             ) : (
-              <span style={chipStyle("muted")}>
-                Total: {formatBRL(total)}
-              </span>
+              <span style={chipStyle("muted")}>Total: {formatBRL(total)}</span>
             )}
-
-            {editingSaleId ? (
-              <span style={chipStyle("primary")}>Editando venda</span>
-            ) : null}
           </div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          <Link href="/leads/new?returnTo=/vendas" style={btnPrimary}>
-          + Novo lead
-        </Link>
+          <Link href="/leads/new" style={btnPrimary}>
+            + Novo lead
+          </Link>
         </div>
       </div>
 
@@ -1071,24 +674,9 @@ export default function VendasPage() {
             fontSize: 18,
             fontWeight: 900,
             marginBottom: 14,
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 10,
-            alignItems: "center",
-            flexWrap: "wrap",
           }}
         >
-          <span>{editingSaleId ? "Editar venda" : "Nova venda"}</span>
-
-          {editingSaleId ? (
-            <button
-              type="button"
-              onClick={resetForm}
-              style={btn}
-            >
-              Cancelar edição
-            </button>
-          ) : null}
+          Nova venda
         </div>
 
         <div
@@ -1152,16 +740,13 @@ export default function VendasPage() {
           </div>
 
           <div style={{ gridColumn: "span 2" }}>
-            <label style={labelStyle}>Procedimentos</label>
-            <ProcedureMultiCreatable
-              value={procedureItems}
-              onChange={setProcedureItems}
-              options={procedureOptions}
-              placeholder="Ex.: Botox 3 áreas"
+            <label style={labelStyle}>Procedimento</label>
+            <SuggestInput
+              value={procedure}
+              onChange={setProcedure}
+              suggestions={procedureSuggestions}
+              placeholder="Ex.: Botox 3 áreas; Preenchimento labial"
             />
-            <div style={{ marginTop: 6, fontSize: 11, opacity: 0.7 }}>
-              Digite para buscar, clique para adicionar ou pressione Enter para criar novo.
-            </div>
           </div>
 
           <div>
@@ -1175,7 +760,7 @@ export default function VendasPage() {
               options={[
                 { value: "pix", label: "Pix" },
                 { value: "cartao", label: "Cartão" },
-                { value: "cartao_recorrente", label: "Cartão Recorrente" },
+                { value: "cartao_recorrente", label: "Cartão recorrente" },
                 { value: "debito", label: "Débito" },
                 { value: "dinheiro", label: "Dinheiro" },
                 { value: "boleto", label: "Boleto" },
@@ -1211,13 +796,7 @@ export default function VendasPage() {
               min="0"
               step="0.01"
               value={grossValue}
-              onChange={(e) => {
-                if (feePercentValue) {
-                  updateByGrossAndFee(e.target.value, feePercentValue);
-                } else {
-                  updateByGrossAndNet(e.target.value, netValue);
-                }
-              }}
+              onChange={(e) => setGrossValue(e.target.value)}
               style={inputStyle}
               placeholder="0,00"
             />
@@ -1230,7 +809,10 @@ export default function VendasPage() {
               min="0"
               step="0.01"
               value={netValue}
-              onChange={(e) => updateByGrossAndNet(grossValue, e.target.value)}
+              onChange={(e) => {
+                setNetValue(e.target.value);
+                setLastEditedField("net");
+              }}
               style={inputStyle}
               placeholder="0,00"
             />
@@ -1242,8 +824,11 @@ export default function VendasPage() {
               type="number"
               min="0"
               step="0.01"
-              value={feePercentValue}
-              onChange={(e) => updateByGrossAndFee(grossValue, e.target.value)}
+              value={feePercentInput}
+              onChange={(e) => {
+                setFeePercentInput(e.target.value);
+                setLastEditedField("percent");
+              }}
               style={inputStyle}
               placeholder="0,00"
             />
@@ -1251,21 +836,41 @@ export default function VendasPage() {
 
           <div>
             <label style={labelStyle}>Vendedor</label>
-            <SingleCreatableDark
+            <SuggestInput
               value={sellerName}
               onChange={setSellerName}
-              options={sellerOptions}
-              placeholder="Digite para buscar ou criar"
+              suggestions={sellerSuggestions}
+              placeholder="Nome"
             />
           </div>
 
           <div>
             <label style={labelStyle}>Origem</label>
-            <SingleCreatableDark
+            <SuggestInput
               value={source}
               onChange={setSource}
-              options={sourceOptions}
-              placeholder="Digite para buscar ou criar"
+              suggestions={sourceSuggestions}
+              placeholder="Meta, indicação..."
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Indicação (Cliente)</label>
+            <SuggestInput
+              value={indicatedClient}
+              onChange={setIndicatedClient}
+              suggestions={indicatedClientSuggestions}
+              placeholder="Opcional"
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Indicação (Profissional)</label>
+            <SuggestInput
+              value={indicatedProfessional}
+              onChange={setIndicatedProfessional}
+              suggestions={indicatedProfessionalSuggestions}
+              placeholder="Opcional"
             />
           </div>
 
@@ -1279,6 +884,18 @@ export default function VendasPage() {
             />
           </div>
         </div>
+
+        {saleType === "recorrencia" ? (
+          <div
+            style={{
+              marginTop: 12,
+              fontSize: 12,
+              opacity: 0.8,
+            }}
+          >
+            Recorrência: o valor total será dividido automaticamente pelas parcelas.
+          </div>
+        ) : null}
 
         {errorMsg ? (
           <div
@@ -1298,34 +915,25 @@ export default function VendasPage() {
             display: "flex",
             justifyContent: "flex-end",
             marginTop: 14,
-            gap: 8,
-            flexWrap: "wrap",
           }}
         >
-          {editingSaleId ? (
-            <button
-              type="button"
-              onClick={resetForm}
-              style={btn}
-            >
-              Cancelar
-            </button>
-          ) : null}
-
           <button
             type="submit"
             disabled={saving}
             style={{
-              ...btnPrimary,
-              opacity: saving ? 0.7 : 1,
+              background: "rgba(255,255,255,0.08)",
+              border: "1px solid rgba(255,255,255,0.14)",
+              color: "white",
+              padding: "6px 10px",
+              borderRadius: 8,
               cursor: saving ? "not-allowed" : "pointer",
+              fontSize: 12,
+              fontWeight: 800,
+              lineHeight: 1.1,
+              opacity: saving ? 0.7 : 1,
             }}
           >
-            {saving
-              ? "Salvando..."
-              : editingSaleId
-              ? "Salvar alterações"
-              : "Salvar venda"}
+            {saving ? "Salvando..." : "Salvar venda"}
           </button>
         </div>
       </form>
@@ -1358,11 +966,10 @@ export default function VendasPage() {
             <thead>
               <tr>
                 <th style={{ textAlign: "left", paddingBottom: 10 }}>Cliente</th>
-                <th style={{ textAlign: "left", paddingBottom: 10 }}>Procedimentos</th>
+                <th style={{ textAlign: "left", paddingBottom: 10 }}>Procedimento</th>
                 <th style={{ textAlign: "left", paddingBottom: 10 }}>Pagamento</th>
                 <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor</th>
                 <th style={{ textAlign: "left", paddingBottom: 10 }}>Data</th>
-                <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
               </tr>
             </thead>
 
@@ -1392,32 +999,23 @@ export default function VendasPage() {
                         borderTop: "1px solid rgba(255,255,255,0.06)",
                       }}
                     >
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {parseProcedureString(r.procedure).length ? (
-                          parseProcedureString(r.procedure).map((item) => (
-                            <span
-                              key={item}
-                              style={{
-                                fontSize: 11,
-                                padding: "3px 8px",
-                                borderRadius: 999,
-                                border: "1px solid rgba(180,120,255,0.28)",
-                                background: "rgba(180,120,255,0.10)",
-                                color: "white",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {item}
-                            </span>
-                          ))
-                        ) : (
-                          <div>—</div>
-                        )}
-                      </div>
+                      <div>{r.procedure ?? "—"}</div>
 
                       {r.recorrencia_id ? (
-                        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
                           Vinculada à recorrência
+                        </div>
+                      ) : null}
+
+                      {r.indicated_client ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          Indicação cliente: {r.indicated_client}
+                        </div>
+                      ) : null}
+
+                      {r.indicated_professional ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          Indicação profissional: {r.indicated_professional}
                         </div>
                       ) : null}
                     </td>
@@ -1428,7 +1026,7 @@ export default function VendasPage() {
                         borderTop: "1px solid rgba(255,255,255,0.06)",
                       }}
                     >
-                      <div>{paymentMethodLabel(r.payment_method)}</div>
+                      <div>{normalizePaymentLabel(r.payment_method)}</div>
                       <div style={{ fontSize: 12, opacity: 0.7 }}>
                         {r.installments_label ?? "—"}
                       </div>
@@ -1456,38 +1054,13 @@ export default function VendasPage() {
                     >
                       {formatDateBR(r.closed_at)}
                     </td>
-
-                    <td
-                      style={{
-                        padding: "10px 0",
-                        borderTop: "1px solid rgba(255,255,255,0.06)",
-                      }}
-                    >
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button
-                          type="button"
-                          onClick={() => fillFormFromSale(r)}
-                          style={btn}
-                        >
-                          Editar
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(r)}
-                          style={btnDanger}
-                        >
-                          Excluir
-                        </button>
-                      </div>
-                    </td>
                   </tr>
                 );
               })}
 
               {!rows.length ? (
                 <tr>
-                  <td colSpan={6} style={{ paddingTop: 12, opacity: 0.7 }}>
+                  <td colSpan={5} style={{ paddingTop: 12, opacity: 0.7 }}>
                     Nenhuma venda encontrada.
                   </td>
                 </tr>
