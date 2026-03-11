@@ -40,7 +40,6 @@ type FinancialTransaction = {
   fee_percent: number | null;
   due_date: string | null;
   paid_at: string | null;
-  competency_date: string | null;
   account_id: string | null;
   category_id: string | null;
   counterparty_name: string | null;
@@ -64,7 +63,7 @@ function formatBRL(v: number | null | undefined) {
 
 function formatDateBR(v: string | null | undefined) {
   if (!v) return "—";
-  const d = new Date(v);
+  const d = new Date(`${v}T12:00:00`);
   if (Number.isNaN(d.getTime())) return "—";
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -77,6 +76,16 @@ function todayInputValue() {
   const yyyy = dt.getFullYear();
   const mm = String(dt.getMonth() + 1).padStart(2, "0");
   const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function addMonthsToDateString(dateStr: string, plusMonths: number) {
+  const d = new Date(`${dateStr}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return dateStr;
+  d.setMonth(d.getMonth() + plusMonths);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
@@ -203,6 +212,8 @@ export default function FinanceiroClinicaLancamentosPage() {
   const [categoryInput, setCategoryInput] = useState("");
   const [counterpartyName, setCounterpartyName] = useState("");
   const [notes, setNotes] = useState("");
+  const [isInstallment, setIsInstallment] = useState(false);
+  const [installments, setInstallments] = useState(2);
 
   const [filterText, setFilterText] = useState("");
   const [filterKind, setFilterKind] = useState("all");
@@ -275,10 +286,15 @@ export default function FinanceiroClinicaLancamentosPage() {
     setCategoryInput("");
     setCounterpartyName("");
     setNotes("");
+    setIsInstallment(false);
+    setInstallments(2);
     setErrorMsg("");
   }
 
-  async function resolveCategoryIdByName(rawName: string, currentKind: "income" | "expense") {
+  async function resolveCategoryIdByName(
+    rawName: string,
+    currentKind: "income" | "expense"
+  ) {
     const name = rawName.trim();
     if (!name) return null;
 
@@ -350,48 +366,104 @@ export default function FinanceiroClinicaLancamentosPage() {
       return;
     }
 
+    if (isInstallment && installments < 2) {
+      setErrorMsg("Informe pelo menos 2 parcelas.");
+      return;
+    }
+
     setSaving(true);
 
     try {
-      const resolvedCategoryId = await resolveCategoryIdByName(categoryInput, kind);
-      const resolvedAccountId = await resolveAccountIdByName(accountInput);
+      const category_id = await resolveCategoryIdByName(categoryInput, kind);
+      const account_id = await resolveAccountIdByName(accountInput);
 
-      const payload = {
-        scope,
-        kind,
-        status,
-        description: description.trim(),
-        amount: parsedAmount,
-        gross_amount: parsedAmount,
-        net_amount: parsedAmount,
-        fee_amount: 0,
-        fee_percent: 0,
-        due_date: dueDate || null,
-        paid_at: paidAt || null,
-        account_id: resolvedAccountId,
-        category_id: resolvedCategoryId,
-        counterparty_name: counterpartyName.trim() || null,
-        notes: notes.trim() || null,
-        source_type: "manual",
-        source_id: null,
-        is_future: !!dueDate && new Date(dueDate) > new Date(),
-      };
+      if (!isInstallment) {
+        const payload = {
+          scope,
+          kind,
+          status,
+          description: description.trim(),
+          amount: parsedAmount,
+          gross_amount: parsedAmount,
+          net_amount: parsedAmount,
+          fee_amount: 0,
+          fee_percent: 0,
+          due_date: dueDate || null,
+          paid_at: paidAt || null,
+          account_id: account_id,
+          category_id: category_id,
+          counterparty_name: counterpartyName.trim() || null,
+          notes: notes.trim() || null,
+          source_type: "manual",
+          source_id: null,
+          installment_number: 1,
+          installment_total: 1,
+          is_future: !!dueDate && new Date(`${dueDate}T12:00:00`) > new Date(),
+        };
+
+        if (editingId) {
+          const { error } = await supabase
+            .from("financial_transactions")
+            .update(payload)
+            .eq("id", editingId)
+            .eq("scope", scope);
+
+          if (error) throw error;
+        } else {
+          const { error } = await supabase
+            .from("financial_transactions")
+            .insert(payload);
+
+          if (error) throw error;
+        }
+
+        resetForm();
+        await fetchAll();
+        return;
+      }
 
       if (editingId) {
-        const { error } = await supabase
-          .from("financial_transactions")
-          .update(payload)
-          .eq("id", editingId)
-          .eq("scope", scope);
-
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("financial_transactions")
-          .insert(payload);
-
-        if (error) throw error;
+        setErrorMsg("Para editar parcelado, apague e recrie em parcelas.");
+        setSaving(false);
+        return;
       }
+
+      const eachValue = Number((parsedAmount / installments).toFixed(2));
+      const inserts = [];
+
+      for (let i = 0; i < installments; i += 1) {
+        const parcelDueDate = addMonthsToDateString(dueDate, i);
+
+        inserts.push({
+          scope,
+          kind,
+          status: i === 0 ? status : "pending",
+          description: `${description.trim()} ${i + 1}/${installments}`,
+          amount: eachValue,
+          gross_amount: eachValue,
+          net_amount: eachValue,
+          fee_amount: 0,
+          fee_percent: 0,
+          due_date: parcelDueDate,
+          paid_at: i === 0 ? paidAt || null : null,
+          account_id: account_id,
+          category_id: category_id,
+          counterparty_name: counterpartyName.trim() || null,
+          notes: notes.trim() || null,
+          source_type: "manual",
+          source_id: null,
+          installment_number: i + 1,
+          installment_total: installments,
+          is_future:
+            !!parcelDueDate && new Date(`${parcelDueDate}T12:00:00`) > new Date(),
+        });
+      }
+
+      const { error } = await supabase
+        .from("financial_transactions")
+        .insert(inserts);
+
+      if (error) throw error;
 
       resetForm();
       await fetchAll();
@@ -420,6 +492,8 @@ export default function FinanceiroClinicaLancamentosPage() {
 
     setCounterpartyName(row.counterparty_name ?? "");
     setNotes(row.notes ?? "");
+    setIsInstallment(false);
+    setInstallments(row.installment_total && row.installment_total > 1 ? row.installment_total : 2);
     setErrorMsg("");
     setViewMode("list");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -702,15 +776,111 @@ export default function FinanceiroClinicaLancamentosPage() {
 
           <div>
             <label style={labelStyle}>Valor</label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              style={inputStyle}
-              placeholder="0,00"
-            />
+
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                style={{
+                  ...inputStyle,
+                  flex: 1,
+                  minWidth: 180,
+                }}
+                placeholder="0,00"
+              />
+
+              <label
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 10px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.03)",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  whiteSpace: "nowrap",
+                  cursor: "pointer",
+                  height: 42,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={isInstallment}
+                  onChange={(e) => setIsInstallment(e.target.checked)}
+                  style={{ margin: 0 }}
+                />
+                Parcelar
+              </label>
+
+              {isInstallment ? (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "0 8px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(255,255,255,0.03)",
+                    height: 42,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12,
+                      opacity: 0.78,
+                      fontWeight: 800,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Parcelas
+                  </span>
+
+                  <input
+                    type="number"
+                    min="2"
+                    max="24"
+                    value={installments}
+                    onChange={(e) => setInstallments(Number(e.target.value))}
+                    style={{
+                      width: 64,
+                      background: "transparent",
+                      color: "white",
+                      border: "none",
+                      outline: "none",
+                      fontWeight: 900,
+                      fontSize: 14,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
+
+            {isInstallment && Number(amount) > 0 && installments > 1 ? (
+              <div
+                style={{
+                  marginTop: 6,
+                  fontSize: 12,
+                  opacity: 0.72,
+                  fontWeight: 700,
+                }}
+              >
+                {installments}x de{" "}
+                {formatBRL(Number(amount || 0) / Number(installments || 1))}
+              </div>
+            ) : null}
           </div>
 
           <div>
