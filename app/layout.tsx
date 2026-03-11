@@ -1,11 +1,3 @@
-import "./globals.css";
-import React from "react";
-
-export const metadata = {
-  title: "CRM GIO",
-  description: "Sistema CRM",
-};
-
 export default function RootLayout({
   children,
 }: {
@@ -13,7 +5,17 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body
+        style={{
+          margin: 0,
+          background: "#050408",
+          color: "white",
+          fontFamily: "system-ui, -apple-system, sans-serif",
+          fontSize: 16,
+        }}
+      >
+        {children}
+      </body>
     </html>
   );
 }

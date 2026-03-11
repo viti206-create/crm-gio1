@@ -87,13 +87,16 @@ function normalizePaymentLabel(v: string | null | undefined) {
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
-  padding: "9px 10px",
-  borderRadius: 8,
-  border: "1px solid rgba(255,255,255,0.10)",
-  background: "rgba(255,255,255,0.04)",
+  height: 44,
+  boxSizing: "border-box",
+  padding: "0 12px",
+  borderRadius: 12,
+  border: "1px solid rgba(255,255,255,0.12)",
+  background: "rgba(255,255,255,0.06)",
   color: "white",
   outline: "none",
   fontSize: 13,
+  minWidth: 0,
 };
 
 const labelStyle: React.CSSProperties = {
@@ -153,6 +156,10 @@ function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
     whiteSpace: "nowrap",
   };
 }
+
+const fieldWrapStyle: React.CSSProperties = {
+  minWidth: 0,
+};
 
 function SuggestInput({
   value,
@@ -217,14 +224,9 @@ function SuggestInput({
   }
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div ref={wrapRef} style={{ position: "relative", minWidth: 0 }}>
       <input
-        style={{
-          ...inputStyle,
-          borderRadius: 12,
-          border: "1px solid rgba(255,255,255,0.12)",
-          background: "rgba(255,255,255,0.06)",
-        }}
+        style={inputStyle}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
@@ -807,14 +809,13 @@ export default function VendasPage() {
             gap: 10,
           }}
         >
-          <div style={{ gridColumn: "span 2" }}>
+          <div style={{ ...fieldWrapStyle, gridColumn: "span 2" }}>
             <label style={labelStyle}>Cliente</label>
             <SelectDark
               value={leadId}
               onChange={setLeadId}
               placeholder="Selecione"
               searchable
-              minWidth={220}
               options={[
                 { value: "", label: "Selecione" },
                 ...leads.map((lead) => ({
@@ -835,14 +836,13 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Tipo</label>
             <SelectDark
               value={saleType}
               onChange={setSaleType}
               placeholder="Tipo"
               searchable={false}
-              minWidth={160}
               options={[
                 { value: "avulsa", label: "Avulsa" },
                 { value: "recorrencia", label: "Recorrência" },
@@ -850,7 +850,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Data</label>
             <input
               type="date"
@@ -860,7 +860,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div style={{ gridColumn: "span 2" }}>
+          <div style={{ ...fieldWrapStyle, gridColumn: "span 2" }}>
             <label style={labelStyle}>Procedimento</label>
             <SuggestInput
               value={procedure}
@@ -871,14 +871,13 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Pagamento</label>
             <SelectDark
               value={paymentMethod}
               onChange={setPaymentMethod}
               placeholder="Pagamento"
               searchable={false}
-              minWidth={160}
               options={[
                 { value: "pix", label: "Pix" },
                 { value: "cartao", label: "Cartão" },
@@ -891,14 +890,13 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Parcelas</label>
             <SelectDark
               value={installmentsLabel}
               onChange={setInstallmentsLabel}
               placeholder="Parcelas"
               searchable={false}
-              minWidth={160}
               options={[
                 { value: "À vista", label: "À vista" },
                 ...Array.from({ length: 18 }).map((_, i) => {
@@ -912,7 +910,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Valor bruto</label>
             <input
               type="number"
@@ -925,7 +923,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Valor líquido</label>
             <input
               type="number"
@@ -941,7 +939,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Taxa (%)</label>
             <input
               type="number"
@@ -957,7 +955,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Vendedor</label>
             <SuggestInput
               value={sellerName}
@@ -967,7 +965,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Origem</label>
             <SuggestInput
               value={source}
@@ -977,7 +975,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Indicação (Cliente)</label>
             <SuggestInput
               value={indicatedClient}
@@ -987,7 +985,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Indicação (Profissional)</label>
             <SuggestInput
               value={indicatedProfessional}
@@ -997,7 +995,7 @@ export default function VendasPage() {
             />
           </div>
 
-          <div style={{ gridColumn: "span 2" }}>
+          <div style={{ ...fieldWrapStyle, gridColumn: "span 2" }}>
             <label style={labelStyle}>Observações</label>
             <input
               value={notes}
@@ -1091,53 +1089,53 @@ export default function VendasPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.5fr 1fr 1fr auto",
+            gridTemplateColumns: "minmax(240px, 1.5fr) minmax(160px, 1fr) minmax(180px, 1fr) auto",
             gap: 10,
             marginBottom: 14,
+            alignItems: "stretch",
           }}
         >
-          <input
-            value={filterQ}
-            onChange={(e) => setFilterQ(e.target.value)}
-            placeholder="Buscar por cliente, procedimento, vendedor, origem..."
-            style={{
-              ...inputStyle,
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(255,255,255,0.06)",
-            }}
-          />
+          <div style={fieldWrapStyle}>
+            <input
+              value={filterQ}
+              onChange={(e) => setFilterQ(e.target.value)}
+              placeholder="Buscar por cliente, procedimento, vendedor, origem..."
+              style={inputStyle}
+            />
+          </div>
 
-          <SelectDark
-            value={filterType}
-            onChange={setFilterType}
-            placeholder="Tipo"
-            searchable={false}
-            minWidth={160}
-            options={[
-              { value: "all", label: "Todos os tipos" },
-              { value: "avulsa", label: "Avulsa" },
-              { value: "recorrencia", label: "Recorrência" },
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterType}
+              onChange={setFilterType}
+              placeholder="Tipo"
+              searchable={false}
+              options={[
+                { value: "all", label: "Todos os tipos" },
+                { value: "avulsa", label: "Avulsa" },
+                { value: "recorrencia", label: "Recorrência" },
+              ]}
+            />
+          </div>
 
-          <SelectDark
-            value={filterPayment}
-            onChange={setFilterPayment}
-            placeholder="Pagamento"
-            searchable={false}
-            minWidth={160}
-            options={[
-              { value: "all", label: "Todos pagamentos" },
-              { value: "pix", label: "Pix" },
-              { value: "cartao", label: "Cartão" },
-              { value: "cartao_recorrente", label: "Cartão recorrente" },
-              { value: "cartao_gio", label: "Cartão GIO" },
-              { value: "debito", label: "Débito" },
-              { value: "dinheiro", label: "Dinheiro" },
-              { value: "boleto", label: "Boleto" },
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterPayment}
+              onChange={setFilterPayment}
+              placeholder="Pagamento"
+              searchable={false}
+              options={[
+                { value: "all", label: "Todos pagamentos" },
+                { value: "pix", label: "Pix" },
+                { value: "cartao", label: "Cartão" },
+                { value: "cartao_recorrente", label: "Cartão recorrente" },
+                { value: "cartao_gio", label: "Cartão GIO" },
+                { value: "debito", label: "Débito" },
+                { value: "dinheiro", label: "Dinheiro" },
+                { value: "boleto", label: "Boleto" },
+              ]}
+            />
+          </div>
 
           <button
             type="button"

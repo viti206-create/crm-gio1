@@ -19,12 +19,13 @@ export default function LoginPage() {
 
     async function checkSession() {
       const {
-        data: { session },
-      } = await supabase.auth.getSession();
+        data: { user },
+        error,
+      } = await supabase.auth.getUser();
 
       if (!mounted) return;
 
-      if (session) {
+      if (!error && user) {
         router.replace("/home");
         return;
       }
@@ -42,24 +43,36 @@ export default function LoginPage() {
   async function handleLogin() {
     if (saving) return;
 
-    setSaving(true);
-    setErrorText("");
+    const cleanEmail = email.trim();
+    const cleanPassword = password.trim();
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-
-    setSaving(false);
-
-    if (error) {
-      console.error("login error:", error);
-      setErrorText(error.message ?? "Não foi possível entrar.");
+    if (!cleanEmail || !cleanPassword) {
+      setErrorText("Informe email e senha.");
       return;
     }
 
-    router.replace("/home");
-    router.refresh();
+    setSaving(true);
+    setErrorText("");
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: cleanEmail,
+        password: cleanPassword,
+      });
+
+      if (error) {
+        setErrorText("Email ou senha inválidos.");
+        return;
+      }
+
+      router.replace("/home");
+      router.refresh();
+    } catch (err) {
+      console.error("login unexpected error:", err);
+      setErrorText("Não foi possível entrar.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const page: React.CSSProperties = {
@@ -130,7 +143,14 @@ export default function LoginPage() {
   return (
     <div style={page}>
       <div style={card}>
-        <div style={{ display: "grid", gap: 10, marginBottom: 18, justifyItems: "center" }}>
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+            marginBottom: 18,
+            justifyItems: "center",
+          }}
+        >
           <img
             src="/logo-gio.png"
             alt="GIO"
@@ -170,7 +190,9 @@ export default function LoginPage() {
               style={inputStyle}
               autoComplete="current-password"
               onKeyDown={(e) => {
-                if (e.key === "Enter") handleLogin();
+                if (e.key === "Enter" && canLogin) {
+                  handleLogin();
+                }
               }}
             />
           </div>

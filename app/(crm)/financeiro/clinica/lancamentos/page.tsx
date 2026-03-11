@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -50,6 +50,19 @@ type FinancialTransaction = {
   is_future: boolean;
   created_at: string;
   updated_at: string;
+};
+
+type CsvImportRow = {
+  kind: "income" | "expense";
+  status: "pending" | "paid" | "received" | "late";
+  description: string;
+  amount: number;
+  due_date: string | null;
+  paid_at: string | null;
+  category_name: string;
+  account_name: string;
+  counterparty_name: string | null;
+  notes: string | null;
 };
 
 function formatBRL(v: number | null | undefined) {
@@ -142,12 +155,16 @@ function chipStyle(
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
+  height: 44,
+  boxSizing: "border-box",
   background: "rgba(255,255,255,0.06)",
   color: "white",
   border: "1px solid rgba(255,255,255,0.12)",
-  padding: "10px 12px",
+  padding: "0 12px",
   borderRadius: 12,
   outline: "none",
+  fontSize: 13,
+  minWidth: 0,
 };
 
 const labelStyle: React.CSSProperties = {
@@ -186,14 +203,153 @@ const btnDanger: React.CSSProperties = {
     "linear-gradient(180deg, rgba(255,120,120,0.16) 0%, rgba(255,120,120,0.07) 100%)",
 };
 
+function csvEscape(value: string | number | null | undefined) {
+  const text = String(value ?? "");
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function parseCsvLine(line: string) {
+  const out: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    const next = line[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === "," && !inQuotes) {
+      out.push(current);
+      current = "";
+      continue;
+    }
+
+    current += ch;
+  }
+
+  out.push(current);
+  return out.map((x) => x.trim());
+}
+
+function splitCsvRows(content: string) {
+  const rows: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < content.length; i += 1) {
+    const ch = content[i];
+    const next = content[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (current.trim()) rows.push(current);
+      current = "";
+
+      if (ch === "\r" && next === "\n") {
+        i += 1;
+      }
+      continue;
+    }
+
+    current += ch;
+  }
+
+  if (current.trim()) rows.push(current);
+
+  return rows;
+}
+
+function normalizeHeader(text: string) {
+  return String(text ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_");
+}
+
+function mapCsvKind(value: string) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (["income", "receita", "receber", "entrada"].includes(v)) return "income";
+  if (["expense", "despesa", "pagar", "saida", "saída"].includes(v)) return "expense";
+  return null;
+}
+
+function mapCsvStatus(value: string, kind: "income" | "expense") {
+  const v = String(value ?? "").trim().toLowerCase();
+
+  if (["pending", "pendente"].includes(v)) return "pending";
+  if (["late", "atrasado"].includes(v)) return "late";
+  if (["paid", "pago"].includes(v)) return "paid";
+  if (["received", "recebido"].includes(v)) return "received";
+
+  return kind === "income" ? "pending" : "pending";
+}
+
+function parseCsvAmount(value: string) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+
+  const normalized = raw
+    .replace(/\s/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseCsvDate(value: string) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) {
+    const [, dd, mm, yyyy] = br;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  return null;
+}
+
+const fieldWrapStyle: React.CSSProperties = {
+  minWidth: 0,
+};
+
 export default function FinanceiroClinicaLancamentosPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
 
   const scope = "clinic";
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [importingCsv, setImportingCsv] = useState(false);
   const [rows, setRows] = useState<FinancialTransaction[]>([]);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   const [categories, setCategories] = useState<FinancialCategory[]>([]);
@@ -319,6 +475,18 @@ export default function FinanceiroClinicaLancamentosPage() {
       .single();
 
     if (error) throw error;
+
+    setCategories((prev) => [
+      ...prev,
+      {
+        id: data.id as string,
+        scope,
+        name,
+        type: currentKind,
+        is_active: true,
+      },
+    ]);
+
     return data.id as string;
   }
 
@@ -347,6 +515,18 @@ export default function FinanceiroClinicaLancamentosPage() {
       .single();
 
     if (error) throw error;
+
+    setAccounts((prev) => [
+      ...prev,
+      {
+        id: data.id as string,
+        scope,
+        name,
+        type: "other",
+        is_active: true,
+      },
+    ]);
+
     return data.id as string;
   }
 
@@ -390,8 +570,8 @@ export default function FinanceiroClinicaLancamentosPage() {
           fee_percent: 0,
           due_date: dueDate || null,
           paid_at: paidAt || null,
-          account_id: account_id,
-          category_id: category_id,
+          account_id,
+          category_id,
           counterparty_name: counterpartyName.trim() || null,
           notes: notes.trim() || null,
           source_type: "manual",
@@ -446,8 +626,8 @@ export default function FinanceiroClinicaLancamentosPage() {
           fee_percent: 0,
           due_date: parcelDueDate,
           paid_at: i === 0 ? paidAt || null : null,
-          account_id: account_id,
-          category_id: category_id,
+          account_id,
+          category_id,
           counterparty_name: counterpartyName.trim() || null,
           notes: notes.trim() || null,
           source_type: "manual",
@@ -493,7 +673,11 @@ export default function FinanceiroClinicaLancamentosPage() {
     setCounterpartyName(row.counterparty_name ?? "");
     setNotes(row.notes ?? "");
     setIsInstallment(false);
-    setInstallments(row.installment_total && row.installment_total > 1 ? row.installment_total : 2);
+    setInstallments(
+      row.installment_total && row.installment_total > 1
+        ? row.installment_total
+        : 2
+    );
     setErrorMsg("");
     setViewMode("list");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -541,6 +725,213 @@ export default function FinanceiroClinicaLancamentosPage() {
     }
   }
 
+  async function parseImportedCsv(file: File): Promise<CsvImportRow[]> {
+    const content = await file.text();
+    const rowsText = splitCsvRows(content);
+
+    if (rowsText.length < 2) {
+      throw new Error("O CSV está vazio ou sem linhas de dados.");
+    }
+
+    const headers = parseCsvLine(rowsText[0]).map(normalizeHeader);
+
+    const getIndex = (...names: string[]) => {
+      for (const name of names) {
+        const idx = headers.indexOf(name);
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    };
+
+    const idxTipo = getIndex("tipo", "kind");
+    const idxStatus = getIndex("status");
+    const idxDescricao = getIndex("descricao", "description");
+    const idxValor = getIndex("valor", "amount");
+    const idxVencimento = getIndex("vencimento", "due_date");
+    const idxPagoEm = getIndex("pago_em", "pago", "paid_at");
+    const idxCategoria = getIndex("categoria", "category");
+    const idxConta = getIndex("conta", "account");
+    const idxPessoa = getIndex("pessoa", "favorecido", "cliente", "counterparty_name");
+    const idxObs = getIndex("observacoes", "observacao", "obs", "notes");
+
+    if (idxTipo < 0 || idxDescricao < 0 || idxValor < 0) {
+      throw new Error(
+        "CSV inválido. Cabeçalhos mínimos: tipo, descricao, valor."
+      );
+    }
+
+    const parsed: CsvImportRow[] = [];
+
+    for (let i = 1; i < rowsText.length; i += 1) {
+      const cols = parseCsvLine(rowsText[i]);
+      if (!cols.some((x) => String(x ?? "").trim())) continue;
+
+      const rawKind = cols[idxTipo] ?? "";
+      const mappedKind = mapCsvKind(rawKind);
+
+      if (!mappedKind) {
+        throw new Error(`Linha ${i + 1}: tipo inválido "${rawKind}".`);
+      }
+
+      const description = String(cols[idxDescricao] ?? "").trim();
+      if (!description) {
+        throw new Error(`Linha ${i + 1}: descrição obrigatória.`);
+      }
+
+      const amount = parseCsvAmount(cols[idxValor] ?? "");
+      if (!amount || amount <= 0) {
+        throw new Error(`Linha ${i + 1}: valor inválido.`);
+      }
+
+      const due_date = idxVencimento >= 0 ? parseCsvDate(cols[idxVencimento]) : null;
+      const paid_at = idxPagoEm >= 0 ? parseCsvDate(cols[idxPagoEm]) : null;
+      const status = mapCsvStatus(
+        idxStatus >= 0 ? cols[idxStatus] ?? "" : "",
+        mappedKind
+      );
+
+      parsed.push({
+        kind: mappedKind,
+        status,
+        description,
+        amount,
+        due_date,
+        paid_at,
+        category_name: idxCategoria >= 0 ? String(cols[idxCategoria] ?? "").trim() : "",
+        account_name: idxConta >= 0 ? String(cols[idxConta] ?? "").trim() : "",
+        counterparty_name:
+          idxPessoa >= 0 ? String(cols[idxPessoa] ?? "").trim() || null : null,
+        notes: idxObs >= 0 ? String(cols[idxObs] ?? "").trim() || null : null,
+      });
+    }
+
+    return parsed;
+  }
+
+  async function handleImportCsv(file: File) {
+    setImportingCsv(true);
+    setErrorMsg("");
+
+    try {
+      const parsedRows = await parseImportedCsv(file);
+
+      if (!parsedRows.length) {
+        throw new Error("Nenhuma linha válida encontrada no CSV.");
+      }
+
+      const inserts = [];
+
+      for (const row of parsedRows) {
+        const category_id = await resolveCategoryIdByName(
+          row.category_name ||
+            (row.kind === "income" ? "Importação Receita" : "Importação Despesa"),
+          row.kind
+        );
+
+        const account_id = await resolveAccountIdByName(
+          row.account_name || "Importação CSV"
+        );
+
+        const dueDate = row.due_date;
+        const paidAt = row.paid_at;
+
+        inserts.push({
+          scope,
+          kind: row.kind,
+          status: row.status,
+          description: row.description,
+          amount: row.amount,
+          gross_amount: row.amount,
+          net_amount: row.amount,
+          fee_amount: 0,
+          fee_percent: 0,
+          due_date: dueDate,
+          paid_at: paidAt,
+          account_id,
+          category_id,
+          counterparty_name: row.counterparty_name,
+          notes: row.notes,
+          source_type: "csv_import",
+          source_id: null,
+          installment_number: 1,
+          installment_total: 1,
+          is_future:
+            !!dueDate && new Date(`${dueDate}T12:00:00`) > new Date(),
+        });
+      }
+
+      const { error } = await supabase
+        .from("financial_transactions")
+        .insert(inserts);
+
+      if (error) throw error;
+
+      await fetchAll();
+      window.alert(`${inserts.length} lançamento(s) importado(s) com sucesso.`);
+    } catch (e: any) {
+      console.error(e);
+      setErrorMsg(e?.message ?? "Erro ao importar CSV.");
+    } finally {
+      setImportingCsv(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function handleExportCsv() {
+    const header = [
+      "tipo",
+      "status",
+      "descricao",
+      "valor",
+      "vencimento",
+      "pago_em",
+      "categoria",
+      "conta",
+      "pessoa",
+      "observacoes",
+    ];
+
+    const csvLines = [
+      header.join(","),
+      ...filteredRows.map((row) => {
+        const categoryName =
+          categories.find((c) => c.id === row.category_id)?.name ?? "";
+        const accountName =
+          accounts.find((a) => a.id === row.account_id)?.name ?? "";
+
+        return [
+          csvEscape(row.kind),
+          csvEscape(row.status),
+          csvEscape(row.description),
+          csvEscape(Number(row.amount ?? 0).toFixed(2)),
+          csvEscape(row.due_date ?? ""),
+          csvEscape(row.paid_at ?? ""),
+          csvEscape(categoryName),
+          csvEscape(accountName),
+          csvEscape(row.counterparty_name ?? ""),
+          csvEscape(row.notes ?? ""),
+        ].join(",");
+      }),
+    ];
+
+    const csvContent = "\uFEFF" + csvLines.join("\n");
+    const blob = new Blob([csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const now = new Date();
+    const filename = `financeiro-clinica-lancamentos-${now.getFullYear()}-${String(
+      now.getMonth() + 1
+    ).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}.csv`;
+
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const filteredCategoryNames = useMemo(() => {
     return categories
       .filter((c) => c.type === "both" || c.type === kind)
@@ -575,7 +966,16 @@ export default function FinanceiroClinicaLancamentosPage() {
 
       return hay.includes(q);
     });
-  }, [rows, filterText, filterKind, filterStatus, filterCategory, filterAccount, categories, accounts]);
+  }, [
+    rows,
+    filterText,
+    filterKind,
+    filterStatus,
+    filterCategory,
+    filterAccount,
+    categories,
+    accounts,
+  ]);
 
   const summary = useMemo(() => {
     let income = 0;
@@ -614,13 +1014,30 @@ export default function FinanceiroClinicaLancamentosPage() {
   }, [filteredRows]);
 
   if (loadingRole) {
-    return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
+    return (
+      <div style={{ padding: 20, color: "white" }}>
+        Carregando permissões...
+      </div>
+    );
   }
 
   if (!isAdmin) return null;
 
   return (
     <div style={{ padding: 16, color: "white", display: "grid", gap: 16 }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            handleImportCsv(file);
+          }
+        }}
+      />
+
       <div
         style={{
           display: "flex",
@@ -701,7 +1118,9 @@ export default function FinanceiroClinicaLancamentosPage() {
             padding: 14,
           }}
         >
-          <div style={{ fontSize: 12, opacity: 0.72 }}>Pendentes / Atrasados</div>
+          <div style={{ fontSize: 12, opacity: 0.72 }}>
+            Pendentes / Atrasados
+          </div>
           <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
             {summary.pending} / {summary.late}
           </div>
@@ -732,11 +1151,47 @@ export default function FinanceiroClinicaLancamentosPage() {
             {editingId ? "Editar lançamento" : "Novo lançamento"}
           </div>
 
-          {editingId ? (
-            <button type="button" style={btn} onClick={resetForm}>
-              Cancelar edição
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={btn}
+              onClick={handleExportCsv}
+              disabled={!filteredRows.length}
+            >
+              Exportar CSV
             </button>
-          ) : null}
+
+            <button
+              type="button"
+              style={btnPrimary}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importingCsv}
+            >
+              {importingCsv ? "Importando..." : "Importar CSV"}
+            </button>
+
+            {editingId ? (
+              <button type="button" style={btn} onClick={resetForm}>
+                Cancelar edição
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginBottom: 12,
+            fontSize: 12,
+            opacity: 0.72,
+            lineHeight: 1.5,
+          }}
+        >
+          CSV aceito com cabeçalhos como:{" "}
+          <strong>
+            tipo, status, descricao, valor, vencimento, pago_em, categoria,
+            conta, pessoa, observacoes
+          </strong>
+          .
         </div>
 
         <div
@@ -746,7 +1201,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             gap: 12,
           }}
         >
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Tipo</label>
             <SelectDark
               value={kind}
@@ -759,11 +1214,13 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Status</label>
             <SelectDark
               value={status}
-              onChange={(v) => setStatus(v as "pending" | "paid" | "received" | "late")}
+              onChange={(v) =>
+                setStatus(v as "pending" | "paid" | "received" | "late")
+              }
               searchable={false}
               options={[
                 { value: "pending", label: "Pendente" },
@@ -774,7 +1231,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Valor</label>
 
             <div
@@ -782,7 +1239,8 @@ export default function FinanceiroClinicaLancamentosPage() {
                 display: "flex",
                 gap: 10,
                 alignItems: "center",
-                flexWrap: "wrap",
+                flexWrap: "nowrap",
+                minWidth: 0,
               }}
             >
               <input
@@ -794,7 +1252,7 @@ export default function FinanceiroClinicaLancamentosPage() {
                 style={{
                   ...inputStyle,
                   flex: 1,
-                  minWidth: 180,
+                  minWidth: 0,
                 }}
                 placeholder="0,00"
               />
@@ -804,7 +1262,7 @@ export default function FinanceiroClinicaLancamentosPage() {
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
-                  padding: "8px 10px",
+                  padding: "0 10px",
                   borderRadius: 10,
                   border: "1px solid rgba(255,255,255,0.10)",
                   background: "rgba(255,255,255,0.03)",
@@ -813,6 +1271,7 @@ export default function FinanceiroClinicaLancamentosPage() {
                   whiteSpace: "nowrap",
                   cursor: "pointer",
                   height: 42,
+                  flexShrink: 0,
                 }}
               >
                 <input
@@ -823,50 +1282,52 @@ export default function FinanceiroClinicaLancamentosPage() {
                 />
                 Parcelar
               </label>
+            </div>
 
-              {isInstallment ? (
-                <div
+            {isInstallment ? (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginTop: 8,
+                  padding: "0 8px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.03)",
+                  height: 38,
+                  maxWidth: "100%",
+                }}
+              >
+                <span
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "0 8px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.10)",
-                    background: "rgba(255,255,255,0.03)",
-                    height: 42,
+                    fontSize: 12,
+                    opacity: 0.78,
+                    fontWeight: 800,
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: 12,
-                      opacity: 0.78,
-                      fontWeight: 800,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Parcelas
-                  </span>
+                  Parcelas
+                </span>
 
-                  <input
-                    type="number"
-                    min="2"
-                    max="24"
-                    value={installments}
-                    onChange={(e) => setInstallments(Number(e.target.value))}
-                    style={{
-                      width: 64,
-                      background: "transparent",
-                      color: "white",
-                      border: "none",
-                      outline: "none",
-                      fontWeight: 900,
-                      fontSize: 14,
-                    }}
-                  />
-                </div>
-              ) : null}
-            </div>
+                <input
+                  type="number"
+                  min="2"
+                  max="24"
+                  value={installments}
+                  onChange={(e) => setInstallments(Number(e.target.value))}
+                  style={{
+                    width: 64,
+                    background: "transparent",
+                    color: "white",
+                    border: "none",
+                    outline: "none",
+                    fontWeight: 900,
+                    fontSize: 13,
+                  }}
+                />
+              </div>
+            ) : null}
 
             {isInstallment && Number(amount) > 0 && installments > 1 ? (
               <div
@@ -883,7 +1344,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             ) : null}
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Vencimento</label>
             <input
               type="date"
@@ -893,7 +1354,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div style={{ gridColumn: "span 2" }}>
+          <div style={{ ...fieldWrapStyle, gridColumn: "span 2" }}>
             <label style={labelStyle}>Descrição</label>
             <input
               value={description}
@@ -903,7 +1364,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Categoria</label>
             <input
               list="financial-category-suggestions-clinic"
@@ -919,7 +1380,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             </datalist>
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Conta</label>
             <input
               list="financial-account-suggestions-clinic"
@@ -935,7 +1396,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             </datalist>
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Pago / Recebido em</label>
             <input
               type="date"
@@ -945,7 +1406,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Cliente / Favorecido</label>
             <input
               value={counterpartyName}
@@ -955,7 +1416,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div style={{ gridColumn: "span 3" }}>
+          <div style={{ ...fieldWrapStyle, gridColumn: "span 3" }}>
             <label style={labelStyle}>Observações</label>
             <input
               value={notes}
@@ -979,7 +1440,9 @@ export default function FinanceiroClinicaLancamentosPage() {
           </div>
         ) : null}
 
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+        <div
+          style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}
+        >
           <button type="submit" disabled={saving} style={btnPrimary}>
             {saving
               ? "Salvando..."
@@ -1034,66 +1497,78 @@ export default function FinanceiroClinicaLancamentosPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1fr auto",
+            gridTemplateColumns:
+              "minmax(220px, 1.4fr) repeat(4, minmax(160px, 1fr)) auto",
             gap: 10,
+            alignItems: "stretch",
           }}
         >
-          <input
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            style={inputStyle}
-            placeholder="Buscar descrição, observação, pessoa..."
-          />
+          <div style={fieldWrapStyle}>
+            <input
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              style={inputStyle}
+              placeholder="Buscar descrição, observação, pessoa..."
+            />
+          </div>
 
-          <SelectDark
-            value={filterKind}
-            onChange={setFilterKind}
-            searchable={false}
-            options={[
-              { value: "all", label: "Todos tipos" },
-              { value: "income", label: "Receita" },
-              { value: "expense", label: "Despesa" },
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterKind}
+              onChange={setFilterKind}
+              searchable={false}
+              options={[
+                { value: "all", label: "Todos tipos" },
+                { value: "income", label: "Receita" },
+                { value: "expense", label: "Despesa" },
+              ]}
+            />
+          </div>
 
-          <SelectDark
-            value={filterStatus}
-            onChange={setFilterStatus}
-            searchable={false}
-            options={[
-              { value: "all", label: "Todos status" },
-              { value: "pending", label: "Pendente" },
-              { value: "paid", label: "Pago" },
-              { value: "received", label: "Recebido" },
-              { value: "late", label: "Atrasado" },
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterStatus}
+              onChange={setFilterStatus}
+              searchable={false}
+              options={[
+                { value: "all", label: "Todos status" },
+                { value: "pending", label: "Pendente" },
+                { value: "paid", label: "Pago" },
+                { value: "received", label: "Recebido" },
+                { value: "late", label: "Atrasado" },
+              ]}
+            />
+          </div>
 
-          <SelectDark
-            value={filterCategory}
-            onChange={setFilterCategory}
-            searchable
-            options={[
-              { value: "all", label: "Todas categorias" },
-              ...categories.map((c) => ({
-                value: c.id,
-                label: c.name,
-              })),
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterCategory}
+              onChange={setFilterCategory}
+              searchable
+              options={[
+                { value: "all", label: "Todas categorias" },
+                ...categories.map((c) => ({
+                  value: c.id,
+                  label: c.name,
+                })),
+              ]}
+            />
+          </div>
 
-          <SelectDark
-            value={filterAccount}
-            onChange={setFilterAccount}
-            searchable
-            options={[
-              { value: "all", label: "Todas contas" },
-              ...accounts.map((a) => ({
-                value: a.id,
-                label: a.name,
-              })),
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterAccount}
+              onChange={setFilterAccount}
+              searchable
+              options={[
+                { value: "all", label: "Todas contas" },
+                ...accounts.map((a) => ({
+                  value: a.id,
+                  label: a.name,
+                })),
+              ]}
+            />
+          </div>
 
           <button
             type="button"
@@ -1130,14 +1605,28 @@ export default function FinanceiroClinicaLancamentosPage() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Descrição</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Descrição
+                  </th>
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Tipo</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Status</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Vencimento</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Categoria</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Conta</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Status
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Valor
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Vencimento
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Categoria
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Conta
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Ações
+                  </th>
                 </tr>
               </thead>
 
@@ -1207,7 +1696,9 @@ export default function FinanceiroClinicaLancamentosPage() {
                       >
                         <div>{formatDateBR(row.due_date)}</div>
                         <div style={{ fontSize: 12, opacity: 0.7 }}>
-                          {row.paid_at ? `Baixa: ${formatDateBR(row.paid_at)}` : "—"}
+                          {row.paid_at
+                            ? `Baixa: ${formatDateBR(row.paid_at)}`
+                            : "—"}
                         </div>
                       </td>
 
@@ -1244,7 +1735,7 @@ export default function FinanceiroClinicaLancamentosPage() {
                             Editar
                           </button>
 
-                          {(row.status === "pending" || row.status === "late") ? (
+                          {row.status === "pending" || row.status === "late" ? (
                             <button
                               type="button"
                               style={btnPrimary}

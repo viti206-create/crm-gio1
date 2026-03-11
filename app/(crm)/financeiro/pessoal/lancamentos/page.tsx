@@ -142,12 +142,16 @@ function chipStyle(
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
+  height: 44,
+  boxSizing: "border-box",
   background: "rgba(255,255,255,0.06)",
   color: "white",
   border: "1px solid rgba(255,255,255,0.12)",
-  padding: "10px 12px",
+  padding: "0 12px",
   borderRadius: 12,
   outline: "none",
+  fontSize: 13,
+  minWidth: 0,
 };
 
 const labelStyle: React.CSSProperties = {
@@ -184,6 +188,10 @@ const btnDanger: React.CSSProperties = {
   border: "1px solid rgba(255,120,120,0.30)",
   background:
     "linear-gradient(180deg, rgba(255,120,120,0.16) 0%, rgba(255,120,120,0.07) 100%)",
+};
+
+const fieldWrapStyle: React.CSSProperties = {
+  minWidth: 0,
 };
 
 export default function FinanceiroPessoalLancamentosPage() {
@@ -390,8 +398,8 @@ export default function FinanceiroPessoalLancamentosPage() {
           fee_percent: 0,
           due_date: dueDate || null,
           paid_at: paidAt || null,
-          account_id: account_id,
-          category_id: category_id,
+          account_id,
+          category_id,
           counterparty_name: counterpartyName.trim() || null,
           notes: notes.trim() || null,
           source_type: "manual",
@@ -446,8 +454,8 @@ export default function FinanceiroPessoalLancamentosPage() {
           fee_percent: 0,
           due_date: parcelDueDate,
           paid_at: i === 0 ? paidAt || null : null,
-          account_id: account_id,
-          category_id: category_id,
+          account_id,
+          category_id,
           counterparty_name: counterpartyName.trim() || null,
           notes: notes.trim() || null,
           source_type: "manual",
@@ -493,7 +501,11 @@ export default function FinanceiroPessoalLancamentosPage() {
     setCounterpartyName(row.counterparty_name ?? "");
     setNotes(row.notes ?? "");
     setIsInstallment(false);
-    setInstallments(row.installment_total && row.installment_total > 1 ? row.installment_total : 2);
+    setInstallments(
+      row.installment_total && row.installment_total > 1
+        ? row.installment_total
+        : 2
+    );
     setErrorMsg("");
     setViewMode("list");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -575,7 +587,16 @@ export default function FinanceiroPessoalLancamentosPage() {
 
       return hay.includes(q);
     });
-  }, [rows, filterText, filterKind, filterStatus, filterCategory, filterAccount, categories, accounts]);
+  }, [
+    rows,
+    filterText,
+    filterKind,
+    filterStatus,
+    filterCategory,
+    filterAccount,
+    categories,
+    accounts,
+  ]);
 
   const summary = useMemo(() => {
     let income = 0;
@@ -614,7 +635,11 @@ export default function FinanceiroPessoalLancamentosPage() {
   }, [filteredRows]);
 
   if (loadingRole) {
-    return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
+    return (
+      <div style={{ padding: 20, color: "white" }}>
+        Carregando permissões...
+      </div>
+    );
   }
 
   if (!isAdmin) return null;
@@ -701,7 +726,9 @@ export default function FinanceiroPessoalLancamentosPage() {
             padding: 14,
           }}
         >
-          <div style={{ fontSize: 12, opacity: 0.72 }}>Pendentes / Atrasados</div>
+          <div style={{ fontSize: 12, opacity: 0.72 }}>
+            Pendentes / Atrasados
+          </div>
           <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
             {summary.pending} / {summary.late}
           </div>
@@ -746,7 +773,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             gap: 12,
           }}
         >
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Tipo</label>
             <SelectDark
               value={kind}
@@ -759,11 +786,13 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Status</label>
             <SelectDark
               value={status}
-              onChange={(v) => setStatus(v as "pending" | "paid" | "received" | "late")}
+              onChange={(v) =>
+                setStatus(v as "pending" | "paid" | "received" | "late")
+              }
               searchable={false}
               options={[
                 { value: "pending", label: "Pendente" },
@@ -774,7 +803,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Valor</label>
 
             <div
@@ -782,7 +811,8 @@ export default function FinanceiroPessoalLancamentosPage() {
                 display: "flex",
                 gap: 10,
                 alignItems: "center",
-                flexWrap: "wrap",
+                flexWrap: "nowrap",
+                minWidth: 0,
               }}
             >
               <input
@@ -794,7 +824,7 @@ export default function FinanceiroPessoalLancamentosPage() {
                 style={{
                   ...inputStyle,
                   flex: 1,
-                  minWidth: 180,
+                  minWidth: 0,
                 }}
                 placeholder="0,00"
               />
@@ -804,7 +834,7 @@ export default function FinanceiroPessoalLancamentosPage() {
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
-                  padding: "8px 10px",
+                  padding: "0 10px",
                   borderRadius: 10,
                   border: "1px solid rgba(255,255,255,0.10)",
                   background: "rgba(255,255,255,0.03)",
@@ -813,6 +843,7 @@ export default function FinanceiroPessoalLancamentosPage() {
                   whiteSpace: "nowrap",
                   cursor: "pointer",
                   height: 42,
+                  flexShrink: 0,
                 }}
               >
                 <input
@@ -823,50 +854,52 @@ export default function FinanceiroPessoalLancamentosPage() {
                 />
                 Parcelar
               </label>
+            </div>
 
-              {isInstallment ? (
-                <div
+            {isInstallment ? (
+              <div
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginTop: 8,
+                  padding: "0 8px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(255,255,255,0.10)",
+                  background: "rgba(255,255,255,0.03)",
+                  height: 38,
+                  maxWidth: "100%",
+                }}
+              >
+                <span
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "0 8px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.10)",
-                    background: "rgba(255,255,255,0.03)",
-                    height: 42,
+                    fontSize: 12,
+                    opacity: 0.78,
+                    fontWeight: 800,
+                    whiteSpace: "nowrap",
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: 12,
-                      opacity: 0.78,
-                      fontWeight: 800,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    Parcelas
-                  </span>
+                  Parcelas
+                </span>
 
-                  <input
-                    type="number"
-                    min="2"
-                    max="24"
-                    value={installments}
-                    onChange={(e) => setInstallments(Number(e.target.value))}
-                    style={{
-                      width: 64,
-                      background: "transparent",
-                      color: "white",
-                      border: "none",
-                      outline: "none",
-                      fontWeight: 900,
-                      fontSize: 14,
-                    }}
-                  />
-                </div>
-              ) : null}
-            </div>
+                <input
+                  type="number"
+                  min="2"
+                  max="24"
+                  value={installments}
+                  onChange={(e) => setInstallments(Number(e.target.value))}
+                  style={{
+                    width: 64,
+                    background: "transparent",
+                    color: "white",
+                    border: "none",
+                    outline: "none",
+                    fontWeight: 900,
+                    fontSize: 13,
+                  }}
+                />
+              </div>
+            ) : null}
 
             {isInstallment && Number(amount) > 0 && installments > 1 ? (
               <div
@@ -883,7 +916,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             ) : null}
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Vencimento</label>
             <input
               type="date"
@@ -893,7 +926,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div style={{ gridColumn: "span 2" }}>
+          <div style={{ ...fieldWrapStyle, gridColumn: "span 2" }}>
             <label style={labelStyle}>Descrição</label>
             <input
               value={description}
@@ -903,7 +936,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Categoria</label>
             <input
               list="financial-category-suggestions-personal"
@@ -919,7 +952,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             </datalist>
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Conta</label>
             <input
               list="financial-account-suggestions-personal"
@@ -935,7 +968,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             </datalist>
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Pago / Recebido em</label>
             <input
               type="date"
@@ -945,7 +978,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div>
+          <div style={fieldWrapStyle}>
             <label style={labelStyle}>Cliente / Favorecido</label>
             <input
               value={counterpartyName}
@@ -955,7 +988,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div style={{ gridColumn: "span 3" }}>
+          <div style={{ ...fieldWrapStyle, gridColumn: "span 3" }}>
             <label style={labelStyle}>Observações</label>
             <input
               value={notes}
@@ -979,7 +1012,9 @@ export default function FinanceiroPessoalLancamentosPage() {
           </div>
         ) : null}
 
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+        <div
+          style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}
+        >
           <button type="submit" disabled={saving} style={btnPrimary}>
             {saving
               ? "Salvando..."
@@ -1034,66 +1069,78 @@ export default function FinanceiroPessoalLancamentosPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1fr auto",
+            gridTemplateColumns:
+              "minmax(220px, 1.4fr) repeat(4, minmax(160px, 1fr)) auto",
             gap: 10,
+            alignItems: "stretch",
           }}
         >
-          <input
-            value={filterText}
-            onChange={(e) => setFilterText(e.target.value)}
-            style={inputStyle}
-            placeholder="Buscar descrição, observação, pessoa..."
-          />
+          <div style={fieldWrapStyle}>
+            <input
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              style={inputStyle}
+              placeholder="Buscar descrição, observação, pessoa..."
+            />
+          </div>
 
-          <SelectDark
-            value={filterKind}
-            onChange={setFilterKind}
-            searchable={false}
-            options={[
-              { value: "all", label: "Todos tipos" },
-              { value: "income", label: "Receita" },
-              { value: "expense", label: "Despesa" },
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterKind}
+              onChange={setFilterKind}
+              searchable={false}
+              options={[
+                { value: "all", label: "Todos tipos" },
+                { value: "income", label: "Receita" },
+                { value: "expense", label: "Despesa" },
+              ]}
+            />
+          </div>
 
-          <SelectDark
-            value={filterStatus}
-            onChange={setFilterStatus}
-            searchable={false}
-            options={[
-              { value: "all", label: "Todos status" },
-              { value: "pending", label: "Pendente" },
-              { value: "paid", label: "Pago" },
-              { value: "received", label: "Recebido" },
-              { value: "late", label: "Atrasado" },
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterStatus}
+              onChange={setFilterStatus}
+              searchable={false}
+              options={[
+                { value: "all", label: "Todos status" },
+                { value: "pending", label: "Pendente" },
+                { value: "paid", label: "Pago" },
+                { value: "received", label: "Recebido" },
+                { value: "late", label: "Atrasado" },
+              ]}
+            />
+          </div>
 
-          <SelectDark
-            value={filterCategory}
-            onChange={setFilterCategory}
-            searchable
-            options={[
-              { value: "all", label: "Todas categorias" },
-              ...categories.map((c) => ({
-                value: c.id,
-                label: c.name,
-              })),
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterCategory}
+              onChange={setFilterCategory}
+              searchable
+              options={[
+                { value: "all", label: "Todas categorias" },
+                ...categories.map((c) => ({
+                  value: c.id,
+                  label: c.name,
+                })),
+              ]}
+            />
+          </div>
 
-          <SelectDark
-            value={filterAccount}
-            onChange={setFilterAccount}
-            searchable
-            options={[
-              { value: "all", label: "Todas contas" },
-              ...accounts.map((a) => ({
-                value: a.id,
-                label: a.name,
-              })),
-            ]}
-          />
+          <div style={fieldWrapStyle}>
+            <SelectDark
+              value={filterAccount}
+              onChange={setFilterAccount}
+              searchable
+              options={[
+                { value: "all", label: "Todas contas" },
+                ...accounts.map((a) => ({
+                  value: a.id,
+                  label: a.name,
+                })),
+              ]}
+            />
+          </div>
 
           <button
             type="button"
@@ -1130,14 +1177,28 @@ export default function FinanceiroPessoalLancamentosPage() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Descrição</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Descrição
+                  </th>
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Tipo</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Status</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Vencimento</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Categoria</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Conta</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Status
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Valor
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Vencimento
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Categoria
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Conta
+                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
+                    Ações
+                  </th>
                 </tr>
               </thead>
 
@@ -1207,7 +1268,9 @@ export default function FinanceiroPessoalLancamentosPage() {
                       >
                         <div>{formatDateBR(row.due_date)}</div>
                         <div style={{ fontSize: 12, opacity: 0.7 }}>
-                          {row.paid_at ? `Baixa: ${formatDateBR(row.paid_at)}` : "—"}
+                          {row.paid_at
+                            ? `Baixa: ${formatDateBR(row.paid_at)}`
+                            : "—"}
                         </div>
                       </td>
 
@@ -1244,7 +1307,7 @@ export default function FinanceiroPessoalLancamentosPage() {
                             Editar
                           </button>
 
-                          {(row.status === "pending" || row.status === "late") ? (
+                          {row.status === "pending" || row.status === "late" ? (
                             <button
                               type="button"
                               style={btnPrimary}

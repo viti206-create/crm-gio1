@@ -74,16 +74,19 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     if (loggingOut) return;
 
     setLoggingOut(true);
-    const { error } = await supabase.auth.signOut();
 
-    if (error) {
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } catch (error) {
       console.error("logout error:", error);
-      setLoggingOut(false);
-      return;
-    }
+    } finally {
+      try {
+        localStorage.removeItem("supabase.auth.token");
+        sessionStorage.clear();
+      } catch {}
 
-    router.replace("/login");
-    router.refresh();
+      window.location.replace("/login");
+    }
   }
 
   const displayName = useMemo(() => {
@@ -167,6 +170,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     if (href === "/vendas") return pathname.startsWith("/vendas");
     if (href === "/recorrencias") return pathname.startsWith("/recorrencias");
     if (href === "/relatorios") return pathname.startsWith("/relatorios");
+    if (href === "/financeiro") return pathname.startsWith("/financeiro");
     return false;
   };
 
@@ -188,19 +192,19 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
             <div style={{ fontSize: 12, opacity: 0.75 }}>Unidade • Boituva</div>
           </div>
         </div>
-        
+
         <div
-        style={{
-          position: "absolute",
-          top: 6,
-          right: 18,
-          fontSize: 12,
-          opacity: 0.75,
-          fontWeight: 700,
-        }}
-      >
-        Logado por {displayName}
-      </div>
+          style={{
+            position: "absolute",
+            top: 6,
+            right: 18,
+            fontSize: 12,
+            opacity: 0.75,
+            fontWeight: 700,
+          }}
+        >
+          Logado por {displayName}
+        </div>
 
         <div style={right}>
           <NavBtn href="/home" label="Home" />
@@ -215,10 +219,10 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
               <NavBtn href="/financeiro" label="Financeiro" />
             </>
           ) : null}
-          
-        <button type="button" onClick={handleLogout} style={logoutBtn}>
-          Logout
-        </button>
+
+          <button type="button" onClick={handleLogout} style={logoutBtn}>
+            {loggingOut ? "Saindo..." : "Logout"}
+          </button>
         </div>
       </div>
 

@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 export type SelectDarkOption = {
   value: string;
   label: string;
-  meta?: string; // opcional (ex: telefone)
+  meta?: string;
 };
 
 type Props = {
@@ -14,21 +14,17 @@ type Props = {
   options: SelectDarkOption[];
   placeholder?: string;
   disabled?: boolean;
-
-  // Visual
   minWidth?: number;
   fullWidth?: boolean;
-
-  // UX
   searchable?: boolean;
   searchPlaceholder?: string;
   maxMenuHeight?: number;
-
-  // Quando quiser mostrar label diferente sem procurar no array:
   valueLabelOverride?: string | null;
-
-  // Se quiser renderizar o item mais rico
-  renderOption?: (opt: SelectDarkOption, isActive: boolean, isSelected: boolean) => React.ReactNode;
+  renderOption?: (
+    opt: SelectDarkOption,
+    isActive: boolean,
+    isSelected: boolean
+  ) => React.ReactNode;
 };
 
 export default function SelectDark({
@@ -37,7 +33,7 @@ export default function SelectDark({
   options,
   placeholder = "Selecione...",
   disabled = false,
-  minWidth = 220,
+  minWidth = 160,
   fullWidth = false,
   searchable = true,
   searchPlaceholder = "Buscar...",
@@ -52,32 +48,36 @@ export default function SelectDark({
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
 
-  const selected = useMemo(() => options.find((o) => o.value === value) ?? null, [options, value]);
+  const selected = useMemo(
+    () => options.find((o) => o.value === value) ?? null,
+    [options, value]
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return options;
+
     return options.filter((o) => {
       const hay = `${o.label} ${o.meta ?? ""} ${o.value}`.toLowerCase();
       return hay.includes(q);
     });
   }, [options, query]);
 
-  // Fecha clicando fora
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!wrapRef.current) return;
       if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
     }
+
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
 
-  // Quando abre, foca a busca
   useEffect(() => {
     if (!open) return;
     setQuery("");
     setActiveIndex(0);
+
     if (searchable) {
       setTimeout(() => inputRef.current?.focus(), 0);
     }
@@ -121,7 +121,6 @@ export default function SelectDark({
       e.preventDefault();
       const opt = filtered[activeIndex];
       if (opt) commitPick(opt.value);
-      return;
     }
   }
 
@@ -129,19 +128,25 @@ export default function SelectDark({
     position: "relative",
     minWidth,
     width: fullWidth ? "100%" : undefined,
+    maxWidth: "100%",
+    minHeight: 0,
     fontFamily: "inherit",
+    boxSizing: "border-box",
   };
 
   const control: React.CSSProperties = {
     width: "100%",
+    minWidth: 0,
+    height: 44,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    gap: 10,
-    padding: "10px 12px",
+    gap: 8,
+    padding: "0 12px",
     borderRadius: 12,
     cursor: disabled ? "not-allowed" : "pointer",
     userSelect: "none",
+    boxSizing: "border-box",
     border: open
       ? "1px solid rgba(180,120,255,0.35)"
       : "1px solid rgba(255,255,255,0.12)",
@@ -155,10 +160,12 @@ export default function SelectDark({
     color: "rgba(255,255,255,0.92)",
     fontWeight: 900,
     fontSize: 13,
+    lineHeight: "16px",
     whiteSpace: "nowrap",
     overflow: "hidden",
     textOverflow: "ellipsis",
     flex: 1,
+    minWidth: 0,
   };
 
   const placeholderStyle: React.CSSProperties = {
@@ -170,17 +177,18 @@ export default function SelectDark({
   const caret: React.CSSProperties = {
     width: 0,
     height: 0,
-    borderLeft: "6px solid transparent",
-    borderRight: "6px solid transparent",
-    borderTop: open ? "0" : "7px solid rgba(255,255,255,0.65)",
-    borderBottom: open ? "7px solid rgba(255,255,255,0.65)" : "0",
+    flexShrink: 0,
+    borderLeft: "5px solid transparent",
+    borderRight: "5px solid transparent",
+    borderTop: open ? "0" : "6px solid rgba(255,255,255,0.65)",
+    borderBottom: open ? "6px solid rgba(255,255,255,0.65)" : "0",
     opacity: 0.9,
-    marginLeft: 6,
+    marginLeft: 4,
   };
 
   const menu: React.CSSProperties = {
     position: "absolute",
-    top: "calc(100% + 8px)",
+    top: "calc(100% + 6px)",
     left: 0,
     right: 0,
     zIndex: 9999,
@@ -193,39 +201,41 @@ export default function SelectDark({
   };
 
   const searchWrap: React.CSSProperties = {
-    padding: 10,
+    padding: 8,
     borderBottom: "1px solid rgba(255,255,255,0.10)",
     background: "rgba(255,255,255,0.03)",
   };
 
   const searchInput: React.CSSProperties = {
     width: "100%",
+    boxSizing: "border-box",
     background: "rgba(255,255,255,0.06)",
     color: "white",
     border: "1px solid rgba(255,255,255,0.12)",
-    padding: "10px 12px",
-    borderRadius: 12,
+    padding: "9px 10px",
+    borderRadius: 10,
     outline: "none",
     fontWeight: 800,
+    fontSize: 13,
   };
 
   const list: React.CSSProperties = {
     maxHeight: maxMenuHeight,
     overflowY: "auto",
-    padding: 8,
+    padding: 6,
     display: "grid",
-    gap: 6,
+    gap: 5,
   };
 
   const itemBase: React.CSSProperties = {
-    padding: "10px 10px",
-    borderRadius: 12,
+    padding: "9px 10px",
+    borderRadius: 10,
     cursor: "pointer",
     border: "1px solid rgba(255,255,255,0.08)",
     background: "rgba(255,255,255,0.03)",
     display: "flex",
     flexDirection: "column",
-    gap: 4,
+    gap: 3,
   };
 
   const itemLabel: React.CSSProperties = {
@@ -241,8 +251,7 @@ export default function SelectDark({
     color: "rgba(255,255,255,0.85)",
   };
 
-  const selectedText =
-    valueLabelOverride ?? (selected ? selected.label : "");
+  const selectedText = valueLabelOverride ?? (selected ? selected.label : "");
 
   return (
     <div ref={wrapRef} style={base} tabIndex={0} onKeyDown={onKeyDown}>
@@ -262,6 +271,7 @@ export default function SelectDark({
         ) : (
           <div style={placeholderStyle}>{placeholder}</div>
         )}
+
         <div style={caret} />
       </div>
 
