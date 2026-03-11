@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
@@ -50,6 +50,19 @@ type FinancialTransaction = {
   is_future: boolean;
   created_at: string;
   updated_at: string;
+};
+
+type CsvImportRow = {
+  kind: "income" | "expense";
+  status: "pending" | "paid" | "received" | "late";
+  description: string;
+  amount: number;
+  due_date: string | null;
+  paid_at: string | null;
+  category_name: string;
+  account_name: string;
+  counterparty_name: string | null;
+  notes: string | null;
 };
 
 function formatBRL(v: number | null | undefined) {
@@ -194,14 +207,148 @@ const fieldWrapStyle: React.CSSProperties = {
   minWidth: 0,
 };
 
+function csvEscape(value: string | number | null | undefined) {
+  const text = String(value ?? "");
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function parseCsvLine(line: string) {
+  const out: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    const next = line[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (ch === "," && !inQuotes) {
+      out.push(current);
+      current = "";
+      continue;
+    }
+
+    current += ch;
+  }
+
+  out.push(current);
+  return out.map((x) => x.trim());
+}
+
+function splitCsvRows(content: string) {
+  const rows: string[] = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < content.length; i += 1) {
+    const ch = content[i];
+    const next = content[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (current.trim()) rows.push(current);
+      current = "";
+
+      if (ch === "\r" && next === "\n") {
+        i += 1;
+      }
+      continue;
+    }
+
+    current += ch;
+  }
+
+  if (current.trim()) rows.push(current);
+
+  return rows;
+}
+
+function normalizeHeader(text: string) {
+  return String(text ?? "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_");
+}
+
+function mapCsvKind(value: string) {
+  const v = String(value ?? "").trim().toLowerCase();
+  if (["income", "receita", "receber", "entrada"].includes(v)) return "income";
+  if (["expense", "despesa", "pagar", "saida", "saída"].includes(v)) return "expense";
+  return null;
+}
+
+function mapCsvStatus(value: string, kind: "income" | "expense") {
+  const v = String(value ?? "").trim().toLowerCase();
+
+  if (["pending", "pendente"].includes(v)) return "pending";
+  if (["late", "atrasado"].includes(v)) return "late";
+  if (["paid", "pago"].includes(v)) return "paid";
+  if (["received", "recebido"].includes(v)) return "received";
+
+  return kind === "income" ? "pending" : "pending";
+}
+
+function parseCsvAmount(value: string) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+
+  const normalized = raw
+    .replace(/\s/g, "")
+    .replace(/\./g, "")
+    .replace(",", ".");
+
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseCsvDate(value: string) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  const br = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (br) {
+    const [, dd, mm, yyyy] = br;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  return null;
+}
+
 export default function FinanceiroPessoalLancamentosPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
 
   const scope = "personal";
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [importingCsv, setImportingCsv] = useState(false);
   const [rows, setRows] = useState<FinancialTransaction[]>([]);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   const [categories, setCategories] = useState<FinancialCategory[]>([]);
@@ -327,6 +474,18 @@ export default function FinanceiroPessoalLancamentosPage() {
       .single();
 
     if (error) throw error;
+
+    setCategories((prev) => [
+      ...prev,
+      {
+        id: data.id as string,
+        scope,
+        name,
+        type: currentKind,
+        is_active: true,
+      },
+    ]);
+
     return data.id as string;
   }
 
@@ -355,6 +514,18 @@ export default function FinanceiroPessoalLancamentosPage() {
       .single();
 
     if (error) throw error;
+
+    setAccounts((prev) => [
+      ...prev,
+      {
+        id: data.id as string,
+        scope,
+        name,
+        type: "other",
+        is_active: true,
+      },
+    ]);
+
     return data.id as string;
   }
 
@@ -553,6 +724,246 @@ export default function FinanceiroPessoalLancamentosPage() {
     }
   }
 
+  async function parseImportedCsv(file: File): Promise<CsvImportRow[]> {
+    const content = await file.text();
+    const rowsText = splitCsvRows(content);
+
+    if (rowsText.length < 2) {
+      throw new Error("O CSV está vazio ou sem linhas de dados.");
+    }
+
+    const headers = parseCsvLine(rowsText[0]).map(normalizeHeader);
+
+    const getIndex = (...names: string[]) => {
+      for (const name of names) {
+        const idx = headers.indexOf(name);
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    };
+
+    const idxTipo = getIndex("tipo", "kind");
+    const idxStatus = getIndex("status");
+    const idxDescricao = getIndex("descricao", "description");
+    const idxValor = getIndex("valor", "amount");
+    const idxVencimento = getIndex("vencimento", "due_date");
+    const idxPagoEm = getIndex("pago_em", "pago", "paid_at");
+    const idxCategoria = getIndex("categoria", "category");
+    const idxConta = getIndex("conta", "account");
+    const idxPessoa = getIndex("pessoa", "favorecido", "cliente", "counterparty_name");
+    const idxObs = getIndex("observacoes", "observacao", "obs", "notes");
+
+    if (idxTipo < 0 || idxDescricao < 0 || idxValor < 0) {
+      throw new Error(
+        "CSV inválido. Cabeçalhos mínimos: tipo, descricao, valor."
+      );
+    }
+
+    const parsed: CsvImportRow[] = [];
+
+    for (let i = 1; i < rowsText.length; i += 1) {
+      const cols = parseCsvLine(rowsText[i]);
+      if (!cols.some((x) => String(x ?? "").trim())) continue;
+
+      const rawKind = cols[idxTipo] ?? "";
+      const mappedKind = mapCsvKind(rawKind);
+
+      if (!mappedKind) {
+        throw new Error(`Linha ${i + 1}: tipo inválido "${rawKind}".`);
+      }
+
+      const description = String(cols[idxDescricao] ?? "").trim();
+      if (!description) {
+        throw new Error(`Linha ${i + 1}: descrição obrigatória.`);
+      }
+
+      const amount = parseCsvAmount(cols[idxValor] ?? "");
+      if (!amount || amount <= 0) {
+        throw new Error(`Linha ${i + 1}: valor inválido.`);
+      }
+
+      const due_date = idxVencimento >= 0 ? parseCsvDate(cols[idxVencimento]) : null;
+      const paid_at = idxPagoEm >= 0 ? parseCsvDate(cols[idxPagoEm]) : null;
+      const status = mapCsvStatus(
+        idxStatus >= 0 ? cols[idxStatus] ?? "" : "",
+        mappedKind
+      );
+
+      parsed.push({
+        kind: mappedKind,
+        status,
+        description,
+        amount,
+        due_date,
+        paid_at,
+        category_name: idxCategoria >= 0 ? String(cols[idxCategoria] ?? "").trim() : "",
+        account_name: idxConta >= 0 ? String(cols[idxConta] ?? "").trim() : "",
+        counterparty_name:
+          idxPessoa >= 0 ? String(cols[idxPessoa] ?? "").trim() || null : null,
+        notes: idxObs >= 0 ? String(cols[idxObs] ?? "").trim() || null : null,
+      });
+    }
+
+    return parsed;
+  }
+
+  async function handleImportCsv(file: File) {
+    setImportingCsv(true);
+    setErrorMsg("");
+
+    try {
+      const parsedRows = await parseImportedCsv(file);
+
+      if (!parsedRows.length) {
+        throw new Error("Nenhuma linha válida encontrada no CSV.");
+      }
+
+      const inserts = [];
+
+      for (const row of parsedRows) {
+        const category_id = await resolveCategoryIdByName(
+          row.category_name ||
+            (row.kind === "income" ? "Importação Receita" : "Importação Despesa"),
+          row.kind
+        );
+
+        const account_id = await resolveAccountIdByName(
+          row.account_name || "Importação CSV"
+        );
+
+        const dueDate = row.due_date;
+        const paidAt = row.paid_at;
+
+        inserts.push({
+          scope,
+          kind: row.kind,
+          status: row.status,
+          description: row.description,
+          amount: row.amount,
+          gross_amount: row.amount,
+          net_amount: row.amount,
+          fee_amount: 0,
+          fee_percent: 0,
+          due_date: dueDate,
+          paid_at: paidAt,
+          account_id,
+          category_id,
+          counterparty_name: row.counterparty_name,
+          notes: row.notes,
+          source_type: "csv_import",
+          source_id: null,
+          installment_number: 1,
+          installment_total: 1,
+          is_future:
+            !!dueDate && new Date(`${dueDate}T12:00:00`) > new Date(),
+        });
+      }
+
+      const { error } = await supabase
+        .from("financial_transactions")
+        .insert(inserts);
+
+      if (error) throw error;
+
+      await fetchAll();
+      window.alert(`${inserts.length} lançamento(s) importado(s) com sucesso.`);
+    } catch (e: any) {
+      console.error(e);
+      setErrorMsg(e?.message ?? "Erro ao importar CSV.");
+    } finally {
+      setImportingCsv(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  function handleExportCsv() {
+    const header = [
+      "tipo",
+      "status",
+      "descricao",
+      "valor",
+      "vencimento",
+      "pago_em",
+      "categoria",
+      "conta",
+      "pessoa",
+      "observacoes",
+    ];
+
+    const tipoPt = (value: string) => {
+      if (value === "income") return "Receita";
+      if (value === "expense") return "Despesa";
+      return value;
+    };
+
+    const statusPt = (value: string) => {
+      if (value === "pending") return "Pendente";
+      if (value === "paid") return "Pago";
+      if (value === "received") return "Recebido";
+      if (value === "late") return "Atrasado";
+      return value;
+    };
+
+    const formatDateCsv = (value: string | null | undefined) => {
+      if (!value) return "";
+      const d = new Date(`${value}T12:00:00`);
+      if (Number.isNaN(d.getTime())) return "";
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      return `${dd}/${mm}/${yyyy}`;
+    };
+
+    const formatMoneyCsv = (value: number | null | undefined) => {
+      const n = Number(value ?? 0);
+      if (!Number.isFinite(n)) return "R$ 0,00";
+      return n.toLocaleString("pt-BR", {
+        style: "currency",
+        currency: "BRL",
+      });
+    };
+
+    const csvLines = [
+      header.join(","),
+      ...filteredRows.map((row) => {
+        const categoryName =
+          categories.find((c) => c.id === row.category_id)?.name ?? "";
+        const accountName =
+          accounts.find((a) => a.id === row.account_id)?.name ?? "";
+
+        return [
+          csvEscape(tipoPt(row.kind)),
+          csvEscape(statusPt(row.status)),
+          csvEscape(row.description),
+          csvEscape(formatMoneyCsv(row.amount)),
+          csvEscape(formatDateCsv(row.due_date)),
+          csvEscape(formatDateCsv(row.paid_at)),
+          csvEscape(categoryName),
+          csvEscape(accountName),
+          csvEscape(row.counterparty_name ?? ""),
+          csvEscape(row.notes ?? ""),
+        ].join(",");
+      }),
+    ];
+
+    const csvContent = "\uFEFF" + csvLines.join("\n");
+    const blob = new Blob([csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const now = new Date();
+    const filename = `financeiro-pessoal-lancamentos-${now.getFullYear()}-${String(
+      now.getMonth() + 1
+    ).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}.csv`;
+
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   const filteredCategoryNames = useMemo(() => {
     return categories
       .filter((c) => c.type === "both" || c.type === kind)
@@ -646,6 +1057,19 @@ export default function FinanceiroPessoalLancamentosPage() {
 
   return (
     <div style={{ padding: 16, color: "white", display: "grid", gap: 16 }}>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".csv,text/csv"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) {
+            handleImportCsv(file);
+          }
+        }}
+      />
+
       <div
         style={{
           display: "flex",
@@ -759,11 +1183,47 @@ export default function FinanceiroPessoalLancamentosPage() {
             {editingId ? "Editar lançamento" : "Novo lançamento"}
           </div>
 
-          {editingId ? (
-            <button type="button" style={btn} onClick={resetForm}>
-              Cancelar edição
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              style={btn}
+              onClick={handleExportCsv}
+              disabled={!filteredRows.length}
+            >
+              Exportar CSV
             </button>
-          ) : null}
+
+            <button
+              type="button"
+              style={btnPrimary}
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importingCsv}
+            >
+              {importingCsv ? "Importando..." : "Importar CSV"}
+            </button>
+
+            {editingId ? (
+              <button type="button" style={btn} onClick={resetForm}>
+                Cancelar edição
+              </button>
+            ) : null}
+          </div>
+        </div>
+
+        <div
+          style={{
+            marginBottom: 12,
+            fontSize: 12,
+            opacity: 0.72,
+            lineHeight: 1.5,
+          }}
+        >
+          CSV aceito com cabeçalhos como:{" "}
+          <strong>
+            tipo, status, descricao, valor, vencimento, pago_em, categoria,
+            conta, pessoa, observacoes
+          </strong>
+          .
         </div>
 
         <div
