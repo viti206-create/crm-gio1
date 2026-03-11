@@ -1,0 +1,499 @@
+"use client";
+
+import React, { useMemo, useState } from "react";
+
+export type FinancialCalendarRow = {
+  id: string;
+  kind: "income" | "expense";
+  status: "pending" | "paid" | "received" | "late";
+  description: string;
+  amount: number;
+  due_date: string | null;
+  paid_at?: string | null;
+  counterparty_name?: string | null;
+  notes?: string | null;
+};
+
+function formatBRL(v: number | null | undefined) {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return "R$ 0,00";
+  return n.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function formatDateBR(v: string | null | undefined) {
+  if (!v) return "—";
+  const d = new Date(`${v}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return "—";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+}
+
+function monthLabel(date: Date) {
+  return date.toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+function dateKey(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function parseDate(value: string | null | undefined) {
+  if (!value) return null;
+  const d = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return d;
+}
+
+function addMonths(date: Date, delta: number) {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+function startOfMonthGrid(date: Date) {
+  const first = new Date(date.getFullYear(), date.getMonth(), 1);
+  const weekday = first.getDay();
+  const start = new Date(first);
+  start.setDate(first.getDate() - weekday);
+  return start;
+}
+
+function statusLabel(status: FinancialCalendarRow["status"]) {
+  if (status === "pending") return "Pendente";
+  if (status === "paid") return "Pago";
+  if (status === "received") return "Recebido";
+  if (status === "late") return "Atrasado";
+  return status;
+}
+
+function isSameMonth(a: Date, b: Date) {
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth();
+}
+
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function eventStyle(row: FinancialCalendarRow): React.CSSProperties {
+  let bg = "rgba(255,120,120,0.82)";
+
+  if (row.kind === "income") bg = "rgba(120,255,160,0.80)";
+  if (row.status === "paid" || row.status === "received") {
+    bg = "rgba(180,120,255,0.82)";
+  }
+  if (row.status === "late") {
+    bg = "rgba(255,95,95,0.92)";
+  }
+
+  return {
+    background: bg,
+    border: "none",
+    borderRadius: 8,
+    color: "white",
+    fontWeight: 800,
+    padding: "6px 8px",
+    boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
+    display: "grid",
+    gap: 4,
+  };
+}
+
+const btn: React.CSSProperties = {
+  background: "rgba(255,255,255,0.06)",
+  color: "white",
+  border: "1px solid rgba(255,255,255,0.12)",
+  padding: "10px 12px",
+  borderRadius: 12,
+  cursor: "pointer",
+  fontWeight: 900,
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
+};
+
+const btnPrimary: React.CSSProperties = {
+  ...btn,
+  border: "1px solid rgba(180,120,255,0.30)",
+  background:
+    "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
+};
+
+export default function FinancialCalendar({
+  transactions,
+  onOpen,
+  onQuickFinish,
+  finishLabel,
+}: {
+  transactions: FinancialCalendarRow[];
+  onOpen?: (row: FinancialCalendarRow) => void;
+  onQuickFinish?: (row: FinancialCalendarRow) => void;
+  finishLabel?: string;
+}) {
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1);
+  });
+
+  const [mode, setMode] = useState<"month" | "agenda">("month");
+
+  const parsedTransactions = useMemo(() => {
+    return transactions
+      .map((t) => ({
+        ...t,
+        _date: parseDate(t.due_date),
+      }))
+      .filter((t) => !!t._date) as Array<FinancialCalendarRow & { _date: Date }>;
+  }, [transactions]);
+
+  const days = useMemo(() => {
+    const start = startOfMonthGrid(currentMonth);
+    return Array.from({ length: 42 }, (_, i) => {
+      const day = new Date(start);
+      day.setDate(start.getDate() + i);
+      return day;
+    });
+  }, [currentMonth]);
+
+  const byDay = useMemo(() => {
+    const map = new Map<string, Array<FinancialCalendarRow & { _date: Date }>>();
+
+    for (const row of parsedTransactions) {
+      const key = dateKey(row._date);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(row);
+    }
+
+    for (const arr of map.values()) {
+      arr.sort((a, b) => Number(b.amount) - Number(a.amount));
+    }
+
+    return map;
+  }, [parsedTransactions]);
+
+  const agendaRows = useMemo(() => {
+    return [...parsedTransactions].sort((a, b) => a._date.getTime() - b._date.getTime());
+  }, [parsedTransactions]);
+
+  const today = new Date();
+
+  return (
+    <div
+      style={{
+        border: "1px solid rgba(255,255,255,0.10)",
+        background: "rgba(255,255,255,0.04)",
+        borderRadius: 18,
+        padding: 12,
+        boxShadow: "0 18px 60px rgba(0,0,0,0.35)",
+        display: "grid",
+        gap: 12,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        <div style={{ fontSize: 20, fontWeight: 900, textTransform: "capitalize" }}>
+          {monthLabel(currentMonth)}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" style={btn} onClick={() => setCurrentMonth(addMonths(currentMonth, -1))}>
+            Anterior
+          </button>
+
+          <button
+            type="button"
+            style={btn}
+            onClick={() => {
+              const now = new Date();
+              setCurrentMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+            }}
+          >
+            Hoje
+          </button>
+
+          <button type="button" style={btn} onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}>
+            Próximo
+          </button>
+
+          <button
+            type="button"
+            style={mode === "month" ? btnPrimary : btn}
+            onClick={() => setMode("month")}
+          >
+            Mês
+          </button>
+
+          <button
+            type="button"
+            style={mode === "agenda" ? btnPrimary : btn}
+            onClick={() => setMode("agenda")}
+          >
+            Agenda
+          </button>
+        </div>
+      </div>
+
+      {mode === "month" ? (
+        <div style={{ display: "grid", gap: 8 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+              gap: 8,
+            }}
+          >
+            {["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"].map((label) => (
+              <div
+                key={label}
+                style={{
+                  padding: "10px 8px",
+                  borderRadius: 12,
+                  fontSize: 12,
+                  fontWeight: 900,
+                  textAlign: "center",
+                  background: "rgba(255,255,255,0.03)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+              >
+                {label}
+              </div>
+            ))}
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+              gap: 8,
+            }}
+          >
+            {days.map((day) => {
+              const key = dateKey(day);
+              const items = byDay.get(key) ?? [];
+              const current = isSameMonth(day, currentMonth);
+              const isToday = sameDay(day, today);
+
+              return (
+                <div
+                  key={key}
+                  style={{
+                    minHeight: 150,
+                    borderRadius: 14,
+                    padding: 8,
+                    border: isToday
+                      ? "1px solid rgba(180,120,255,0.35)"
+                      : "1px solid rgba(255,255,255,0.08)",
+                    background: current
+                      ? isToday
+                        ? "rgba(180,120,255,0.08)"
+                        : "rgba(255,255,255,0.03)"
+                      : "rgba(255,255,255,0.015)",
+                    display: "grid",
+                    alignContent: "start",
+                    gap: 6,
+                  }}
+                >
+                  <div
+                    style={{
+                      textAlign: "right",
+                      fontWeight: 900,
+                      fontSize: 12,
+                      opacity: current ? 1 : 0.38,
+                    }}
+                  >
+                    {day.getDate()}
+                  </div>
+
+                  {items.slice(0, 3).map((row) => {
+                    const canFinish = row.status === "pending" || row.status === "late";
+
+                    return (
+                      <div key={row.id} style={eventStyle(row)}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            lineHeight: 1.2,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                          title={`${row.description} • ${formatBRL(row.amount)}`}
+                        >
+                          {row.kind === "income" ? "💰" : "💸"} {row.description}
+                        </div>
+
+                        <div style={{ fontSize: 10 }}>{formatBRL(row.amount)}</div>
+
+                        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            onClick={() => onOpen?.(row)}
+                            style={{
+                              border: "1px solid rgba(255,255,255,0.14)",
+                              background: "rgba(0,0,0,0.18)",
+                              color: "white",
+                              borderRadius: 6,
+                              padding: "2px 6px",
+                              fontSize: 10,
+                              fontWeight: 800,
+                              cursor: "pointer",
+                            }}
+                          >
+                            Abrir
+                          </button>
+
+                          {canFinish ? (
+                            <button
+                              type="button"
+                              onClick={() => onQuickFinish?.(row)}
+                              style={{
+                                border: "1px solid rgba(255,255,255,0.14)",
+                                background: "rgba(255,255,255,0.14)",
+                                color: "white",
+                                borderRadius: 6,
+                                padding: "2px 6px",
+                                fontSize: 10,
+                                fontWeight: 800,
+                                cursor: "pointer",
+                              }}
+                            >
+                              {finishLabel || "Finalizar"}
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {items.length > 3 ? (
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 800,
+                        opacity: 0.78,
+                        paddingLeft: 2,
+                      }}
+                    >
+                      +{items.length - 3} a mais
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div
+          style={{
+            display: "grid",
+            gap: 10,
+          }}
+        >
+          {agendaRows.length === 0 ? (
+            <div style={{ opacity: 0.72 }}>Nenhum lançamento encontrado.</div>
+          ) : (
+            agendaRows.map((row) => {
+              const canFinish = row.status === "pending" || row.status === "late";
+
+              return (
+                <div
+                  key={row.id}
+                  style={{
+                    border: "1px solid rgba(255,255,255,0.08)",
+                    background: "rgba(255,255,255,0.03)",
+                    borderRadius: 14,
+                    padding: 12,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <div style={{ display: "grid", gap: 6, minWidth: 260 }}>
+                    <div style={{ fontWeight: 900 }}>
+                      {formatDateBR(row.due_date)} • {row.description}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          padding: "3px 8px",
+                          borderRadius: 999,
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          background: "rgba(255,255,255,0.04)",
+                          fontWeight: 900,
+                        }}
+                      >
+                        {row.kind === "income" ? "Receita" : "Despesa"}
+                      </span>
+
+                      <span
+                        style={{
+                          fontSize: 12,
+                          padding: "3px 8px",
+                          borderRadius: 999,
+                          border: "1px solid rgba(255,255,255,0.10)",
+                          background: "rgba(255,255,255,0.04)",
+                          fontWeight: 900,
+                        }}
+                      >
+                        {statusLabel(row.status)}
+                      </span>
+
+                      {row.counterparty_name ? (
+                        <span
+                          style={{
+                            fontSize: 12,
+                            opacity: 0.8,
+                          }}
+                        >
+                          {row.counterparty_name}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                    <div style={{ fontWeight: 900, minWidth: 120, textAlign: "right" }}>
+                      {formatBRL(row.amount)}
+                    </div>
+
+                    <button type="button" style={btn} onClick={() => onOpen?.(row)}>
+                      Abrir
+                    </button>
+
+                    {canFinish ? (
+                      <button type="button" style={btnPrimary} onClick={() => onQuickFinish?.(row)}>
+                        {finishLabel || "Finalizar"}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

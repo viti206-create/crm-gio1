@@ -212,6 +212,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
               <NavBtn href="/vendas" label="Vendas" />
               <NavBtn href="/recorrencias" label="Recorrências" />
               <NavBtn href="/relatorios" label="Relatórios" />
+              <NavBtn href="/financeiro" label="Financeiro" />
             </>
           ) : null}
           
