@@ -210,6 +210,14 @@ function formatDateToISO(v: string) {
   }
 }
 
+function todayInputValue() {
+  const dt = new Date();
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function Select({
   value,
   onChange,
@@ -241,7 +249,8 @@ function Select({
     background: "rgba(255,255,255,0.06)",
     color: "rgba(255,255,255,0.92)",
     border: "1px solid rgba(255,255,255,0.12)",
-    padding: "10px 12px",
+    height: 44,
+    padding: "0 12px",
     borderRadius: 12,
     outline: "none",
     width: "100%",
@@ -251,6 +260,8 @@ function Select({
     justifyContent: "space-between",
     gap: 10,
     opacity: disabled ? 0.6 : 1,
+    boxSizing: "border-box",
+    minWidth: 0,
   };
 
   const menuStyle: React.CSSProperties = {
@@ -281,17 +292,26 @@ function Select({
   };
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div ref={wrapRef} style={{ position: "relative", minWidth: 0 }}>
       <button
         type="button"
         style={btnStyle}
         disabled={disabled}
         onClick={() => !disabled && setOpen((v) => !v)}
       >
-        <span style={{ opacity: selected ? 1 : 0.75 }}>
+        <span
+          style={{
+            opacity: selected ? 1 : 0.75,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
           {selected ? selected.label : placeholder}
         </span>
-        <span style={{ opacity: 0.7, fontWeight: 900 }}>{open ? "▲" : "▼"}</span>
+        <span style={{ opacity: 0.7, fontWeight: 900, flexShrink: 0 }}>
+          {open ? "▲" : "▼"}
+        </span>
       </button>
 
       {open ? (
@@ -377,10 +397,13 @@ function SuggestInput({
     background: "rgba(255,255,255,0.06)",
     color: "white",
     border: "1px solid rgba(255,255,255,0.12)",
-    padding: "10px 12px",
+    height: 44,
+    padding: "0 12px",
     borderRadius: 12,
     outline: "none",
     width: "100%",
+    boxSizing: "border-box",
+    minWidth: 0,
   };
 
   const menuStyle: React.CSSProperties = {
@@ -400,7 +423,7 @@ function SuggestInput({
   };
 
   return (
-    <div ref={wrapRef} style={{ position: "relative" }}>
+    <div ref={wrapRef} style={{ position: "relative", minWidth: 0 }}>
       <input
         style={inputStyle}
         value={value}
@@ -464,6 +487,7 @@ export default function NewLeadPage() {
   const [cpf, setCpf] = useState("");
   const [birthDate, setBirthDate] = useState("");
   const [sex, setSex] = useState("");
+  const [becameClientAt, setBecameClientAt] = useState(todayInputValue());
 
   const [source, setSource] = useState<string>("instagram");
   const [interest, setInterest] = useState("");
@@ -506,6 +530,16 @@ export default function NewLeadPage() {
     () => [
       { value: "feminino", label: "Feminino" },
       { value: "masculino", label: "Masculino" },
+    ],
+    []
+  );
+
+  const nextActionTypeOptions = useMemo(
+    () => [
+      { value: "whatsapp", label: "WhatsApp" },
+      { value: "ligacao", label: "Ligação" },
+      { value: "avaliacao", label: "Agendar avaliação" },
+      { value: "retorno", label: "Retorno" },
     ],
     []
   );
@@ -627,6 +661,7 @@ export default function NewLeadPage() {
     setCpf("");
     setBirthDate("");
     setSex("");
+    setBecameClientAt(todayInputValue());
     setSource("instagram");
     setInterest("");
     setCampaign("");
@@ -770,6 +805,7 @@ export default function NewLeadPage() {
     if (cleanCpf) payload.cpf = cleanCpf;
     if (birthDate) payload.birth_date = birthDate;
     if (sex) payload.sex = sex;
+    if (becameClientAt) payload.became_client_at = becameClientAt;
 
     const { error: insertErr } = await supabase.from("leads").insert(payload);
 
@@ -821,24 +857,13 @@ export default function NewLeadPage() {
     background: "rgba(255,255,255,0.06)",
     color: "white",
     border: "1px solid rgba(255,255,255,0.12)",
-    padding: "10px 12px",
+    height: 44,
+    padding: "0 12px",
     borderRadius: 12,
     outline: "none",
     width: "100%",
-  };
-
-  const smallLockedStyle: React.CSSProperties = {
-    background: "rgba(255,255,255,0.06)",
-    color: "white",
-    border: "1px solid rgba(255,255,255,0.12)",
-    padding: "10px 12px",
-    borderRadius: 12,
-    minHeight: 42,
-    display: "inline-flex",
-    alignItems: "center",
-    fontWeight: 900,
-    width: "fit-content",
-    minWidth: 160,
+    boxSizing: "border-box",
+    minWidth: 0,
   };
 
   const labelStyle: React.CSSProperties = {
@@ -871,6 +896,12 @@ export default function NewLeadPage() {
     cursor: "not-allowed",
   };
 
+  const fieldWrap: React.CSSProperties = {
+    display: "grid",
+    gap: 10,
+    minWidth: 0,
+  };
+
   return (
     <div>
       {toast ? (
@@ -893,7 +924,10 @@ export default function NewLeadPage() {
         }}
       >
         <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Novo lead</div>
+          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>
+            Novo lead
+          </div>
+
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <span style={chipStyle("muted")}>GIO • CRM</span>
             {loadingStages ? (
@@ -901,6 +935,9 @@ export default function NewLeadPage() {
             ) : (
               <span style={chipStyle("muted")}>Pronto</span>
             )}
+            <span style={chipStyle("muted")}>
+              Responsável: {responsibleName || "Não definido"}
+            </span>
           </div>
         </div>
 
@@ -923,7 +960,7 @@ export default function NewLeadPage() {
       <div style={{ display: "grid", gap: 14, maxWidth: 920 }}>
         <div style={card}>
           <div style={{ display: "grid", gap: 12 }}>
-            <div style={{ display: "grid", gap: 10 }}>
+            <div style={fieldWrap}>
               <div style={labelStyle}>Nome *</div>
               <input
                 ref={nameRef}
@@ -934,19 +971,25 @@ export default function NewLeadPage() {
               />
             </div>
 
-            <div style={{ display: "grid", gap: 10 }}>
-              <div style={labelStyle}>Telefone (BR) *</div>
-              <input
-                style={inputStyle}
-                value={phoneRaw}
-                onChange={(e) => setPhoneRaw(e.target.value)}
-                placeholder="Ex: (15) 9xxxx-xxxx"
-                inputMode="tel"
-              />
-            </div>
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "minmax(0, 0.85fr) minmax(0, 1fr)",
+              }}
+            >
+              <div style={fieldWrap}>
+                <div style={labelStyle}>Telefone (BR) *</div>
+                <input
+                  style={inputStyle}
+                  value={phoneRaw}
+                  onChange={(e) => setPhoneRaw(e.target.value)}
+                  placeholder="Ex: (15) 9xxxx-xxxx"
+                  inputMode="tel"
+                />
+              </div>
 
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={fieldWrap}>
                 <div style={labelStyle}>CPF</div>
                 <input
                   style={inputStyle}
@@ -955,8 +998,16 @@ export default function NewLeadPage() {
                   placeholder="Ex: 000.000.000-00"
                 />
               </div>
+            </div>
 
-              <div style={{ display: "grid", gap: 10 }}>
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              }}
+            >
+              <div style={fieldWrap}>
                 <div style={labelStyle}>Data de nascimento</div>
                 <input
                   type="date"
@@ -965,32 +1016,65 @@ export default function NewLeadPage() {
                   onChange={(e) => setBirthDate(e.target.value)}
                 />
               </div>
-            </div>
 
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={fieldWrap}>
                 <div style={labelStyle}>Sexo</div>
                 <Select
                   value={sex}
                   onChange={setSex}
-                  placeholder="Selecione…"
+                  placeholder="Selecione..."
                   options={sexOptions}
                 />
               </div>
 
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={labelStyle}>Origem *</div>
-                <Select
-                  value={source}
-                  onChange={setSource}
-                  placeholder="Selecione…"
-                  options={sourceOptions}
+              <div style={fieldWrap}>
+                <div style={labelStyle}>Cliente desde</div>
+                <input
+                  type="date"
+                  style={inputStyle}
+                  value={becameClientAt}
+                  onChange={(e) => setBecameClientAt(e.target.value)}
                 />
               </div>
             </div>
 
-            <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-              <div style={{ display: "grid", gap: 10 }}>
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "1fr 1fr",
+              }}
+            >
+              <div style={fieldWrap}>
+                <div style={labelStyle}>Origem *</div>
+                <Select
+                  value={source}
+                  onChange={setSource}
+                  placeholder="Selecione..."
+                  options={sourceOptions}
+                />
+              </div>
+
+              <div style={fieldWrap}>
+                <div style={labelStyle}>Etapa inicial *</div>
+                <Select
+                  value={stageId}
+                  onChange={setStageId}
+                  placeholder={loadingStages ? "Carregando..." : "Selecione..."}
+                  options={stageOptions}
+                  disabled={loadingStages || stageOptions.length === 0}
+                />
+              </div>
+            </div>
+
+            <div
+              style={{
+                display: "grid",
+                gap: 12,
+                gridTemplateColumns: "1fr 1fr",
+              }}
+            >
+              <div style={fieldWrap}>
                 <div style={labelStyle}>Interesse *</div>
                 <SuggestInput
                   value={interest}
@@ -1000,38 +1084,13 @@ export default function NewLeadPage() {
                 />
               </div>
 
-              <div style={{ display: "grid", gap: 10 }}>
+              <div style={fieldWrap}>
                 <div style={labelStyle}>Campanha (opcional)</div>
                 <SuggestInput
                   value={campaign}
                   onChange={setCampaign}
                   suggestions={campaignSuggestions}
                   placeholder="Digite ou selecione"
-                />
-              </div>
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gap: 12,
-                gridTemplateColumns: "220px 1fr",
-                alignItems: "end",
-              }}
-            >
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={labelStyle}>Responsável</div>
-                <div style={smallLockedStyle}>{responsibleName || "Não definido"}</div>
-              </div>
-
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={labelStyle}>Etapa inicial *</div>
-                <Select
-                  value={stageId}
-                  onChange={setStageId}
-                  placeholder={loadingStages ? "Carregando…" : "Selecione…"}
-                  options={stageOptions}
-                  disabled={loadingStages || stageOptions.length === 0}
                 />
               </div>
             </div>
@@ -1081,21 +1140,17 @@ export default function NewLeadPage() {
                     gridTemplateColumns: "1fr 1fr",
                   }}
                 >
-                  <div style={{ display: "grid", gap: 10 }}>
+                  <div style={fieldWrap}>
                     <div style={labelStyle}>Tipo</div>
-                    <select
-                      style={inputStyle}
+                    <Select
                       value={nextActionType}
-                      onChange={(e) => setNextActionType(e.target.value)}
-                    >
-                      <option value="whatsapp">WhatsApp</option>
-                      <option value="ligacao">Ligação</option>
-                      <option value="avaliacao">Agendar avaliação</option>
-                      <option value="retorno">Retorno</option>
-                    </select>
+                      onChange={setNextActionType}
+                      placeholder="Selecione..."
+                      options={nextActionTypeOptions}
+                    />
                   </div>
 
-                  <div style={{ display: "grid", gap: 10 }}>
+                  <div style={fieldWrap}>
                     <div style={labelStyle}>Data</div>
                     <input
                       type="date"
