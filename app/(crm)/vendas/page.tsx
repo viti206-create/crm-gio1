@@ -23,6 +23,8 @@ type SaleRow = {
   value_net: number | null;
   fee_percent: number | null;
   payment_method: string | null;
+  payment_provider?: string | null;
+  card_brand?: string | null;
   installments_label: string | null;
   sale_type: string | null;
   seller_name: string | null;
@@ -34,6 +36,29 @@ type SaleRow = {
   closed_at: string | null;
   leads?: LeadRow | null;
 };
+
+type PaymentProvider =
+  | "direct"
+  | "pagbank_machine"
+  | "pagbank_link"
+  | "stone_machine"
+  | "stone_link"
+  | "gio_card";
+
+type PaymentKind =
+  | "pix"
+  | "dinheiro"
+  | "deposito"
+  | "debito"
+  | "credito"
+  | "boleto";
+
+type CardBrand =
+  | "mastercard"
+  | "visa"
+  | "elo"
+  | "amex"
+  | "outras";
 
 function formatDateBR(d: string | null) {
   if (!d) return "—";
@@ -73,16 +98,371 @@ function parseInstallmentsTotal(label: string) {
   return Number(match[1] ?? 1);
 }
 
-function normalizePaymentLabel(v: string | null | undefined) {
+function normalizePaymentKindLabel(v: string | null | undefined) {
   const key = String(v ?? "").trim().toLowerCase();
   if (key === "pix") return "Pix";
-  if (key === "cartao") return "Cartão";
-  if (key === "cartao_recorrente") return "Cartão recorrente";
-  if (key === "cartao_gio") return "Cartão GIO";
+  if (key === "credito") return "Crédito";
   if (key === "debito") return "Débito";
   if (key === "dinheiro") return "Dinheiro";
   if (key === "boleto") return "Boleto";
+  if (key === "deposito") return "Depósito";
   return v || "—";
+}
+
+function normalizeProviderLabel(v: string | null | undefined) {
+  const key = String(v ?? "").trim().toLowerCase();
+  if (key === "direct") return "Direto";
+  if (key === "pagbank_machine") return "PagBank Maquininha";
+  if (key === "pagbank_link") return "PagBank Link";
+  if (key === "stone_machine") return "Stone Maquininha";
+  if (key === "stone_link") return "Stone Link";
+  if (key === "gio_card") return "Cartão GIO";
+  return v || "—";
+}
+
+function normalizeBrandLabel(v: string | null | undefined) {
+  const key = String(v ?? "").trim().toLowerCase();
+  if (key === "mastercard") return "Mastercard";
+  if (key === "visa") return "Visa";
+  if (key === "elo") return "Elo";
+  if (key === "amex") return "American Express";
+  if (key === "outras") return "Outras";
+  return v || "—";
+}
+
+function calcNetFromFee(gross: number, feePercent: number) {
+  return Number((gross * (1 - feePercent / 100)).toFixed(2));
+}
+
+function getGioSimulatedFee(installments: number) {
+  if (installments <= 1) return 2.35;
+  if (installments >= 12) return 14.21;
+  const start = 2.35;
+  const end = 14.21;
+  const steps = 11;
+  const pct = start + ((end - start) / steps) * (installments - 1);
+  return Number(pct.toFixed(2));
+}
+
+function interpolateFee(
+  table: Record<number, number>,
+  installments: number
+): number {
+  const safeInstallments = Math.max(1, installments);
+  if (table[safeInstallments] != null) return table[safeInstallments];
+
+  const keys = Object.keys(table)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  if (!keys.length) return 0;
+  if (safeInstallments <= keys[0]) return table[keys[0]];
+  if (safeInstallments >= keys[keys.length - 1]) return table[keys[keys.length - 1]];
+
+  let prev = keys[0];
+  let next = keys[keys.length - 1];
+
+  for (let i = 0; i < keys.length - 1; i += 1) {
+    const a = keys[i];
+    const b = keys[i + 1];
+    if (safeInstallments > a && safeInstallments < b) {
+      prev = a;
+      next = b;
+      break;
+    }
+  }
+
+  const prevValue = table[prev];
+  const nextValue = table[next];
+  const ratio = (safeInstallments - prev) / (next - prev);
+
+  return Number((prevValue + (nextValue - prevValue) * ratio).toFixed(2));
+}
+
+function getFeePercent(params: {
+  provider: PaymentProvider;
+  kind: PaymentKind;
+  brand: CardBrand | "";
+  installments: number;
+  gross: number;
+}) {
+  const { provider, kind, brand, installments, gross } = params;
+
+  if (kind === "pix" || kind === "dinheiro" || kind === "deposito") return 0;
+
+  if (kind === "boleto") {
+    if (provider === "pagbank_link") {
+      if (!gross || gross <= 0) return 0;
+      return Number(((1.45 / gross) * 100).toFixed(2));
+    }
+    return 0;
+  }
+
+  if (provider === "gio_card") {
+    if (kind !== "credito") return 0;
+    return getGioSimulatedFee(installments);
+  }
+
+  if (provider === "pagbank_link") {
+    if (kind === "credito") {
+      const table: Record<number, number> = {
+        1: 2.75,
+        2: 3.77,
+        4: 5.0,
+        5: 5.6,
+        6: 6.2,
+        8: 7.38,
+        10: 8.55,
+        12: 9.69,
+      };
+      return interpolateFee(table, installments);
+    }
+    return 0;
+  }
+
+  if (provider === "pagbank_machine") {
+    if (kind === "debito") return 0.9;
+    if (kind === "credito") {
+      const table: Record<number, number> = {
+        1: 2.75,
+        2: 4.34,
+        3: 5.11,
+        4: 5.86,
+        5: 6.51,
+        6: 7.22,
+        8: 8.82,
+        10: 10.26,
+        12: 11.66,
+      };
+      return interpolateFee(table, installments);
+    }
+    return 0;
+  }
+
+  if (provider === "stone_link") {
+    if (kind === "debito") {
+      const debitByBrand: Partial<Record<CardBrand, number>> = {
+        mastercard: 1.25,
+        elo: 1.49,
+        visa: 1.35,
+        outras: 1.35,
+      };
+      return debitByBrand[brand as CardBrand] ?? 1.35;
+    }
+
+    if (kind === "credito") {
+      if (brand === "mastercard") {
+        const table: Record<number, number> = {
+          1: 2.15,
+          5: 7.2,
+          6: 7.4,
+          7: 7.72,
+          10: 9.72,
+          12: 10.97,
+        };
+        return interpolateFee(table, installments);
+      }
+
+      if (brand === "elo") {
+        const table: Record<number, number> = {
+          1: 2.74,
+          2: 3.09,
+          6: 3.09,
+          7: 3.56,
+          12: 3.56,
+          18: 3.56,
+        };
+        return interpolateFee(table, installments);
+      }
+
+      if (brand === "amex") {
+        const table: Record<number, number> = {
+          1: 2.76,
+          2: 2.9,
+          6: 2.9,
+          7: 3.04,
+          12: 3.04,
+        };
+        return interpolateFee(table, installments);
+      }
+
+      if (brand === "visa" || brand === "outras") {
+        const table: Record<number, number> = {
+          1: 2.45,
+          2: 2.85,
+          6: 2.85,
+          7: 3.2,
+          12: 3.2,
+        };
+        return interpolateFee(table, installments);
+      }
+    }
+
+    return 0;
+  }
+
+  if (provider === "stone_machine") {
+    if (kind === "debito") {
+      const debitByBrand: Partial<Record<CardBrand, number>> = {
+        mastercard: 0.75,
+        elo: 0.99,
+        visa: 0.9,
+        outras: 0.9,
+      };
+      return debitByBrand[brand as CardBrand] ?? 0.9;
+    }
+
+    if (kind === "credito") {
+      if (brand === "mastercard") {
+        const table: Record<number, number> = {
+          1: 2.98,
+          2: 3.84,
+          3: 4.5,
+          4: 5.16,
+          5: 5.83,
+          6: 6.49,
+          7: 7.28,
+          8: 7.93,
+          9: 8.61,
+          10: 9.27,
+          11: 9.93,
+          12: 10.59,
+          13: 11.25,
+          14: 11.91,
+          15: 12.58,
+          16: 13.23,
+          17: 13.9,
+          18: 14.56,
+        };
+        return interpolateFee(table, installments);
+      }
+
+      if (brand === "elo") {
+        const table: Record<number, number> = {
+          1: 3.56,
+          2: 4.56,
+          3: 5.22,
+          4: 5.88,
+          5: 6.54,
+          6: 7.64,
+          7: 8.29,
+          8: 8.95,
+          9: 9.6,
+          10: 10.26,
+          11: 10.91,
+          12: 11.57,
+          13: 12.22,
+          14: 12.87,
+          15: 13.53,
+          16: 14.18,
+          17: 14.84,
+          18: 15.49,
+        };
+        return interpolateFee(table, installments);
+      }
+
+      if (brand === "amex") {
+        const table: Record<number, number> = {
+          1: 3.58,
+          2: 4.38,
+          3: 5.04,
+          4: 5.68,
+          5: 6.35,
+          6: 7.01,
+          7: 7.8,
+          8: 8.45,
+          9: 9.12,
+          10: 9.78,
+          11: 10.43,
+          12: 11.09,
+        };
+        return interpolateFee(table, installments);
+      }
+
+      if (brand === "visa" || brand === "outras") {
+        const table: Record<number, number> = {
+          1: 3.2,
+          2: 4.05,
+          3: 4.72,
+          4: 5.39,
+          5: 6.06,
+          6: 6.73,
+          7: 7.4,
+          8: 8.07,
+          9: 8.74,
+          10: 9.41,
+          11: 10.08,
+          12: 10.75,
+        };
+        return interpolateFee(table, installments);
+      }
+    }
+
+    return 0;
+  }
+
+  return 0;
+}
+
+function getPaymentKindsForProvider(provider: PaymentProvider) {
+  if (provider === "direct") {
+    return [
+      { value: "pix", label: "Pix" },
+      { value: "dinheiro", label: "Dinheiro" },
+      { value: "deposito", label: "Depósito" },
+    ] as Array<{ value: PaymentKind; label: string }>;
+  }
+
+  if (provider === "pagbank_machine" || provider === "stone_machine") {
+    return [
+      { value: "debito", label: "Débito" },
+      { value: "credito", label: "Crédito" },
+    ] as Array<{ value: PaymentKind; label: string }>;
+  }
+
+  if (provider === "pagbank_link" || provider === "stone_link") {
+    return [
+      { value: "credito", label: "Crédito" },
+      { value: "boleto", label: "Boleto" },
+    ] as Array<{ value: PaymentKind; label: string }>;
+  }
+
+  if (provider === "gio_card") {
+    return [{ value: "credito", label: "Crédito" }] as Array<{
+      value: PaymentKind;
+      label: string;
+    }>;
+  }
+
+  return [];
+}
+
+function getBrandOptionsForProvider(provider: PaymentProvider) {
+  if (provider === "stone_machine" || provider === "stone_link") {
+    return [
+      { value: "mastercard", label: "Mastercard" },
+      { value: "elo", label: "Elo" },
+      { value: "amex", label: "American Express" },
+      { value: "visa", label: "Visa" },
+      { value: "outras", label: "Outras" },
+    ] as Array<{ value: CardBrand; label: string }>;
+  }
+
+  if (
+    provider === "pagbank_machine" ||
+    provider === "pagbank_link" ||
+    provider === "gio_card"
+  ) {
+    return [
+      { value: "mastercard", label: "Mastercard" },
+      { value: "visa", label: "Visa" },
+      { value: "elo", label: "Elo" },
+      { value: "amex", label: "American Express" },
+      { value: "outras", label: "Outras" },
+    ] as Array<{ value: CardBrand; label: string }>;
+  }
+
+  return [];
 }
 
 const inputStyle: React.CSSProperties = {
@@ -97,6 +477,12 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
   fontSize: 13,
   minWidth: 0,
+};
+
+const readOnlyInputStyle: React.CSSProperties = {
+  ...inputStyle,
+  opacity: 0.85,
+  cursor: "default",
 };
 
 const labelStyle: React.CSSProperties = {
@@ -308,7 +694,9 @@ export default function VendasPage() {
 
   const [leadId, setLeadId] = useState("");
   const [procedure, setProcedure] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("pix");
+  const [paymentProvider, setPaymentProvider] = useState<PaymentProvider>("direct");
+  const [paymentMethod, setPaymentMethod] = useState<PaymentKind>("pix");
+  const [cardBrand, setCardBrand] = useState<CardBrand | "">("");
   const [installmentsLabel, setInstallmentsLabel] = useState("À vista");
   const [saleType, setSaleType] = useState("avulsa");
 
@@ -323,9 +711,7 @@ export default function VendasPage() {
   const [indicatedProfessional, setIndicatedProfessional] = useState("");
   const [notes, setNotes] = useState("");
 
-  const [lastEditedField, setLastEditedField] = useState<"net" | "percent" | null>(
-    null
-  );
+  const [lastEditedField, setLastEditedField] = useState<"net" | null>(null);
 
   const [filterQ, setFilterQ] = useState("");
   const [filterType, setFilterType] = useState("all");
@@ -343,7 +729,7 @@ export default function VendasPage() {
     const { data, error } = await supabase
       .from("sales")
       .select(
-        "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,indicated_client,indicated_professional,closed_at,leads(id,name,phone_raw,phone_e164)"
+        "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,payment_provider,card_brand,installments_label,sale_type,seller_name,source,procedure,notes,indicated_client,indicated_professional,closed_at,leads(id,name,phone_raw,phone_e164)"
       )
       .order("closed_at", { ascending: false });
 
@@ -466,8 +852,75 @@ export default function VendasPage() {
     return rows.reduce((sum, r) => sum + Number(r.value ?? 0), 0);
   }, [rows]);
 
+  const paymentKindOptions = useMemo(
+    () => getPaymentKindsForProvider(paymentProvider),
+    [paymentProvider]
+  );
+
+  const brandOptions = useMemo(
+    () => getBrandOptionsForProvider(paymentProvider),
+    [paymentProvider]
+  );
+
+  const requiresBrand = useMemo(() => {
+    return (
+      (paymentMethod === "credito" || paymentMethod === "debito") &&
+      paymentProvider !== "direct"
+    );
+  }, [paymentMethod, paymentProvider]);
+
+  const installmentOptions = useMemo(() => {
+    if (paymentMethod !== "credito") {
+      return [{ value: "À vista", label: "À vista" }];
+    }
+
+    const max = paymentProvider === "gio_card" ? 12 : 18;
+
+    return [
+      { value: "À vista", label: "À vista" },
+      ...Array.from({ length: max - 1 }).map((_, i) => {
+        const n = i + 2;
+        return { value: `${n}x`, label: `${n}x` };
+      }),
+    ];
+  }, [paymentMethod, paymentProvider]);
+
+  useEffect(() => {
+    const validKinds = paymentKindOptions.map((x) => x.value);
+    if (!validKinds.includes(paymentMethod)) {
+      setPaymentMethod(validKinds[0] ?? "pix");
+      setLastEditedField(null);
+    }
+  }, [paymentKindOptions, paymentMethod]);
+
+  useEffect(() => {
+    if (!requiresBrand) {
+      setCardBrand("");
+      return;
+    }
+
+    const validBrands = brandOptions.map((x) => x.value);
+    if (!validBrands.includes(cardBrand as CardBrand)) {
+      setCardBrand(validBrands[0] ?? "");
+    }
+  }, [requiresBrand, brandOptions, cardBrand]);
+
+  useEffect(() => {
+    if (paymentMethod !== "credito") {
+      if (installmentsLabel !== "À vista") {
+        setInstallmentsLabel("À vista");
+      }
+    } else {
+      const validInstallments = installmentOptions.map((x) => x.value);
+      if (!validInstallments.includes(installmentsLabel)) {
+        setInstallmentsLabel("À vista");
+      }
+    }
+  }, [paymentMethod, installmentOptions, installmentsLabel]);
+
   useEffect(() => {
     const gross = Number(grossValue || 0);
+
     if (!gross || gross <= 0) {
       if (!grossValue) {
         setNetValue("");
@@ -476,20 +929,35 @@ export default function VendasPage() {
       return;
     }
 
+    const installmentsTotal = parseInstallmentsTotal(installmentsLabel);
+    const autoFeePercent = getFeePercent({
+      provider: paymentProvider,
+      kind: paymentMethod,
+      brand: cardBrand,
+      installments: installmentsTotal,
+      gross,
+    });
+
     if (lastEditedField === "net") {
       const net = Number(netValue || 0);
-      if (!Number.isFinite(net)) return;
+      if (!Number.isFinite(net) || net <= 0) return;
+
       const pct = ((gross - net) / gross) * 100;
       setFeePercentInput(Number.isFinite(pct) ? pct.toFixed(2) : "");
+      return;
     }
 
-    if (lastEditedField === "percent") {
-      const pct = Number(feePercentInput || 0);
-      if (!Number.isFinite(pct)) return;
-      const calculatedNet = gross * (1 - pct / 100);
-      setNetValue(Number.isFinite(calculatedNet) ? calculatedNet.toFixed(2) : "");
-    }
-  }, [grossValue, netValue, feePercentInput, lastEditedField]);
+    setFeePercentInput(autoFeePercent.toFixed(2));
+    setNetValue(calcNetFromFee(gross, autoFeePercent).toFixed(2));
+  }, [
+    grossValue,
+    netValue,
+    paymentProvider,
+    paymentMethod,
+    cardBrand,
+    installmentsLabel,
+    lastEditedField,
+  ]);
 
   const filteredRows = useMemo(() => {
     const q = filterQ.trim().toLowerCase();
@@ -508,7 +976,9 @@ export default function VendasPage() {
         r.source ?? "",
         r.indicated_client ?? "",
         r.indicated_professional ?? "",
-        normalizePaymentLabel(r.payment_method),
+        normalizePaymentKindLabel(r.payment_method),
+        normalizeProviderLabel(r.payment_provider),
+        normalizeBrandLabel(r.card_brand),
       ]
         .join(" ")
         .toLowerCase();
@@ -521,7 +991,9 @@ export default function VendasPage() {
     setEditingId(null);
     setLeadId("");
     setProcedure("");
+    setPaymentProvider("direct");
     setPaymentMethod("pix");
+    setCardBrand("");
     setInstallmentsLabel("À vista");
     setSaleType("avulsa");
     setGrossValue("");
@@ -557,6 +1029,11 @@ export default function VendasPage() {
 
     if (!paymentMethod.trim()) {
       setErrorMsg("Informe a forma de pagamento.");
+      return;
+    }
+
+    if (requiresBrand && !cardBrand) {
+      setErrorMsg("Selecione a bandeira.");
       return;
     }
 
@@ -626,6 +1103,8 @@ export default function VendasPage() {
             value_net: net,
             fee_percent: feePercent,
             payment_method: paymentMethod.trim(),
+            payment_provider: paymentProvider,
+            card_brand: cardBrand || null,
             installments_label: installmentsLabel,
             seller_name: normalizedSeller || null,
             source: normalizedSource || null,
@@ -671,6 +1150,8 @@ export default function VendasPage() {
           value_net: net,
           fee_percent: feePercent,
           payment_method: paymentMethod.trim(),
+          payment_provider: paymentProvider,
+          card_brand: cardBrand || null,
           installments_label: installmentsLabel,
           seller_name: normalizedSeller || null,
           source: normalizedSource || null,
@@ -699,7 +1180,9 @@ export default function VendasPage() {
     setEditingId(row.id);
     setLeadId(row.lead_id ?? "");
     setProcedure(row.procedure ?? "");
-    setPaymentMethod(row.payment_method ?? "pix");
+    setPaymentProvider((row.payment_provider as PaymentProvider) ?? "direct");
+    setPaymentMethod((row.payment_method as PaymentKind) ?? "pix");
+    setCardBrand((row.card_brand as CardBrand) ?? "");
     setInstallmentsLabel(row.installments_label ?? "À vista");
     setSaleType(row.sale_type ?? "avulsa");
     setGrossValue(String(row.value_gross ?? row.value ?? ""));
@@ -711,7 +1194,7 @@ export default function VendasPage() {
     setIndicatedClient(row.indicated_client ?? "");
     setIndicatedProfessional(row.indicated_professional ?? "");
     setNotes(row.notes ?? "");
-    setLastEditedField(null);
+    setLastEditedField("net");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -837,7 +1320,7 @@ export default function VendasPage() {
           </div>
 
           <div style={fieldWrapStyle}>
-            <label style={labelStyle}>Tipo</label>
+            <label style={labelStyle}>Tipo da venda</label>
             <SelectDark
               value={saleType}
               onChange={setSaleType}
@@ -872,21 +1355,61 @@ export default function VendasPage() {
           </div>
 
           <div style={fieldWrapStyle}>
-            <label style={labelStyle}>Pagamento</label>
+            <label style={labelStyle}>Operadora</label>
             <SelectDark
-              value={paymentMethod}
-              onChange={setPaymentMethod}
-              placeholder="Pagamento"
+              value={paymentProvider}
+              onChange={(v) => {
+                setPaymentProvider(v as PaymentProvider);
+                setLastEditedField(null);
+              }}
+              placeholder="Operadora"
               searchable={false}
               options={[
-                { value: "pix", label: "Pix" },
-                { value: "cartao", label: "Cartão" },
-                { value: "cartao_recorrente", label: "Cartão recorrente" },
-                { value: "cartao_gio", label: "Cartão GIO" },
-                { value: "debito", label: "Débito" },
-                { value: "dinheiro", label: "Dinheiro" },
-                { value: "boleto", label: "Boleto" },
+                { value: "direct", label: "Direto" },
+                { value: "pagbank_machine", label: "PagBank Maquininha" },
+                { value: "pagbank_link", label: "PagBank Link" },
+                { value: "stone_machine", label: "Stone Maquininha" },
+                { value: "stone_link", label: "Stone Link" },
+                { value: "gio_card", label: "Cartão GIO" },
               ]}
+            />
+          </div>
+
+          <div style={fieldWrapStyle}>
+            <label style={labelStyle}>Tipo pagamento</label>
+            <SelectDark
+              value={paymentMethod}
+              onChange={(v) => {
+                setPaymentMethod(v as PaymentKind);
+                setLastEditedField(null);
+              }}
+              placeholder="Pagamento"
+              searchable={false}
+              options={paymentKindOptions.map((x) => ({
+                value: x.value,
+                label: x.label,
+              }))}
+            />
+          </div>
+
+          <div style={fieldWrapStyle}>
+            <label style={labelStyle}>Bandeira</label>
+            <SelectDark
+              value={cardBrand}
+              onChange={(v) => {
+                setCardBrand(v as CardBrand);
+                setLastEditedField(null);
+              }}
+              placeholder={requiresBrand ? "Selecione" : "Não se aplica"}
+              searchable={false}
+              options={
+                requiresBrand
+                  ? brandOptions.map((x) => ({
+                      value: x.value,
+                      label: x.label,
+                    }))
+                  : [{ value: "", label: "Não se aplica" }]
+              }
             />
           </div>
 
@@ -894,19 +1417,13 @@ export default function VendasPage() {
             <label style={labelStyle}>Parcelas</label>
             <SelectDark
               value={installmentsLabel}
-              onChange={setInstallmentsLabel}
+              onChange={(v) => {
+                setInstallmentsLabel(v);
+                setLastEditedField(null);
+              }}
               placeholder="Parcelas"
               searchable={false}
-              options={[
-                { value: "À vista", label: "À vista" },
-                ...Array.from({ length: 18 }).map((_, i) => {
-                  const n = i + 1;
-                  return {
-                    value: `${n}x`,
-                    label: `${n}x`,
-                  };
-                }),
-              ]}
+              options={installmentOptions}
             />
           </div>
 
@@ -917,7 +1434,9 @@ export default function VendasPage() {
               min="0"
               step="0.01"
               value={grossValue}
-              onChange={(e) => setGrossValue(e.target.value)}
+              onChange={(e) => {
+                setGrossValue(e.target.value);
+              }}
               style={inputStyle}
               placeholder="0,00"
             />
@@ -943,14 +1462,9 @@ export default function VendasPage() {
             <label style={labelStyle}>Taxa (%)</label>
             <input
               type="number"
-              min="0"
-              step="0.01"
               value={feePercentInput}
-              onChange={(e) => {
-                setFeePercentInput(e.target.value);
-                setLastEditedField("percent");
-              }}
-              style={inputStyle}
+              readOnly
+              style={readOnlyInputStyle}
               placeholder="0,00"
             />
           </div>
@@ -1015,6 +1529,18 @@ export default function VendasPage() {
             }}
           >
             Recorrência: o valor total será dividido automaticamente pelas parcelas.
+          </div>
+        ) : null}
+
+        {paymentProvider === "gio_card" ? (
+          <div
+            style={{
+              marginTop: 10,
+              fontSize: 12,
+              opacity: 0.75,
+            }}
+          >
+            Cartão GIO: parcelas menores estão simuladas temporariamente até você me passar a tabela real.
           </div>
         ) : null}
 
@@ -1089,7 +1615,8 @@ export default function VendasPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(240px, 1.5fr) minmax(160px, 1fr) minmax(180px, 1fr) auto",
+            gridTemplateColumns:
+              "minmax(240px, 1.5fr) minmax(160px, 1fr) minmax(180px, 1fr) auto",
             gap: 10,
             marginBottom: 14,
             alignItems: "stretch",
@@ -1127,12 +1654,11 @@ export default function VendasPage() {
               options={[
                 { value: "all", label: "Todos pagamentos" },
                 { value: "pix", label: "Pix" },
-                { value: "cartao", label: "Cartão" },
-                { value: "cartao_recorrente", label: "Cartão recorrente" },
-                { value: "cartao_gio", label: "Cartão GIO" },
+                { value: "credito", label: "Crédito" },
                 { value: "debito", label: "Débito" },
                 { value: "dinheiro", label: "Dinheiro" },
                 { value: "boleto", label: "Boleto" },
+                { value: "deposito", label: "Depósito" },
               ]}
             />
           </div>
@@ -1218,7 +1744,15 @@ export default function VendasPage() {
                         borderTop: "1px solid rgba(255,255,255,0.06)",
                       }}
                     >
-                      <div>{normalizePaymentLabel(r.payment_method)}</div>
+                      <div>{normalizePaymentKindLabel(r.payment_method)}</div>
+                      <div style={{ fontSize: 12, opacity: 0.7 }}>
+                        {normalizeProviderLabel(r.payment_provider)}
+                      </div>
+                      {r.card_brand ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          {normalizeBrandLabel(r.card_brand)}
+                        </div>
+                      ) : null}
                       <div style={{ fontSize: 12, opacity: 0.7 }}>
                         {r.installments_label ?? "—"}
                       </div>
@@ -1234,6 +1768,11 @@ export default function VendasPage() {
                       {r.value_net != null ? (
                         <div style={{ fontSize: 12, opacity: 0.7 }}>
                           Líq. {formatBRL(r.value_net)}
+                        </div>
+                      ) : null}
+                      {r.fee_percent != null ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          Taxa {Number(r.fee_percent).toFixed(2)}%
                         </div>
                       ) : null}
                     </td>
