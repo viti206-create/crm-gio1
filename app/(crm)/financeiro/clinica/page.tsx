@@ -37,6 +37,18 @@ type FinancialTransactionRow = {
   paid_at: string | null;
   counterparty_name: string | null;
   notes: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
+};
+
+type FinancialScheduleRow = {
+  id: string;
+  scope: "clinic" | "personal";
+  kind: "income" | "expense";
+  description: string;
+  next_due_date: string | null;
+  default_amount: number | null;
+  is_active: boolean | null;
 };
 
 const pageStyle: React.CSSProperties = {
@@ -254,6 +266,7 @@ export default function FinanceiroClinicaPage() {
         const [
           { data: salesData, error: salesError },
           { data: txData, error: txError },
+          { data: scheduleData, error: scheduleError },
         ] = await Promise.all([
           supabase
             .from("sales")
@@ -265,11 +278,20 @@ export default function FinanceiroClinicaPage() {
           supabase
             .from("financial_transactions")
             .select(
-              "id,scope,kind,status,description,amount,due_date,paid_at,counterparty_name,notes"
+              "id,scope,kind,status,description,amount,due_date,paid_at,counterparty_name,notes,source_type,source_id"
             )
             .eq("scope", "clinic")
             .order("due_date", { ascending: false })
             .order("created_at", { ascending: false }),
+
+          supabase
+            .from("financial_schedules")
+            .select(
+              "id,scope,kind,description,next_due_date,default_amount,is_active"
+            )
+            .eq("scope", "clinic")
+            .eq("is_active", true)
+            .order("next_due_date", { ascending: true }),
         ]);
 
         if (salesError) {
@@ -280,15 +302,20 @@ export default function FinanceiroClinicaPage() {
           console.error("Erro ao buscar transações para o financeiro:", txError);
         }
 
+        if (scheduleError) {
+          console.error("Erro ao buscar agenda para o financeiro:", scheduleError);
+        }
+
         const totalLiquido = calcularLiquidoMesAtual(
           (salesData as SaleFinanceRow[]) ?? []
         );
 
         const txRows = (txData as FinancialTransactionRow[]) ?? [];
+        const scheduleRows = (scheduleData as FinancialScheduleRow[]) ?? [];
 
         const totalDespesas = calcularDespesasMesAtual(txRows);
 
-        const nextCalendarRows: FinancialCalendarRow[] = txRows.map((row) => ({
+        const txCalendarRows: FinancialCalendarRow[] = txRows.map((row) => ({
           id: row.id,
           kind: row.kind,
           status: row.status,
@@ -299,6 +326,31 @@ export default function FinanceiroClinicaPage() {
           counterparty_name: row.counterparty_name,
           notes: row.notes,
         }));
+
+        const existingScheduleLaunchKeys = new Set(
+  txRows
+    .filter((row: any) => row.source_type === "schedule" && row.source_id)
+    .map((row: any) => `${row.source_id}::${row.due_date ?? ""}`)
+);
+
+    const scheduleCalendarRows: FinancialCalendarRow[] = scheduleRows
+      .filter((row) => {
+        const key = `${row.id}::${row.next_due_date ?? ""}`;
+        return !existingScheduleLaunchKeys.has(key);
+      })
+      .map((row) => ({
+        id: `schedule-${row.id}`,
+        kind: row.kind,
+        status: "pending",
+        description: `${row.description} (Agenda)`,
+        amount: Number(row.default_amount ?? 0),
+        due_date: row.next_due_date,
+        paid_at: null,
+        counterparty_name: null,
+        notes: "Compromisso previsto na agenda financeira",
+      }));
+
+        const nextCalendarRows = [...txCalendarRows, ...scheduleCalendarRows];
 
         if (active) {
           setTotalLiquidoMes(totalLiquido);
@@ -358,6 +410,9 @@ export default function FinanceiroClinicaPage() {
           </Link>
           <Link href="/financeiro/clinica/lancamentos" style={btnPrimaryStyle}>
             Lançamentos
+          </Link>
+          <Link href="/financeiro/clinica/agenda" style={btnStyle}>
+            Agenda
           </Link>
         </div>
       </div>

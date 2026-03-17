@@ -87,37 +87,32 @@ function sameDay(a: Date, b: Date) {
 }
 
 function eventStyle(row: FinancialCalendarRow): React.CSSProperties {
-  let bg = "rgba(255,145,110,0.88)";
-  let border = "1px solid rgba(255,190,160,0.30)";
+  let bg = "rgba(255,140,90,0.82)";
+  let border = "1px solid rgba(255,170,120,0.22)";
 
   if (row.kind === "income") {
-    bg = "rgba(70,185,120,0.88)";
-    border = "1px solid rgba(140,255,190,0.28)";
+    bg = "rgba(70,185,120,0.82)";
+    border = "1px solid rgba(120,255,160,0.22)";
   }
 
-  if (row.kind === "expense" && row.status === "paid") {
-    bg = "rgba(160,105,80,0.86)";
-    border = "1px solid rgba(255,190,160,0.24)";
-  }
-
-  if (row.kind === "income" && row.status === "received") {
-    bg = "rgba(42,140,92,0.92)";
-    border = "1px solid rgba(140,255,190,0.24)";
+  if (row.status === "paid" || row.status === "received") {
+    bg = "rgba(70,150,255,0.82)";
+    border = "1px solid rgba(120,190,255,0.28)";
   }
 
   if (row.status === "late") {
-    bg = "rgba(220,82,82,0.94)";
-    border = "1px solid rgba(255,170,170,0.28)";
+    bg = "rgba(255,95,95,0.92)";
+    border = "1px solid rgba(255,140,140,0.28)";
   }
 
   return {
     background: bg,
     border,
-    borderRadius: 7,
+    borderRadius: 8,
     color: "white",
     fontWeight: 800,
-    padding: "4px 6px",
-    boxShadow: "0 4px 10px rgba(0,0,0,0.16)",
+    padding: "6px 8px",
+    boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
     display: "grid",
     gap: 2,
   };
@@ -331,6 +326,30 @@ export default function FinancialCalendar({
             gap: 6,
             padding: "4px 9px",
             borderRadius: 999,
+            background: "rgba(70,150,255,0.16)",
+            border: "1px solid rgba(120,190,255,0.22)",
+            fontWeight: 800,
+          }}
+        >
+          <span
+            style={{
+              width: 9,
+              height: 9,
+              borderRadius: 999,
+              background: "rgba(70,150,255,0.92)",
+              display: "inline-block",
+            }}
+          />
+          Pago
+        </span>
+
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "4px 9px",
+            borderRadius: 999,
             background: "rgba(220,82,82,0.14)",
             border: "1px solid rgba(255,170,170,0.16)",
             fontWeight: 800,
@@ -435,7 +454,12 @@ export default function FinancialCalendar({
                           }}
                           title={`${row.description} • ${formatBRL(row.amount)}`}
                         >
-                          {row.kind === "income" ? "💚" : "💸"} {row.description}
+                          {row.status === "paid" || row.status === "received"
+                            ? "🔵"
+                            : row.kind === "income"
+                            ? "💚"
+                            : "💸"}{" "}
+                          {row.description}
                         </div>
 
                         <div style={{ fontSize: 9 }}>{formatBRL(row.amount)}</div>
@@ -514,6 +538,7 @@ export default function FinancialCalendar({
           ) : (
             agendaRows.map((row) => {
               const canFinish = row.status === "pending" || row.status === "late";
+              const isPaid = row.status === "paid" || row.status === "received";
 
               return (
                 <div
@@ -536,37 +561,54 @@ export default function FinancialCalendar({
                     </div>
 
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <span
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 7px",
-                          borderRadius: 999,
-                          border:
-                            row.kind === "income"
-                              ? "1px solid rgba(140,255,190,0.18)"
-                              : "1px solid rgba(255,190,160,0.18)",
-                          background:
-                            row.kind === "income"
-                              ? "rgba(70,185,120,0.12)"
-                              : "rgba(255,145,110,0.10)",
-                          fontWeight: 900,
-                        }}
-                      >
-                        {row.kind === "income" ? "Receber" : "Pagar"}
-                      </span>
-
-                      <span
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 7px",
-                          borderRadius: 999,
-                          border: "1px solid rgba(255,255,255,0.10)",
-                          background: "rgba(255,255,255,0.04)",
-                          fontWeight: 900,
-                        }}
-                      >
-                        {statusLabel(row.status)}
-                      </span>
+                      {isPaid ? (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 7px",
+                            borderRadius: 999,
+                            border: "1px solid rgba(120,190,255,0.22)",
+                            background: "rgba(70,150,255,0.14)",
+                            color: "#9fd3ff",
+                            fontWeight: 900,
+                          }}
+                        >
+                          {statusLabel(row.status)}
+                        </span>
+                      ) : row.status === "late" ? (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 7px",
+                            borderRadius: 999,
+                            border: "1px solid rgba(255,170,170,0.16)",
+                            background: "rgba(220,82,82,0.14)",
+                            color: "#ff9f9f",
+                            fontWeight: 900,
+                          }}
+                        >
+                          {statusLabel(row.status)}
+                        </span>
+                      ) : (
+                        <span
+                          style={{
+                            fontSize: 11,
+                            padding: "3px 7px",
+                            borderRadius: 999,
+                            border:
+                              row.kind === "income"
+                                ? "1px solid rgba(140,255,190,0.18)"
+                                : "1px solid rgba(255,190,160,0.18)",
+                            background:
+                              row.kind === "income"
+                                ? "rgba(70,185,120,0.12)"
+                                : "rgba(255,145,110,0.10)",
+                            fontWeight: 900,
+                          }}
+                        >
+                          {row.kind === "income" ? "Receber" : "Pagar"}
+                        </span>
+                      )}
 
                       {row.counterparty_name ? (
                         <span
