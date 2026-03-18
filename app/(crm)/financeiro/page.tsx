@@ -1,9 +1,30 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAdminAccess } from "../_hooks/useAdminAccess";
+import { supabase } from "@/lib/supabaseClient";
+
+type SaleExportRow = {
+  procedure: string | null;
+  closed_at: string | null;
+  value_net: number | null;
+};
+
+type FinancialAccountRow = {
+  id: string;
+  name: string;
+};
+
+type FinancialTransactionExportRow = {
+  description: string;
+  due_date: string | null;
+  amount: number | null;
+  account_id: string | null;
+  kind: "income" | "expense";
+  scope: "clinic" | "personal";
+};
 
 const pageStyle: React.CSSProperties = {
   padding: 16,
@@ -55,15 +76,215 @@ const mutedText: React.CSSProperties = {
   fontSize: 14,
 };
 
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  height: 44,
+  boxSizing: "border-box",
+  background: "rgba(255,255,255,0.06)",
+  color: "white",
+  border: "1px solid rgba(255,255,255,0.12)",
+  padding: "0 12px",
+  borderRadius: 12,
+  outline: "none",
+  minWidth: 0,
+  fontSize: 14,
+};
+
+const labelStyle: React.CSSProperties = {
+  fontSize: 12,
+  opacity: 0.82,
+  fontWeight: 900,
+  marginBottom: 6,
+  display: "block",
+};
+
+const btnStyle: React.CSSProperties = {
+  background: "rgba(255,255,255,0.06)",
+  color: "white",
+  border: "1px solid rgba(255,255,255,0.12)",
+  padding: "10px 12px",
+  borderRadius: 12,
+  cursor: "pointer",
+  fontWeight: 900,
+  textDecoration: "none",
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 8,
+};
+
+const btnPrimaryStyle: React.CSSProperties = {
+  ...btnStyle,
+  border: "1px solid rgba(180,120,255,0.30)",
+  background:
+    "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
+};
+
+function todayInputValue() {
+  const dt = new Date();
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function firstDayOfMonthInputValue() {
+  const dt = new Date();
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  return `${yyyy}-${mm}-01`;
+}
+
+function csvEscape(value: string | number | null | undefined) {
+  const text = String(value ?? "");
+  if (text.includes('"') || text.includes(",") || text.includes("\n")) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
+
+function formatDateCSV(value: string | null | undefined) {
+  if (!value) return "";
+  const raw = String(value).slice(0, 10);
+  const parts = raw.split("-");
+  if (parts.length !== 3) return raw;
+  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+}
+
+function formatMoneyCSV(value: number | null | undefined) {
+  const n = Number(value ?? 0);
+  if (!Number.isFinite(n)) return "";
+  return n.toFixed(2);
+}
+
 export default function FinanceiroIndexPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
+
+  const [exporting, setExporting] = useState(false);
+  const [dateFrom, setDateFrom] = useState(firstDayOfMonthInputValue());
+  const [dateTo, setDateTo] = useState(todayInputValue());
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
       router.replace("/home");
     }
   }, [loadingRole, isAdmin, router]);
+
+  async function handleExportClinicCsv() {
+    if (exporting) return;
+
+    if (!dateFrom || !dateTo) {
+      window.alert("Preencha a data inicial e a data final.");
+      return;
+    }
+
+    if (dateFrom > dateTo) {
+      window.alert("A data inicial não pode ser maior que a data final.");
+      return;
+    }
+
+    setExporting(true);
+
+    try {
+      const [
+        { data: salesData, error: salesError },
+        { data: txData, error: txError },
+        { data: accountData, error: accountError },
+      ] = await Promise.all([
+        supabase
+          .from("sales")
+          .select("procedure,closed_at,value_net")
+          .gte("closed_at", `${dateFrom}T00:00:00`)
+          .lte("closed_at", `${dateTo}T23:59:59`)
+          .order("closed_at", { ascending: true }),
+
+        supabase
+          .from("financial_transactions")
+          .select("description,due_date,amount,account_id,kind,scope")
+          .eq("scope", "clinic")
+          .eq("kind", "expense")
+          .gte("due_date", dateFrom)
+          .lte("due_date", dateTo)
+          .order("due_date", { ascending: true }),
+
+        supabase
+          .from("financial_accounts")
+          .select("id,name")
+          .eq("scope", "clinic"),
+      ]);
+
+      if (salesError) throw salesError;
+      if (txError) throw txError;
+      if (accountError) throw accountError;
+
+      const salesRows = (salesData ?? []) as SaleExportRow[];
+      const txRows = (txData ?? []) as FinancialTransactionExportRow[];
+      const accountRows = (accountData ?? []) as FinancialAccountRow[];
+
+      const accountMap = new Map<string, string>();
+      for (const acc of accountRows) {
+        accountMap.set(acc.id, acc.name);
+      }
+
+      const exportRows = [
+        ...salesRows.map((row) => ({
+          sortDate: row.closed_at ? String(row.closed_at).slice(0, 10) : "",
+          tipo: "Venda",
+          descricao: row.procedure ?? "",
+          data: formatDateCSV(row.closed_at),
+          valor: formatMoneyCSV(row.value_net),
+          conta: "",
+        })),
+        ...txRows.map((row) => ({
+          sortDate: row.due_date ?? "",
+          tipo: "Despesa",
+          descricao: row.description ?? "",
+          data: formatDateCSV(row.due_date),
+          valor: formatMoneyCSV(row.amount),
+          conta: row.account_id ? accountMap.get(row.account_id) ?? "" : "",
+        })),
+      ].sort((a, b) => a.sortDate.localeCompare(b.sortDate));
+
+      if (!exportRows.length) {
+        window.alert("Não encontrei vendas ou despesas da clínica nesse período.");
+        return;
+      }
+
+      const header = ["Tipo", "Descrição", "Data", "Valor", "Conta"];
+
+      const csvLines = [
+        header.join(","),
+        ...exportRows.map((row) =>
+          [
+            csvEscape(row.tipo),
+            csvEscape(row.descricao),
+            csvEscape(row.data),
+            csvEscape(row.valor),
+            csvEscape(row.conta),
+          ].join(",")
+        ),
+      ];
+
+      const csvContent = "\uFEFF" + csvLines.join("\n");
+      const blob = new Blob([csvContent], {
+        type: "text/csv;charset=utf-8;",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const filename = `financeiro-clinica-${dateFrom}-ate-${dateTo}.csv`;
+
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Erro ao exportar CSV da clínica:", error);
+      window.alert("Não foi possível exportar o CSV da clínica.");
+    } finally {
+      setExporting(false);
+    }
+  }
 
   if (loadingRole) {
     return (
@@ -80,6 +301,56 @@ export default function FinanceiroIndexPage() {
       <div style={{ display: "grid", gap: 8 }}>
         <div style={sectionTitle}>Financeiro</div>
         <div style={chipStyle}>Acesso somente admin</div>
+      </div>
+
+      <div
+        style={{
+          ...cardStyle,
+          minHeight: "unset",
+          gap: 14,
+        }}
+      >
+        <div style={{ fontSize: 18, fontWeight: 900 }}>
+          Exportar
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(180px, 220px) minmax(180px, 220px) auto",
+            gap: 12,
+            alignItems: "end",
+          }}
+        >
+          <div>
+            <label style={labelStyle}>Data inicial</label>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+
+          <div>
+            <label style={labelStyle}>Data final</label>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              style={inputStyle}
+            />
+          </div>
+
+          <button
+            type="button"
+            onClick={handleExportClinicCsv}
+            style={btnPrimaryStyle}
+            disabled={exporting}
+          >
+            {exporting ? "Exportando..." : "Exportar CSV Clínica"}
+          </button>
+        </div>
       </div>
 
       <div

@@ -145,16 +145,30 @@ export default function FinancialCalendar({
   onOpen,
   onQuickFinish,
   finishLabel,
+  currentMonth,
+  onMonthChange,
 }: {
   transactions: FinancialCalendarRow[];
   onOpen?: (row: FinancialCalendarRow) => void;
   onQuickFinish?: (row: FinancialCalendarRow) => void;
   finishLabel?: string;
+  currentMonth?: Date;
+  onMonthChange?: (date: Date) => void;
 }) {
-  const [currentMonth, setCurrentMonth] = useState(() => {
+  const [internalMonth, setInternalMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getFullYear(), today.getMonth(), 1);
   });
+
+  const resolvedMonth = currentMonth ?? internalMonth;
+
+  function changeMonth(date: Date) {
+    if (onMonthChange) {
+      onMonthChange(date);
+      return;
+    }
+    setInternalMonth(date);
+  }
 
   const [mode, setMode] = useState<"month" | "agenda">("month");
 
@@ -168,13 +182,13 @@ export default function FinancialCalendar({
   }, [transactions]);
 
   const days = useMemo(() => {
-    const start = startOfMonthGrid(currentMonth);
+    const start = startOfMonthGrid(resolvedMonth);
     return Array.from({ length: 42 }, (_, i) => {
       const day = new Date(start);
       day.setDate(start.getDate() + i);
       return day;
     });
-  }, [currentMonth]);
+  }, [resolvedMonth]);
 
   const byDay = useMemo(() => {
     const map = new Map<string, Array<FinancialCalendarRow & { _date: Date }>>();
@@ -193,8 +207,10 @@ export default function FinancialCalendar({
   }, [parsedTransactions]);
 
   const agendaRows = useMemo(() => {
-    return [...parsedTransactions].sort((a, b) => a._date.getTime() - b._date.getTime());
-  }, [parsedTransactions]);
+    return [...parsedTransactions]
+      .filter((row) => isSameMonth(row._date, resolvedMonth))
+      .sort((a, b) => a._date.getTime() - b._date.getTime());
+  }, [parsedTransactions, resolvedMonth]);
 
   const today = new Date();
 
@@ -220,11 +236,15 @@ export default function FinancialCalendar({
         }}
       >
         <div style={{ fontSize: 18, fontWeight: 900, textTransform: "capitalize" }}>
-          {monthLabel(currentMonth)}
+          {monthLabel(resolvedMonth)}
         </div>
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <button type="button" style={btn} onClick={() => setCurrentMonth(addMonths(currentMonth, -1))}>
+          <button
+            type="button"
+            style={btn}
+            onClick={() => changeMonth(addMonths(resolvedMonth, -1))}
+          >
             Anterior
           </button>
 
@@ -233,13 +253,17 @@ export default function FinancialCalendar({
             style={btn}
             onClick={() => {
               const now = new Date();
-              setCurrentMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+              changeMonth(new Date(now.getFullYear(), now.getMonth(), 1));
             }}
           >
             Hoje
           </button>
 
-          <button type="button" style={btn} onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}>
+          <button
+            type="button"
+            style={btn}
+            onClick={() => changeMonth(addMonths(resolvedMonth, 1))}
+          >
             Próximo
           </button>
 
@@ -405,7 +429,7 @@ export default function FinancialCalendar({
             {days.map((day) => {
               const key = dateKey(day);
               const items = byDay.get(key) ?? [];
-              const current = isSameMonth(day, currentMonth);
+              const current = isSameMonth(day, resolvedMonth);
               const isToday = sameDay(day, today);
 
               return (
@@ -443,7 +467,14 @@ export default function FinancialCalendar({
                     const canFinish = row.status === "pending" || row.status === "late";
 
                     return (
-                      <div key={row.id} style={eventStyle(row)}>
+                      <div
+                        key={row.id}
+                        style={{
+                          ...eventStyle(row),
+                          cursor: onOpen ? "pointer" : "default",
+                        }}
+                        onClick={() => onOpen?.(row)}
+                      >
                         <div
                           style={{
                             fontSize: 10,
@@ -469,7 +500,10 @@ export default function FinancialCalendar({
                             {onOpen ? (
                               <button
                                 type="button"
-                                onClick={() => onOpen(row)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpen(row);
+                                }}
                                 style={{
                                   border: "1px solid rgba(255,255,255,0.14)",
                                   background: "rgba(0,0,0,0.18)",
@@ -488,7 +522,10 @@ export default function FinancialCalendar({
                             {onQuickFinish && canFinish ? (
                               <button
                                 type="button"
-                                onClick={() => onQuickFinish(row)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onQuickFinish(row);
+                                }}
                                 style={{
                                   border: "1px solid rgba(255,255,255,0.14)",
                                   background: "rgba(255,255,255,0.14)",
@@ -553,7 +590,9 @@ export default function FinancialCalendar({
                     gap: 10,
                     alignItems: "center",
                     flexWrap: "wrap",
+                    cursor: onOpen ? "pointer" : "default",
                   }}
+                  onClick={() => onOpen?.(row)}
                 >
                   <div style={{ display: "grid", gap: 5, minWidth: 240 }}>
                     <div style={{ fontWeight: 900, fontSize: 13 }}>
@@ -629,13 +668,27 @@ export default function FinancialCalendar({
                     </div>
 
                     {onOpen ? (
-                      <button type="button" style={btn} onClick={() => onOpen(row)}>
+                      <button
+                        type="button"
+                        style={btn}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpen(row);
+                        }}
+                      >
                         Abrir
                       </button>
                     ) : null}
 
                     {onQuickFinish && canFinish ? (
-                      <button type="button" style={btnPrimary} onClick={() => onQuickFinish(row)}>
+                      <button
+                        type="button"
+                        style={btnPrimary}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onQuickFinish(row);
+                        }}
+                      >
                         {finishLabel || "Finalizar"}
                       </button>
                     ) : null}

@@ -129,10 +129,20 @@ function getInstallmentsTotal(row: SaleFinanceRow) {
   );
 }
 
-function calcularLiquidoMesAtual(sales: SaleFinanceRow[]) {
-  const hoje = new Date();
-  const mesAtual = hoje.getMonth();
-  const anoAtual = hoje.getFullYear();
+function sameMonthFromString(dateStr: string | null | undefined, monthBase: Date) {
+  if (!dateStr) return false;
+  const d = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return false;
+
+  return (
+    d.getFullYear() === monthBase.getFullYear() &&
+    d.getMonth() === monthBase.getMonth()
+  );
+}
+
+function calcularReceitasDeVendasMes(sales: SaleFinanceRow[], baseMonth: Date) {
+  const periodYear = baseMonth.getFullYear();
+  const periodMonth = baseMonth.getMonth();
 
   let total = 0;
 
@@ -151,9 +161,8 @@ function calcularLiquidoMesAtual(sales: SaleFinanceRow[]) {
 
     if (!isRecurring) {
       if (
-        saleDate <= hoje &&
-        saleDate.getFullYear() === anoAtual &&
-        saleDate.getMonth() === mesAtual
+        saleDate.getFullYear() === periodYear &&
+        saleDate.getMonth() === periodMonth
       ) {
         const effectiveNet =
           netTotal > 0
@@ -162,7 +171,6 @@ function calcularLiquidoMesAtual(sales: SaleFinanceRow[]) {
 
         total += effectiveNet;
       }
-
       continue;
     }
 
@@ -181,11 +189,9 @@ function calcularLiquidoMesAtual(sales: SaleFinanceRow[]) {
     for (let i = 0; i < totalInstallments; i += 1) {
       const installmentDate = addMonths(saleDate, i);
 
-      if (installmentDate > hoje) break;
-
       if (
-        installmentDate.getFullYear() === anoAtual &&
-        installmentDate.getMonth() === mesAtual
+        installmentDate.getFullYear() === periodYear &&
+        installmentDate.getMonth() === periodMonth
       ) {
         const effectiveNet =
           monthlyNet > 0
@@ -200,53 +206,115 @@ function calcularLiquidoMesAtual(sales: SaleFinanceRow[]) {
   return Number(total.toFixed(2));
 }
 
-function isSameMonth(dateStr: string | null | undefined, baseDate: Date) {
-  if (!dateStr) return false;
-  const d = new Date(`${dateStr}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return false;
-
-  return (
-    d.getFullYear() === baseDate.getFullYear() &&
-    d.getMonth() === baseDate.getMonth()
-  );
-}
-
-function calcularDespesasMesAtual(rows: FinancialTransactionRow[]) {
-  const hoje = new Date();
-
-  const total = rows.reduce((acc, row) => {
-    if (row.scope !== "clinic") return acc;
-    if (row.kind !== "expense") return acc;
-
-    const entrouNoMes =
-      isSameMonth(row.paid_at, hoje) || isSameMonth(row.due_date, hoje);
-
-    if (!entrouNoMes) return acc;
-
-    return acc + Number(row.amount ?? 0);
-  }, 0);
-
-  return Number(total.toFixed(2));
-}
-
 export default function FinanceiroClinicaPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
 
-  const [totalLiquidoMes, setTotalLiquidoMes] = useState(0);
-  const [totalDespesasMes, setTotalDespesasMes] = useState(0);
-  const [calendarRows, setCalendarRows] = useState<FinancialCalendarRow[]>([]);
+  const [salesRows, setSalesRows] = useState<SaleFinanceRow[]>([]);
+  const [txRows, setTxRows] = useState<FinancialTransactionRow[]>([]);
+  const [scheduleRows, setScheduleRows] = useState<FinancialScheduleRow[]>([]);
   const [loadingTotal, setLoadingTotal] = useState(true);
 
-  const monthLabel = useMemo(() => {
+  const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
-    return now.toLocaleDateString("pt-BR", {
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
+  const monthLabel = useMemo(() => {
+    return selectedMonth.toLocaleDateString("pt-BR", {
       month: "long",
       year: "numeric",
     });
-  }, []);
+  }, [selectedMonth]);
 
-  const resultadoMes = totalLiquidoMes - totalDespesasMes;
+  const txCalendarRows = useMemo<FinancialCalendarRow[]>(() => {
+    return txRows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      description: row.description,
+      amount: Number(row.amount ?? 0),
+      due_date: row.due_date,
+      paid_at: row.paid_at,
+      counterparty_name: row.counterparty_name,
+      notes: row.notes,
+    }));
+  }, [txRows]);
+
+  const scheduleCalendarRows = useMemo<FinancialCalendarRow[]>(() => {
+    const existingScheduleLaunchKeys = new Set(
+      txRows
+        .filter((row) => row.source_type === "schedule" && row.source_id)
+        .map((row) => `${row.source_id}::${row.due_date ?? ""}`)
+    );
+
+    return scheduleRows
+      .filter((row) => {
+        const key = `${row.id}::${row.next_due_date ?? ""}`;
+        return !existingScheduleLaunchKeys.has(key);
+      })
+      .map((row) => ({
+        id: `schedule-${row.id}`,
+        kind: row.kind,
+        status: "pending" as const,
+        description: `${row.description} (Agenda)`,
+        amount: Number(row.default_amount ?? 0),
+        due_date: row.next_due_date,
+        paid_at: null,
+        counterparty_name: null,
+        notes: "Compromisso previsto na agenda financeira",
+      }));
+  }, [txRows, scheduleRows]);
+
+  const calendarRows = useMemo<FinancialCalendarRow[]>(() => {
+    return [...txCalendarRows, ...scheduleCalendarRows];
+  }, [txCalendarRows, scheduleCalendarRows]);
+
+  const receitasManuaisMes = useMemo(() => {
+    return txRows
+      .filter((row) => row.kind === "income")
+      .filter((row) => sameMonthFromString(row.due_date, selectedMonth))
+      .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  }, [txRows, selectedMonth]);
+
+  const despesasLancadasMes = useMemo(() => {
+    return txRows
+      .filter((row) => row.kind === "expense")
+      .filter((row) => sameMonthFromString(row.due_date, selectedMonth))
+      .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  }, [txRows, selectedMonth]);
+
+  const agendaReceitasMes = useMemo(() => {
+    return scheduleCalendarRows
+      .filter((row) => row.kind === "income")
+      .filter((row) => sameMonthFromString(row.due_date, selectedMonth))
+      .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  }, [scheduleCalendarRows, selectedMonth]);
+
+  const agendaDespesasMes = useMemo(() => {
+    return scheduleCalendarRows
+      .filter((row) => row.kind === "expense")
+      .filter((row) => sameMonthFromString(row.due_date, selectedMonth))
+      .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+  }, [scheduleCalendarRows, selectedMonth]);
+
+  const receitasVendasMes = useMemo(() => {
+    return calcularReceitasDeVendasMes(salesRows, selectedMonth);
+  }, [salesRows, selectedMonth]);
+
+  const totalReceitasMes = useMemo(() => {
+    return Number(
+      (receitasVendasMes + receitasManuaisMes + agendaReceitasMes).toFixed(2)
+    );
+  }, [receitasVendasMes, receitasManuaisMes, agendaReceitasMes]);
+
+  const totalDespesasMes = useMemo(() => {
+    return Number(
+      (despesasLancadasMes + agendaDespesasMes).toFixed(2)
+    );
+  }, [despesasLancadasMes, agendaDespesasMes]);
+
+  const resultadoMes = totalReceitasMes - totalDespesasMes;
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -306,63 +374,17 @@ export default function FinanceiroClinicaPage() {
           console.error("Erro ao buscar agenda para o financeiro:", scheduleError);
         }
 
-        const totalLiquido = calcularLiquidoMesAtual(
-          (salesData as SaleFinanceRow[]) ?? []
-        );
-
-        const txRows = (txData as FinancialTransactionRow[]) ?? [];
-        const scheduleRows = (scheduleData as FinancialScheduleRow[]) ?? [];
-
-        const totalDespesas = calcularDespesasMesAtual(txRows);
-
-        const txCalendarRows: FinancialCalendarRow[] = txRows.map((row) => ({
-          id: row.id,
-          kind: row.kind,
-          status: row.status,
-          description: row.description,
-          amount: Number(row.amount ?? 0),
-          due_date: row.due_date,
-          paid_at: row.paid_at,
-          counterparty_name: row.counterparty_name,
-          notes: row.notes,
-        }));
-
-        const existingScheduleLaunchKeys = new Set(
-  txRows
-    .filter((row: any) => row.source_type === "schedule" && row.source_id)
-    .map((row: any) => `${row.source_id}::${row.due_date ?? ""}`)
-);
-
-    const scheduleCalendarRows: FinancialCalendarRow[] = scheduleRows
-      .filter((row) => {
-        const key = `${row.id}::${row.next_due_date ?? ""}`;
-        return !existingScheduleLaunchKeys.has(key);
-      })
-      .map((row) => ({
-        id: `schedule-${row.id}`,
-        kind: row.kind,
-        status: "pending",
-        description: `${row.description} (Agenda)`,
-        amount: Number(row.default_amount ?? 0),
-        due_date: row.next_due_date,
-        paid_at: null,
-        counterparty_name: null,
-        notes: "Compromisso previsto na agenda financeira",
-      }));
-
-        const nextCalendarRows = [...txCalendarRows, ...scheduleCalendarRows];
-
         if (active) {
-          setTotalLiquidoMes(totalLiquido);
-          setTotalDespesasMes(totalDespesas);
-          setCalendarRows(nextCalendarRows);
+          setSalesRows((salesData as SaleFinanceRow[]) ?? []);
+          setTxRows((txData as FinancialTransactionRow[]) ?? []);
+          setScheduleRows((scheduleData as FinancialScheduleRow[]) ?? []);
         }
       } catch (err) {
         console.error("Erro inesperado ao carregar resumo financeiro:", err);
         if (active) {
-          setTotalLiquidoMes(0);
-          setTotalDespesasMes(0);
-          setCalendarRows([]);
+          setSalesRows([]);
+          setTxRows([]);
+          setScheduleRows([]);
         }
       } finally {
         if (active) setLoadingTotal(false);
@@ -427,10 +449,10 @@ export default function FinanceiroClinicaPage() {
         <div style={summaryCardStyle}>
           <div style={{ fontSize: 11, opacity: 0.72 }}>Receitas</div>
           <div style={{ fontSize: 24, fontWeight: 950 }}>
-            {loadingTotal ? "Carregando..." : formatBRL(totalLiquidoMes)}
+            {loadingTotal ? "Carregando..." : formatBRL(totalReceitasMes)}
           </div>
           <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Total líquido de {monthLabel}
+            Tudo de {monthLabel}
           </div>
         </div>
 
@@ -440,7 +462,7 @@ export default function FinanceiroClinicaPage() {
             {loadingTotal ? "Carregando..." : formatBRL(totalDespesasMes)}
           </div>
           <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Despesas do mês atual
+            Tudo de {monthLabel}
           </div>
         </div>
 
@@ -455,7 +477,20 @@ export default function FinanceiroClinicaPage() {
         </div>
       </div>
 
-      <FinancialCalendar transactions={calendarRows} />
+      <FinancialCalendar
+        transactions={calendarRows}
+        currentMonth={selectedMonth}
+        onMonthChange={setSelectedMonth}
+        onOpen={(row) => {
+          if (row.id.startsWith("schedule-")) {
+            const scheduleId = row.id.replace("schedule-", "");
+            router.push(`/financeiro/clinica/agenda?edit=${scheduleId}`);
+            return;
+          }
+
+          router.push(`/financeiro/clinica/lancamentos?edit=${row.id}`);
+        }}
+      />
     </div>
   );
 }
