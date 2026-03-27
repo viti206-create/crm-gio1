@@ -155,6 +155,7 @@ export default function AgendaFinanceira() {
   const [repeatMonths, setRepeatMonths] = useState("12");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   async function fetchData() {
     setLoading(true);
@@ -180,7 +181,30 @@ export default function AgendaFinanceira() {
     fetchData();
   }, []);
 
-  async function createSchedule() {
+  function resetForm() {
+    setEditingId(null);
+    setDescription("");
+    setDate("");
+    setDefaultAmount("");
+    setRepeatMonths("12");
+    setKind("expense");
+  }
+
+  function handleEdit(row: Schedule) {
+    setEditingId(row.id);
+    setDescription(row.description ?? "");
+    setKind(row.kind ?? "expense");
+    setDate(row.next_due_date ?? "");
+    setDefaultAmount(
+      row.default_amount != null ? String(row.default_amount) : ""
+    );
+    setRepeatMonths(
+      row.repeat_months != null ? String(row.repeat_months) : "12"
+    );
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function saveSchedule() {
     if (!description.trim() || !date) return;
 
     setSaving(true);
@@ -188,7 +212,7 @@ export default function AgendaFinanceira() {
     const parsedAmount = defaultAmount.trim() ? Number(defaultAmount) : null;
     const parsedRepeatMonths = Number(repeatMonths || 0);
 
-    const { error } = await supabase.from("financial_schedules").insert({
+    const payload = {
       scope: "clinic",
       kind,
       description: description.trim(),
@@ -204,21 +228,33 @@ export default function AgendaFinanceira() {
           ? parsedRepeatMonths
           : null,
       is_active: true,
-    });
+    };
+
+    let error = null;
+
+    if (editingId) {
+      const result = await supabase
+        .from("financial_schedules")
+        .update(payload)
+        .eq("id", editingId);
+
+      error = result.error;
+    } else {
+      const result = await supabase
+        .from("financial_schedules")
+        .insert(payload);
+
+      error = result.error;
+    }
 
     setSaving(false);
 
     if (error) {
-      console.error("Erro ao criar compromisso:", error);
+      console.error("Erro ao salvar compromisso:", error);
       return;
     }
 
-    setDescription("");
-    setDate("");
-    setDefaultAmount("");
-    setRepeatMonths("12");
-    setKind("expense");
-
+    resetForm();
     fetchData();
   }
 
@@ -277,6 +313,10 @@ export default function AgendaFinanceira() {
       return;
     }
 
+    if (editingId === schedule.id) {
+      resetForm();
+    }
+
     fetchData();
   }
 
@@ -292,6 +332,10 @@ export default function AgendaFinanceira() {
     if (error) {
       console.error("Erro ao excluir compromisso:", error);
       return;
+    }
+
+    if (editingId === id) {
+      resetForm();
     }
 
     fetchData();
@@ -334,7 +378,7 @@ export default function AgendaFinanceira() {
             marginBottom: 14,
           }}
         >
-          Novo compromisso mensal
+          {editingId ? "Editar compromisso mensal" : "Novo compromisso mensal"}
         </div>
 
         <div
@@ -406,15 +450,28 @@ export default function AgendaFinanceira() {
 
           <button
             type="button"
-            onClick={createSchedule}
+            onClick={saveSchedule}
             style={btnPrimaryStyle}
             disabled={saving}
           >
-            {saving ? "Adicionando..." : "Adicionar"}
+            {saving
+              ? editingId
+                ? "Salvando..."
+                : "Adicionando..."
+              : editingId
+              ? "Salvar alterações"
+              : "Adicionar"}
           </button>
         </div>
 
-        </div>
+        {editingId ? (
+          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={resetForm} style={btnStyle}>
+              Cancelar edição
+            </button>
+          </div>
+        ) : null}
+      </div>
 
       <div style={cardStyle}>
         <div
@@ -525,6 +582,14 @@ export default function AgendaFinanceira() {
                       }}
                     >
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          onClick={() => handleEdit(r)}
+                          style={btnStyle}
+                        >
+                          Editar
+                        </button>
+
                         <button
                           type="button"
                           onClick={() => generateTransaction(r)}

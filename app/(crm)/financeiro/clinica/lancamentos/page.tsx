@@ -52,6 +52,14 @@ type FinancialTransaction = {
   updated_at: string;
 };
 
+type SaleRow = {
+  id: string;
+  value: number | null;
+  value_gross: number | null;
+  value_net: number | null;
+  fee_percent: number | null;
+};
+
 type CsvImportRow = {
   kind: "income" | "expense";
   status: "pending" | "paid" | "received" | "late";
@@ -163,7 +171,6 @@ const inputStyle: React.CSSProperties = {
   padding: "0 12px",
   borderRadius: 12,
   outline: "none",
-  fontSize: 13,
   minWidth: 0,
 };
 
@@ -201,6 +208,22 @@ const btnDanger: React.CSSProperties = {
   border: "1px solid rgba(255,120,120,0.30)",
   background:
     "linear-gradient(180deg, rgba(255,120,120,0.16) 0%, rgba(255,120,120,0.07) 100%)",
+};
+
+const btnSmall: React.CSSProperties = {
+  background: "rgba(255,255,255,0.06)",
+  color: "white",
+  border: "1px solid rgba(255,255,255,0.12)",
+  height: 44,
+  padding: "0 12px",
+  borderRadius: 12,
+  cursor: "pointer",
+  fontWeight: 900,
+  fontSize: 12,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  whiteSpace: "nowrap",
 };
 
 function csvEscape(value: string | number | null | undefined) {
@@ -304,7 +327,7 @@ function mapCsvStatus(value: string, kind: "income" | "expense") {
   if (["paid", "pago"].includes(v)) return "paid";
   if (["received", "recebido"].includes(v)) return "received";
 
-  return kind === "income" ? "pending" : "pending";
+  return kind === "income" ? "received" : "paid";
 }
 
 function parseCsvAmount(value: string) {
@@ -335,9 +358,20 @@ function parseCsvDate(value: string) {
   return null;
 }
 
-const fieldWrapStyle: React.CSSProperties = {
-  minWidth: 0,
-};
+function calculateSalesNetTotal(sales: SaleRow[]) {
+  return Number(
+    sales.reduce((sum, sale) => {
+      const gross = Number(sale.value_gross ?? sale.value ?? 0);
+      const net = Number(sale.value_net ?? 0);
+      const feePercent = Number(sale.fee_percent ?? 0);
+
+      const effectiveNet =
+        net > 0 ? net : Number((gross * (1 - feePercent / 100)).toFixed(2));
+
+      return sum + effectiveNet;
+    }, 0).toFixed(2)
+  );
+}
 
 export default function FinanceiroClinicaLancamentosPage() {
   const router = useRouter();
@@ -351,6 +385,7 @@ export default function FinanceiroClinicaLancamentosPage() {
   const [saving, setSaving] = useState(false);
   const [importingCsv, setImportingCsv] = useState(false);
   const [rows, setRows] = useState<FinancialTransaction[]>([]);
+  const [sales, setSales] = useState<SaleRow[]>([]);
   const [accounts, setAccounts] = useState<FinancialAccount[]>([]);
   const [categories, setCategories] = useState<FinancialCategory[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
@@ -358,16 +393,17 @@ export default function FinanceiroClinicaLancamentosPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const [kind, setKind] = useState<"income" | "expense">("income");
-  const [status, setStatus] = useState<"pending" | "paid" | "received" | "late">("pending");
+  const [kind, setKind] = useState<"income" | "expense">("expense");
+  const [status, setStatus] = useState<"pending" | "paid" | "received" | "late">("paid");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState(todayInputValue());
-  const [paidAt, setPaidAt] = useState("");
+  const [paidAt, setPaidAt] = useState(todayInputValue());
   const [accountInput, setAccountInput] = useState("");
   const [categoryInput, setCategoryInput] = useState("");
   const [counterpartyName, setCounterpartyName] = useState("");
   const [notes, setNotes] = useState("");
+  const [showNotesField, setShowNotesField] = useState(false);
   const [isInstallment, setIsInstallment] = useState(false);
   const [installments, setInstallments] = useState(2);
 
@@ -390,6 +426,7 @@ export default function FinanceiroClinicaLancamentosPage() {
       { data: txData, error: txError },
       { data: accData, error: accError },
       { data: catData, error: catError },
+      { data: salesData, error: salesError },
     ] = await Promise.all([
       supabase
         .from("financial_transactions")
@@ -412,15 +449,21 @@ export default function FinanceiroClinicaLancamentosPage() {
         .eq("is_active", true)
         .order("sort_order", { ascending: true })
         .order("name", { ascending: true }),
+
+      supabase
+        .from("sales")
+        .select("id,value,value_gross,value_net,fee_percent"),
     ]);
 
     if (txError) console.error(txError);
     if (accError) console.error(accError);
     if (catError) console.error(catError);
+    if (salesError) console.error(salesError);
 
     setRows((txData as FinancialTransaction[]) ?? []);
     setAccounts((accData as FinancialAccount[]) ?? []);
     setCategories((catData as FinancialCategory[]) ?? []);
+    setSales((salesData as SaleRow[]) ?? []);
     setLoading(false);
   }
 
@@ -432,16 +475,17 @@ export default function FinanceiroClinicaLancamentosPage() {
 
   function resetForm() {
     setEditingId(null);
-    setKind("income");
-    setStatus("pending");
+    setKind("expense");
+    setStatus("paid");
     setDescription("");
     setAmount("");
     setDueDate(todayInputValue());
-    setPaidAt("");
+    setPaidAt(todayInputValue());
     setAccountInput("");
     setCategoryInput("");
     setCounterpartyName("");
     setNotes("");
+    setShowNotesField(false);
     setIsInstallment(false);
     setInstallments(2);
     setErrorMsg("");
@@ -536,18 +580,13 @@ export default function FinanceiroClinicaLancamentosPage() {
 
     const parsedAmount = Number(amount || 0);
 
-    if (!description.trim()) {
-      setErrorMsg("Informe a descrição.");
-      return;
-    }
-
-    if (!parsedAmount || parsedAmount <= 0) {
-      setErrorMsg("Informe um valor válido.");
-      return;
-    }
-
     if (isInstallment && installments < 2) {
       setErrorMsg("Informe pelo menos 2 parcelas.");
+      return;
+    }
+
+    if (isInstallment && parsedAmount <= 0) {
+      setErrorMsg("Para parcelar, informe um valor maior que zero.");
       return;
     }
 
@@ -557,12 +596,14 @@ export default function FinanceiroClinicaLancamentosPage() {
       const category_id = await resolveCategoryIdByName(categoryInput, kind);
       const account_id = await resolveAccountIdByName(accountInput);
 
+      const safeDescription = description.trim() || "Sem descrição";
+
       if (!isInstallment) {
         const payload = {
           scope,
           kind,
           status,
-          description: description.trim(),
+          description: safeDescription,
           amount: parsedAmount,
           gross_amount: parsedAmount,
           net_amount: parsedAmount,
@@ -618,7 +659,7 @@ export default function FinanceiroClinicaLancamentosPage() {
           scope,
           kind,
           status: i === 0 ? status : "pending",
-          description: `${description.trim()} ${i + 1}/${installments}`,
+          description: `${safeDescription} ${i + 1}/${installments}`,
           amount: eachValue,
           gross_amount: eachValue,
           net_amount: eachValue,
@@ -672,6 +713,7 @@ export default function FinanceiroClinicaLancamentosPage() {
 
     setCounterpartyName(row.counterparty_name ?? "");
     setNotes(row.notes ?? "");
+    setShowNotesField(!!row.notes);
     setIsInstallment(false);
     setInstallments(
       row.installment_total && row.installment_total > 1
@@ -773,15 +815,8 @@ export default function FinanceiroClinicaLancamentosPage() {
         throw new Error(`Linha ${i + 1}: tipo inválido "${rawKind}".`);
       }
 
-      const description = String(cols[idxDescricao] ?? "").trim();
-      if (!description) {
-        throw new Error(`Linha ${i + 1}: descrição obrigatória.`);
-      }
-
+      const description = String(cols[idxDescricao] ?? "").trim() || "Sem descrição";
       const amount = parseCsvAmount(cols[idxValor] ?? "");
-      if (!amount || amount <= 0) {
-        throw new Error(`Linha ${i + 1}: valor inválido.`);
-      }
 
       const due_date = idxVencimento >= 0 ? parseCsvDate(cols[idxVencimento]) : null;
       const paid_at = idxPagoEm >= 0 ? parseCsvDate(cols[idxPagoEm]) : null;
@@ -799,8 +834,7 @@ export default function FinanceiroClinicaLancamentosPage() {
         paid_at,
         category_name: idxCategoria >= 0 ? String(cols[idxCategoria] ?? "").trim() : "",
         account_name: idxConta >= 0 ? String(cols[idxConta] ?? "").trim() : "",
-        counterparty_name:
-          idxPessoa >= 0 ? String(cols[idxPessoa] ?? "").trim() || null : null,
+        counterparty_name: idxPessoa >= 0 ? String(cols[idxPessoa] ?? "").trim() || null : null,
         notes: idxObs >= 0 ? String(cols[idxObs] ?? "").trim() || null : null,
       });
     }
@@ -823,8 +857,7 @@ export default function FinanceiroClinicaLancamentosPage() {
 
       for (const row of parsedRows) {
         const category_id = await resolveCategoryIdByName(
-          row.category_name ||
-            (row.kind === "income" ? "Importação Receita" : "Importação Despesa"),
+          row.category_name || (row.kind === "income" ? "Importação Receita" : "Importação Despesa"),
           row.kind
         );
 
@@ -978,26 +1011,28 @@ export default function FinanceiroClinicaLancamentosPage() {
   ]);
 
   const summary = useMemo(() => {
-    let income = 0;
+    let incomeTransactions = 0;
     let expense = 0;
     let pending = 0;
     let late = 0;
 
     for (const row of filteredRows) {
-      if (row.kind === "income") income += Number(row.amount ?? 0);
+      if (row.kind === "income") incomeTransactions += Number(row.amount ?? 0);
       if (row.kind === "expense") expense += Number(row.amount ?? 0);
       if (row.status === "pending") pending += 1;
       if (row.status === "late") late += 1;
     }
 
+    const salesIncome = calculateSalesNetTotal(sales);
+
     return {
-      income,
-      expense,
-      balance: income - expense,
+      income: Number((incomeTransactions + salesIncome).toFixed(2)),
+      expense: Number(expense.toFixed(2)),
+      balance: Number((incomeTransactions + salesIncome - expense).toFixed(2)),
       pending,
       late,
     };
-  }, [filteredRows]);
+  }, [filteredRows, sales]);
 
   const calendarRows: FinancialCalendarRow[] = useMemo(() => {
     return filteredRows.map((row) => ({
@@ -1014,11 +1049,7 @@ export default function FinanceiroClinicaLancamentosPage() {
   }, [filteredRows]);
 
   if (loadingRole) {
-    return (
-      <div style={{ padding: 20, color: "white" }}>
-        Carregando permissões...
-      </div>
-    );
+    return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
   }
 
   if (!isAdmin) return null;
@@ -1118,9 +1149,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             padding: 14,
           }}
         >
-          <div style={{ fontSize: 12, opacity: 0.72 }}>
-            Pendentes / Atrasados
-          </div>
+          <div style={{ fontSize: 12, opacity: 0.72 }}>Pendentes / Atrasados</div>
           <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
             {summary.pending} / {summary.late}
           </div>
@@ -1186,13 +1215,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             lineHeight: 1.5,
           }}
         >
-          CSV aceito com cabeçalhos como:{" "}
-          <strong>
-            tipo, status, descricao, valor, vencimento, pago_em, categoria,
-            conta, pessoa, observacoes
-          </strong>
-          .
-        </div>
+         </div>
 
         <div
           style={{
@@ -1201,7 +1224,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             gap: 12,
           }}
         >
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Tipo</label>
             <SelectDark
               value={kind}
@@ -1214,13 +1237,11 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Status</label>
             <SelectDark
               value={status}
-              onChange={(v) =>
-                setStatus(v as "pending" | "paid" | "received" | "late")
-              }
+              onChange={(v) => setStatus(v as "pending" | "paid" | "received" | "late")}
               searchable={false}
               options={[
                 { value: "pending", label: "Pendente" },
@@ -1231,7 +1252,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Valor</label>
 
             <div
@@ -1239,8 +1260,7 @@ export default function FinanceiroClinicaLancamentosPage() {
                 display: "flex",
                 gap: 10,
                 alignItems: "center",
-                flexWrap: "nowrap",
-                minWidth: 0,
+                flexWrap: "wrap",
               }}
             >
               <input
@@ -1252,7 +1272,7 @@ export default function FinanceiroClinicaLancamentosPage() {
                 style={{
                   ...inputStyle,
                   flex: 1,
-                  minWidth: 0,
+                  minWidth: 180,
                 }}
                 placeholder="0,00"
               />
@@ -1262,7 +1282,7 @@ export default function FinanceiroClinicaLancamentosPage() {
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
-                  padding: "0 10px",
+                  padding: "8px 10px",
                   borderRadius: 10,
                   border: "1px solid rgba(255,255,255,0.10)",
                   background: "rgba(255,255,255,0.03)",
@@ -1271,7 +1291,6 @@ export default function FinanceiroClinicaLancamentosPage() {
                   whiteSpace: "nowrap",
                   cursor: "pointer",
                   height: 42,
-                  flexShrink: 0,
                 }}
               >
                 <input
@@ -1282,52 +1301,50 @@ export default function FinanceiroClinicaLancamentosPage() {
                 />
                 Parcelar
               </label>
-            </div>
 
-            {isInstallment ? (
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  marginTop: 8,
-                  padding: "0 8px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(255,255,255,0.03)",
-                  height: 38,
-                  maxWidth: "100%",
-                }}
-              >
-                <span
+              {isInstallment ? (
+                <div
                   style={{
-                    fontSize: 12,
-                    opacity: 0.78,
-                    fontWeight: 800,
-                    whiteSpace: "nowrap",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "0 8px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(255,255,255,0.03)",
+                    height: 42,
                   }}
                 >
-                  Parcelas
-                </span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      opacity: 0.78,
+                      fontWeight: 800,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Parcelas
+                  </span>
 
-                <input
-                  type="number"
-                  min="2"
-                  max="24"
-                  value={installments}
-                  onChange={(e) => setInstallments(Number(e.target.value))}
-                  style={{
-                    width: 64,
-                    background: "transparent",
-                    color: "white",
-                    border: "none",
-                    outline: "none",
-                    fontWeight: 900,
-                    fontSize: 13,
-                  }}
-                />
-              </div>
-            ) : null}
+                  <input
+                    type="number"
+                    min="2"
+                    max="24"
+                    value={installments}
+                    onChange={(e) => setInstallments(Number(e.target.value))}
+                    style={{
+                      width: 64,
+                      background: "transparent",
+                      color: "white",
+                      border: "none",
+                      outline: "none",
+                      fontWeight: 900,
+                      fontSize: 14,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
 
             {isInstallment && Number(amount) > 0 && installments > 1 ? (
               <div
@@ -1344,7 +1361,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             ) : null}
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Vencimento</label>
             <input
               type="date"
@@ -1354,7 +1371,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div style={{ ...fieldWrapStyle, gridColumn: "span 2" }}>
+          <div style={{ gridColumn: "span 2" }}>
             <label style={labelStyle}>Descrição</label>
             <input
               value={description}
@@ -1364,7 +1381,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Categoria</label>
             <input
               list="financial-category-suggestions-clinic"
@@ -1380,7 +1397,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             </datalist>
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Conta</label>
             <input
               list="financial-account-suggestions-clinic"
@@ -1396,7 +1413,7 @@ export default function FinanceiroClinicaLancamentosPage() {
             </datalist>
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Pago / Recebido em</label>
             <input
               type="date"
@@ -1406,25 +1423,47 @@ export default function FinanceiroClinicaLancamentosPage() {
             />
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Cliente / Favorecido</label>
-            <input
-              value={counterpartyName}
-              onChange={(e) => setCounterpartyName(e.target.value)}
-              style={inputStyle}
-              placeholder="Opcional"
-            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                value={counterpartyName}
+                onChange={(e) => setCounterpartyName(e.target.value)}
+                style={inputStyle}
+                placeholder="Opcional"
+              />
+              <button
+                type="button"
+                onClick={() => setShowNotesField((v) => !v)}
+                style={{
+                  ...btnSmall,
+                  border:
+                    showNotesField || notes.trim()
+                      ? "1px solid rgba(180,120,255,0.30)"
+                      : btnSmall.border,
+                  background:
+                    showNotesField || notes.trim()
+                      ? "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)"
+                      : btnSmall.background,
+                }}
+                title="Observações"
+              >
+                Obs.
+              </button>
+            </div>
           </div>
 
-          <div style={{ ...fieldWrapStyle, gridColumn: "span 3" }}>
-            <label style={labelStyle}>Observações</label>
-            <input
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              style={inputStyle}
-              placeholder="Opcional"
-            />
-          </div>
+          {showNotesField ? (
+            <div style={{ gridColumn: "span 3" }}>
+              <label style={labelStyle}>Observações</label>
+              <input
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                style={inputStyle}
+                placeholder="Opcional"
+              />
+            </div>
+          ) : null}
         </div>
 
         {errorMsg ? (
@@ -1440,9 +1479,7 @@ export default function FinanceiroClinicaLancamentosPage() {
           </div>
         ) : null}
 
-        <div
-          style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}
-        >
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
           <button type="submit" disabled={saving} style={btnPrimary}>
             {saving
               ? "Salvando..."
@@ -1497,78 +1534,66 @@ export default function FinanceiroClinicaLancamentosPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns:
-              "minmax(220px, 1.4fr) repeat(4, minmax(160px, 1fr)) auto",
+            gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1fr auto",
             gap: 10,
-            alignItems: "stretch",
           }}
         >
-          <div style={fieldWrapStyle}>
-            <input
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              style={inputStyle}
-              placeholder="Buscar descrição, observação, pessoa..."
-            />
-          </div>
+          <input
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            style={inputStyle}
+            placeholder="Buscar descrição, observação, pessoa..."
+          />
 
-          <div style={fieldWrapStyle}>
-            <SelectDark
-              value={filterKind}
-              onChange={setFilterKind}
-              searchable={false}
-              options={[
-                { value: "all", label: "Todos tipos" },
-                { value: "income", label: "Receita" },
-                { value: "expense", label: "Despesa" },
-              ]}
-            />
-          </div>
+          <SelectDark
+            value={filterKind}
+            onChange={setFilterKind}
+            searchable={false}
+            options={[
+              { value: "all", label: "Todos tipos" },
+              { value: "income", label: "Receita" },
+              { value: "expense", label: "Despesa" },
+            ]}
+          />
 
-          <div style={fieldWrapStyle}>
-            <SelectDark
-              value={filterStatus}
-              onChange={setFilterStatus}
-              searchable={false}
-              options={[
-                { value: "all", label: "Todos status" },
-                { value: "pending", label: "Pendente" },
-                { value: "paid", label: "Pago" },
-                { value: "received", label: "Recebido" },
-                { value: "late", label: "Atrasado" },
-              ]}
-            />
-          </div>
+          <SelectDark
+            value={filterStatus}
+            onChange={setFilterStatus}
+            searchable={false}
+            options={[
+              { value: "all", label: "Todos status" },
+              { value: "pending", label: "Pendente" },
+              { value: "paid", label: "Pago" },
+              { value: "received", label: "Recebido" },
+              { value: "late", label: "Atrasado" },
+            ]}
+          />
 
-          <div style={fieldWrapStyle}>
-            <SelectDark
-              value={filterCategory}
-              onChange={setFilterCategory}
-              searchable
-              options={[
-                { value: "all", label: "Todas categorias" },
-                ...categories.map((c) => ({
-                  value: c.id,
-                  label: c.name,
-                })),
-              ]}
-            />
-          </div>
+          <SelectDark
+            value={filterCategory}
+            onChange={setFilterCategory}
+            searchable
+            options={[
+              { value: "all", label: "Todas categorias" },
+              ...categories.map((c) => ({
+                value: c.id,
+                label: c.name,
+              })),
+            ]}
+          />
 
-          <div style={fieldWrapStyle}>
-            <SelectDark
-              value={filterAccount}
-              onChange={setFilterAccount}
-              searchable
-              options={[
-                { value: "all", label: "Todas contas" },
-                ...accounts.map((a) => ({
-                  value: a.id,
-                  label: a.name,
-                })),
-              ]}
-            />
-          </div>
+          <SelectDark
+            value={filterAccount}
+            onChange={setFilterAccount}
+            searchable
+            options={[
+              { value: "all", label: "Todas contas" },
+              ...accounts.map((a) => ({
+                value: a.id,
+                label: a.name,
+              })),
+            ]}
+          />
 
           <button
             type="button"
@@ -1605,28 +1630,14 @@ export default function FinanceiroClinicaLancamentosPage() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Descrição
-                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Descrição</th>
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Tipo</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Status
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Valor
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Vencimento
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Categoria
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Conta
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Ações
-                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Status</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Vencimento</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Categoria</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Conta</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
                 </tr>
               </thead>
 
@@ -1696,9 +1707,7 @@ export default function FinanceiroClinicaLancamentosPage() {
                       >
                         <div>{formatDateBR(row.due_date)}</div>
                         <div style={{ fontSize: 12, opacity: 0.7 }}>
-                          {row.paid_at
-                            ? `Baixa: ${formatDateBR(row.paid_at)}`
-                            : "—"}
+                          {row.paid_at ? `Baixa: ${formatDateBR(row.paid_at)}` : "—"}
                         </div>
                       </td>
 
