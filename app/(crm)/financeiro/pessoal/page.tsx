@@ -20,6 +20,18 @@ type FinancialTransactionRow = {
   paid_at: string | null;
   counterparty_name: string | null;
   notes: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
+};
+
+type FinancialScheduleRow = {
+  id: string;
+  scope: "clinic" | "personal";
+  kind: "income" | "expense";
+  description: string;
+  next_due_date: string | null;
+  default_amount: number | null;
+  is_active: boolean | null;
 };
 
 const pageStyle: React.CSSProperties = {
@@ -82,69 +94,107 @@ function formatBRL(value: number) {
   }).format(value || 0);
 }
 
-function isSameMonth(dateStr: string | null | undefined, baseDate: Date) {
+function sameMonthFromString(dateStr: string | null | undefined, monthBase: Date) {
   if (!dateStr) return false;
-  const d = new Date(`${dateStr}T12:00:00`);
+  const d = new Date(`${String(dateStr).slice(0, 10)}T12:00:00`);
   if (Number.isNaN(d.getTime())) return false;
 
   return (
-    d.getFullYear() === baseDate.getFullYear() &&
-    d.getMonth() === baseDate.getMonth()
+    d.getFullYear() === monthBase.getFullYear() &&
+    d.getMonth() === monthBase.getMonth()
   );
-}
-
-function calcularReceitasMesAtual(rows: FinancialTransactionRow[]) {
-  const hoje = new Date();
-
-  const total = rows.reduce((acc, row) => {
-    if (row.scope !== "personal") return acc;
-    if (row.kind !== "income") return acc;
-
-    const entrouNoMes =
-      isSameMonth(row.paid_at, hoje) || isSameMonth(row.due_date, hoje);
-
-    if (!entrouNoMes) return acc;
-
-    return acc + Number(row.amount ?? 0);
-  }, 0);
-
-  return Number(total.toFixed(2));
-}
-
-function calcularDespesasMesAtual(rows: FinancialTransactionRow[]) {
-  const hoje = new Date();
-
-  const total = rows.reduce((acc, row) => {
-    if (row.scope !== "personal") return acc;
-    if (row.kind !== "expense") return acc;
-
-    const entrouNoMes =
-      isSameMonth(row.paid_at, hoje) || isSameMonth(row.due_date, hoje);
-
-    if (!entrouNoMes) return acc;
-
-    return acc + Number(row.amount ?? 0);
-  }, 0);
-
-  return Number(total.toFixed(2));
 }
 
 export default function FinanceiroPessoalPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
 
-  const [totalReceitasMes, setTotalReceitasMes] = useState(0);
-  const [totalDespesasMes, setTotalDespesasMes] = useState(0);
-  const [calendarRows, setCalendarRows] = useState<FinancialCalendarRow[]>([]);
+  const [txRows, setTxRows] = useState<FinancialTransactionRow[]>([]);
+  const [scheduleRows, setScheduleRows] = useState<FinancialScheduleRow[]>([]);
   const [loadingTotal, setLoadingTotal] = useState(true);
 
-  const monthLabel = useMemo(() => {
+  const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
-    return now.toLocaleDateString("pt-BR", {
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
+  const monthLabel = useMemo(() => {
+    return selectedMonth.toLocaleDateString("pt-BR", {
       month: "long",
       year: "numeric",
     });
-  }, []);
+  }, [selectedMonth]);
+
+  const txCalendarRows = useMemo<FinancialCalendarRow[]>(() => {
+    return txRows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      status: row.status,
+      description: row.description,
+      amount: Number(row.amount ?? 0),
+      due_date: row.due_date,
+      paid_at: row.paid_at,
+      counterparty_name: row.counterparty_name,
+      notes: row.notes,
+    }));
+  }, [txRows]);
+
+  const scheduleCalendarRows = useMemo<FinancialCalendarRow[]>(() => {
+    const existingScheduleLaunchKeys = new Set(
+      txRows
+        .filter((row) => row.source_type === "schedule" && row.source_id)
+        .map((row) => `${row.source_id}::${row.due_date ?? ""}`)
+    );
+
+    return scheduleRows
+      .filter((row) => {
+        const key = `${row.id}::${row.next_due_date ?? ""}`;
+        return !existingScheduleLaunchKeys.has(key);
+      })
+      .map((row) => ({
+        id: `schedule-${row.id}`,
+        kind: row.kind,
+        status: "pending" as const,
+        description: `${row.description} (Agenda)`,
+        amount: Number(row.default_amount ?? 0),
+        due_date: row.next_due_date,
+        paid_at: null,
+        counterparty_name: null,
+        notes: "Compromisso previsto na agenda financeira",
+      }));
+  }, [txRows, scheduleRows]);
+
+  const calendarRows = useMemo<FinancialCalendarRow[]>(() => {
+    return [...txCalendarRows, ...scheduleCalendarRows];
+  }, [txCalendarRows, scheduleCalendarRows]);
+
+  const totalReceitasMes = useMemo(() => {
+    const receitasLancadas = txRows
+      .filter((row) => row.kind === "income")
+      .filter((row) => sameMonthFromString(row.due_date, selectedMonth))
+      .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+
+    const receitasAgenda = scheduleCalendarRows
+      .filter((row) => row.kind === "income")
+      .filter((row) => sameMonthFromString(row.due_date, selectedMonth))
+      .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+
+    return Number((receitasLancadas + receitasAgenda).toFixed(2));
+  }, [txRows, scheduleCalendarRows, selectedMonth]);
+
+  const totalDespesasMes = useMemo(() => {
+    const despesasLancadas = txRows
+      .filter((row) => row.kind === "expense")
+      .filter((row) => sameMonthFromString(row.due_date, selectedMonth))
+      .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+
+    const despesasAgenda = scheduleCalendarRows
+      .filter((row) => row.kind === "expense")
+      .filter((row) => sameMonthFromString(row.due_date, selectedMonth))
+      .reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
+
+    return Number((despesasLancadas + despesasAgenda).toFixed(2));
+  }, [txRows, scheduleCalendarRows, selectedMonth]);
 
   const resultadoMes = totalReceitasMes - totalDespesasMes;
 
@@ -163,53 +213,41 @@ export default function FinanceiroPessoalPage() {
       try {
         setLoadingTotal(true);
 
-        const { data, error } = await supabase
-          .from("financial_transactions")
-          .select(
-            "id,scope,kind,status,description,amount,due_date,paid_at,counterparty_name,notes"
-          )
-          .eq("scope", "personal")
-          .order("due_date", { ascending: false })
-          .order("created_at", { ascending: false });
+        const [
+          { data: txData, error: txError },
+          { data: scheduleData, error: scheduleError },
+        ] = await Promise.all([
+          supabase
+            .from("financial_transactions")
+            .select(
+              "id,scope,kind,status,description,amount,due_date,paid_at,counterparty_name,notes,source_type,source_id"
+            )
+            .eq("scope", "personal")
+            .order("due_date", { ascending: false })
+            .order("created_at", { ascending: false }),
 
-        if (error) {
-          console.error(
-            "Erro ao buscar transações do financeiro pessoal:",
-            error
-          );
-        }
+          supabase
+            .from("financial_schedules")
+            .select(
+              "id,scope,kind,description,next_due_date,default_amount,is_active"
+            )
+            .eq("scope", "personal")
+            .eq("is_active", true)
+            .order("next_due_date", { ascending: true }),
+        ]);
 
-        const txRows = (data as FinancialTransactionRow[]) ?? [];
-
-        const receitas = calcularReceitasMesAtual(txRows);
-        const despesas = calcularDespesasMesAtual(txRows);
-
-        const nextCalendarRows: FinancialCalendarRow[] = txRows.map((row) => ({
-          id: row.id,
-          kind: row.kind,
-          status: row.status,
-          description: row.description,
-          amount: Number(row.amount ?? 0),
-          due_date: row.due_date,
-          paid_at: row.paid_at,
-          counterparty_name: row.counterparty_name,
-          notes: row.notes,
-        }));
+        if (txError) console.error(txError);
+        if (scheduleError) console.error(scheduleError);
 
         if (active) {
-          setTotalReceitasMes(receitas);
-          setTotalDespesasMes(despesas);
-          setCalendarRows(nextCalendarRows);
+          setTxRows((txData as FinancialTransactionRow[]) ?? []);
+          setScheduleRows((scheduleData as FinancialScheduleRow[]) ?? []);
         }
       } catch (err) {
-        console.error(
-          "Erro inesperado ao carregar resumo financeiro pessoal:",
-          err
-        );
+        console.error(err);
         if (active) {
-          setTotalReceitasMes(0);
-          setTotalDespesasMes(0);
-          setCalendarRows([]);
+          setTxRows([]);
+          setScheduleRows([]);
         }
       } finally {
         if (active) setLoadingTotal(false);
@@ -224,11 +262,7 @@ export default function FinanceiroPessoalPage() {
   }, [loadingRole, isAdmin]);
 
   if (loadingRole) {
-    return (
-      <div style={{ padding: 20, color: "white" }}>
-        Carregando permissões...
-      </div>
-    );
+    return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
   }
 
   if (!isAdmin) return null;
@@ -258,6 +292,9 @@ export default function FinanceiroPessoalPage() {
           <Link href="/financeiro/pessoal/lancamentos" style={btnPrimaryStyle}>
             Lançamentos
           </Link>
+          <Link href="/financeiro/pessoal/agenda" style={btnStyle}>
+            Agenda
+          </Link>
         </div>
       </div>
 
@@ -273,9 +310,7 @@ export default function FinanceiroPessoalPage() {
           <div style={{ fontSize: 24, fontWeight: 950 }}>
             {loadingTotal ? "Carregando..." : formatBRL(totalReceitasMes)}
           </div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Entradas de {monthLabel}
-          </div>
+          <div style={{ fontSize: 11, opacity: 0.7 }}>Tudo de {monthLabel}</div>
         </div>
 
         <div style={summaryCardStyle}>
@@ -283,9 +318,7 @@ export default function FinanceiroPessoalPage() {
           <div style={{ fontSize: 24, fontWeight: 950 }}>
             {loadingTotal ? "Carregando..." : formatBRL(totalDespesasMes)}
           </div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Saídas de {monthLabel}
-          </div>
+          <div style={{ fontSize: 11, opacity: 0.7 }}>Tudo de {monthLabel}</div>
         </div>
 
         <div style={summaryCardStyle}>
@@ -293,13 +326,24 @@ export default function FinanceiroPessoalPage() {
           <div style={{ fontSize: 24, fontWeight: 950 }}>
             {loadingTotal ? "Carregando..." : formatBRL(resultadoMes)}
           </div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Receitas menos despesas
-          </div>
+          <div style={{ fontSize: 11, opacity: 0.7 }}>Receitas menos despesas</div>
         </div>
       </div>
 
-      <FinancialCalendar transactions={calendarRows} />
+      <FinancialCalendar
+        transactions={calendarRows}
+        currentMonth={selectedMonth}
+        onMonthChange={setSelectedMonth}
+        onOpen={(row) => {
+          if (row.id.startsWith("schedule-")) {
+            const scheduleId = row.id.replace("schedule-", "");
+            router.push(`/financeiro/pessoal/agenda?edit=${scheduleId}`);
+            return;
+          }
+
+          router.push(`/financeiro/pessoal/lancamentos?edit=${row.id}`);
+        }}
+      />
     </div>
   );
 }

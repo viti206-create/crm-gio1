@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminAccess } from "../../../_hooks/useAdminAccess";
 import SelectDark from "../../../_components/SelectDark";
@@ -163,7 +163,6 @@ const inputStyle: React.CSSProperties = {
   padding: "0 12px",
   borderRadius: 12,
   outline: "none",
-  fontSize: 13,
   minWidth: 0,
 };
 
@@ -201,10 +200,6 @@ const btnDanger: React.CSSProperties = {
   border: "1px solid rgba(255,120,120,0.30)",
   background:
     "linear-gradient(180deg, rgba(255,120,120,0.16) 0%, rgba(255,120,120,0.07) 100%)",
-};
-
-const fieldWrapStyle: React.CSSProperties = {
-  minWidth: 0,
 };
 
 function csvEscape(value: string | number | null | undefined) {
@@ -308,7 +303,7 @@ function mapCsvStatus(value: string, kind: "income" | "expense") {
   if (["paid", "pago"].includes(v)) return "paid";
   if (["received", "recebido"].includes(v)) return "received";
 
-  return kind === "income" ? "pending" : "pending";
+  return kind === "income" ? "received" : "paid";
 }
 
 function parseCsvAmount(value: string) {
@@ -341,9 +336,11 @@ function parseCsvDate(value: string) {
 
 export default function FinanceiroPessoalLancamentosPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { isAdmin, loadingRole } = useAdminAccess();
 
   const scope = "personal";
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -357,8 +354,8 @@ export default function FinanceiroPessoalLancamentosPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  const [kind, setKind] = useState<"income" | "expense">("income");
-  const [status, setStatus] = useState<"pending" | "paid" | "received" | "late">("pending");
+  const [kind, setKind] = useState<"income" | "expense">("expense");
+  const [status, setStatus] = useState<"pending" | "paid" | "received" | "late">("paid");
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [dueDate, setDueDate] = useState(todayInputValue());
@@ -381,6 +378,13 @@ export default function FinanceiroPessoalLancamentosPage() {
       router.replace("/home");
     }
   }, [loadingRole, isAdmin, router]);
+
+  function clearEditQuery() {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("edit");
+    const next = params.toString();
+    router.replace(next ? `/financeiro/pessoal/lancamentos?${next}` : "/financeiro/pessoal/lancamentos");
+  }
 
   async function fetchAll() {
     setLoading(true);
@@ -417,22 +421,43 @@ export default function FinanceiroPessoalLancamentosPage() {
     if (accError) console.error(accError);
     if (catError) console.error(catError);
 
-    setRows((txData as FinancialTransaction[]) ?? []);
+    const nextRows = (txData as FinancialTransaction[]) ?? [];
+    setRows(nextRows);
     setAccounts((accData as FinancialAccount[]) ?? []);
     setCategories((catData as FinancialCategory[]) ?? []);
     setLoading(false);
+
+    const editId = searchParams.get("edit");
+    if (editId) {
+      const found = nextRows.find((r) => r.id === editId);
+      if (found) {
+        handleEdit(found);
+      }
+    }
   }
 
   useEffect(() => {
     if (isAdmin) {
       fetchAll();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
+
+  useEffect(() => {
+    const editId = searchParams.get("edit");
+    if (!editId || rows.length === 0) return;
+
+    const found = rows.find((r) => r.id === editId);
+    if (found) {
+      handleEdit(found);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, rows]);
 
   function resetForm() {
     setEditingId(null);
-    setKind("income");
-    setStatus("pending");
+    setKind("expense");
+    setStatus("paid");
     setDescription("");
     setAmount("");
     setDueDate(todayInputValue());
@@ -535,18 +560,13 @@ export default function FinanceiroPessoalLancamentosPage() {
 
     const parsedAmount = Number(amount || 0);
 
-    if (!description.trim()) {
-      setErrorMsg("Informe a descrição.");
-      return;
-    }
-
-    if (!parsedAmount || parsedAmount <= 0) {
-      setErrorMsg("Informe um valor válido.");
-      return;
-    }
-
     if (isInstallment && installments < 2) {
       setErrorMsg("Informe pelo menos 2 parcelas.");
+      return;
+    }
+
+    if (isInstallment && parsedAmount <= 0) {
+      setErrorMsg("Para parcelar, informe um valor maior que zero.");
       return;
     }
 
@@ -556,12 +576,14 @@ export default function FinanceiroPessoalLancamentosPage() {
       const category_id = await resolveCategoryIdByName(categoryInput, kind);
       const account_id = await resolveAccountIdByName(accountInput);
 
+      const safeDescription = description.trim() || "Sem descrição";
+
       if (!isInstallment) {
         const payload = {
           scope,
           kind,
           status,
-          description: description.trim(),
+          description: safeDescription,
           amount: parsedAmount,
           gross_amount: parsedAmount,
           net_amount: parsedAmount,
@@ -597,6 +619,7 @@ export default function FinanceiroPessoalLancamentosPage() {
         }
 
         resetForm();
+        clearEditQuery();
         await fetchAll();
         return;
       }
@@ -617,7 +640,7 @@ export default function FinanceiroPessoalLancamentosPage() {
           scope,
           kind,
           status: i === 0 ? status : "pending",
-          description: `${description.trim()} ${i + 1}/${installments}`,
+          description: `${safeDescription} ${i + 1}/${installments}`,
           amount: eachValue,
           gross_amount: eachValue,
           net_amount: eachValue,
@@ -645,6 +668,7 @@ export default function FinanceiroPessoalLancamentosPage() {
       if (error) throw error;
 
       resetForm();
+      clearEditQuery();
       await fetchAll();
     } catch (e: any) {
       console.error(e);
@@ -695,7 +719,10 @@ export default function FinanceiroPessoalLancamentosPage() {
 
       if (error) throw error;
 
-      if (editingId === id) resetForm();
+      if (editingId === id) {
+        resetForm();
+        clearEditQuery();
+      }
       await fetchAll();
     } catch (e: any) {
       console.error(e);
@@ -772,15 +799,8 @@ export default function FinanceiroPessoalLancamentosPage() {
         throw new Error(`Linha ${i + 1}: tipo inválido "${rawKind}".`);
       }
 
-      const description = String(cols[idxDescricao] ?? "").trim();
-      if (!description) {
-        throw new Error(`Linha ${i + 1}: descrição obrigatória.`);
-      }
-
+      const description = String(cols[idxDescricao] ?? "").trim() || "Sem descrição";
       const amount = parseCsvAmount(cols[idxValor] ?? "");
-      if (!amount || amount <= 0) {
-        throw new Error(`Linha ${i + 1}: valor inválido.`);
-      }
 
       const due_date = idxVencimento >= 0 ? parseCsvDate(cols[idxVencimento]) : null;
       const paid_at = idxPagoEm >= 0 ? parseCsvDate(cols[idxPagoEm]) : null;
@@ -798,8 +818,7 @@ export default function FinanceiroPessoalLancamentosPage() {
         paid_at,
         category_name: idxCategoria >= 0 ? String(cols[idxCategoria] ?? "").trim() : "",
         account_name: idxConta >= 0 ? String(cols[idxConta] ?? "").trim() : "",
-        counterparty_name:
-          idxPessoa >= 0 ? String(cols[idxPessoa] ?? "").trim() || null : null,
+        counterparty_name: idxPessoa >= 0 ? String(cols[idxPessoa] ?? "").trim() || null : null,
         notes: idxObs >= 0 ? String(cols[idxObs] ?? "").trim() || null : null,
       });
     }
@@ -822,8 +841,7 @@ export default function FinanceiroPessoalLancamentosPage() {
 
       for (const row of parsedRows) {
         const category_id = await resolveCategoryIdByName(
-          row.category_name ||
-            (row.kind === "income" ? "Importação Receita" : "Importação Despesa"),
+          row.category_name || (row.kind === "income" ? "Importação Receita" : "Importação Despesa"),
           row.kind
         );
 
@@ -890,39 +908,6 @@ export default function FinanceiroPessoalLancamentosPage() {
       "observacoes",
     ];
 
-    const tipoPt = (value: string) => {
-      if (value === "income") return "Receita";
-      if (value === "expense") return "Despesa";
-      return value;
-    };
-
-    const statusPt = (value: string) => {
-      if (value === "pending") return "Pendente";
-      if (value === "paid") return "Pago";
-      if (value === "received") return "Recebido";
-      if (value === "late") return "Atrasado";
-      return value;
-    };
-
-    const formatDateCsv = (value: string | null | undefined) => {
-      if (!value) return "";
-      const d = new Date(`${value}T12:00:00`);
-      if (Number.isNaN(d.getTime())) return "";
-      const dd = String(d.getDate()).padStart(2, "0");
-      const mm = String(d.getMonth() + 1).padStart(2, "0");
-      const yyyy = d.getFullYear();
-      return `${dd}/${mm}/${yyyy}`;
-    };
-
-    const formatMoneyCsv = (value: number | null | undefined) => {
-      const n = Number(value ?? 0);
-      if (!Number.isFinite(n)) return "R$ 0,00";
-      return n.toLocaleString("pt-BR", {
-        style: "currency",
-        currency: "BRL",
-      });
-    };
-
     const csvLines = [
       header.join(","),
       ...filteredRows.map((row) => {
@@ -932,12 +917,12 @@ export default function FinanceiroPessoalLancamentosPage() {
           accounts.find((a) => a.id === row.account_id)?.name ?? "";
 
         return [
-          csvEscape(tipoPt(row.kind)),
-          csvEscape(statusPt(row.status)),
+          csvEscape(row.kind),
+          csvEscape(row.status),
           csvEscape(row.description),
-          csvEscape(formatMoneyCsv(row.amount)),
-          csvEscape(formatDateCsv(row.due_date)),
-          csvEscape(formatDateCsv(row.paid_at)),
+          csvEscape(Number(row.amount ?? 0).toFixed(2)),
+          csvEscape(row.due_date ?? ""),
+          csvEscape(row.paid_at ?? ""),
           csvEscape(categoryName),
           csvEscape(accountName),
           csvEscape(row.counterparty_name ?? ""),
@@ -1023,9 +1008,9 @@ export default function FinanceiroPessoalLancamentosPage() {
     }
 
     return {
-      income,
-      expense,
-      balance: income - expense,
+      income: Number(income.toFixed(2)),
+      expense: Number(expense.toFixed(2)),
+      balance: Number((income - expense).toFixed(2)),
       pending,
       late,
     };
@@ -1046,11 +1031,7 @@ export default function FinanceiroPessoalLancamentosPage() {
   }, [filteredRows]);
 
   if (loadingRole) {
-    return (
-      <div style={{ padding: 20, color: "white" }}>
-        Carregando permissões...
-      </div>
-    );
+    return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
   }
 
   if (!isAdmin) return null;
@@ -1150,9 +1131,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             padding: 14,
           }}
         >
-          <div style={{ fontSize: 12, opacity: 0.72 }}>
-            Pendentes / Atrasados
-          </div>
+          <div style={{ fontSize: 12, opacity: 0.72 }}>Pendentes / Atrasados</div>
           <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
             {summary.pending} / {summary.late}
           </div>
@@ -1203,7 +1182,14 @@ export default function FinanceiroPessoalLancamentosPage() {
             </button>
 
             {editingId ? (
-              <button type="button" style={btn} onClick={resetForm}>
+              <button
+                type="button"
+                style={btn}
+                onClick={() => {
+                  resetForm();
+                  clearEditQuery();
+                }}
+              >
                 Cancelar edição
               </button>
             ) : null}
@@ -1218,12 +1204,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             lineHeight: 1.5,
           }}
         >
-          CSV aceito com cabeçalhos como:{" "}
-          <strong>
-            tipo, status, descricao, valor, vencimento, pago_em, categoria,
-            conta, pessoa, observacoes
-          </strong>
-          .
+          CSV aceito com cabeçalhos como: <strong>tipo, status, descricao, valor, vencimento, pago_em, categoria, conta, pessoa, observacoes</strong>.
         </div>
 
         <div
@@ -1233,7 +1214,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             gap: 12,
           }}
         >
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Tipo</label>
             <SelectDark
               value={kind}
@@ -1246,13 +1227,11 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Status</label>
             <SelectDark
               value={status}
-              onChange={(v) =>
-                setStatus(v as "pending" | "paid" | "received" | "late")
-              }
+              onChange={(v) => setStatus(v as "pending" | "paid" | "received" | "late")}
               searchable={false}
               options={[
                 { value: "pending", label: "Pendente" },
@@ -1263,7 +1242,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Valor</label>
 
             <div
@@ -1271,8 +1250,7 @@ export default function FinanceiroPessoalLancamentosPage() {
                 display: "flex",
                 gap: 10,
                 alignItems: "center",
-                flexWrap: "nowrap",
-                minWidth: 0,
+                flexWrap: "wrap",
               }}
             >
               <input
@@ -1284,7 +1262,7 @@ export default function FinanceiroPessoalLancamentosPage() {
                 style={{
                   ...inputStyle,
                   flex: 1,
-                  minWidth: 0,
+                  minWidth: 180,
                 }}
                 placeholder="0,00"
               />
@@ -1294,7 +1272,7 @@ export default function FinanceiroPessoalLancamentosPage() {
                   display: "inline-flex",
                   alignItems: "center",
                   gap: 6,
-                  padding: "0 10px",
+                  padding: "8px 10px",
                   borderRadius: 10,
                   border: "1px solid rgba(255,255,255,0.10)",
                   background: "rgba(255,255,255,0.03)",
@@ -1303,7 +1281,6 @@ export default function FinanceiroPessoalLancamentosPage() {
                   whiteSpace: "nowrap",
                   cursor: "pointer",
                   height: 42,
-                  flexShrink: 0,
                 }}
               >
                 <input
@@ -1314,52 +1291,50 @@ export default function FinanceiroPessoalLancamentosPage() {
                 />
                 Parcelar
               </label>
-            </div>
 
-            {isInstallment ? (
-              <div
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  marginTop: 8,
-                  padding: "0 8px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(255,255,255,0.03)",
-                  height: 38,
-                  maxWidth: "100%",
-                }}
-              >
-                <span
+              {isInstallment ? (
+                <div
                   style={{
-                    fontSize: 12,
-                    opacity: 0.78,
-                    fontWeight: 800,
-                    whiteSpace: "nowrap",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "0 8px",
+                    borderRadius: 10,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(255,255,255,0.03)",
+                    height: 42,
                   }}
                 >
-                  Parcelas
-                </span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      opacity: 0.78,
+                      fontWeight: 800,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    Parcelas
+                  </span>
 
-                <input
-                  type="number"
-                  min="2"
-                  max="24"
-                  value={installments}
-                  onChange={(e) => setInstallments(Number(e.target.value))}
-                  style={{
-                    width: 64,
-                    background: "transparent",
-                    color: "white",
-                    border: "none",
-                    outline: "none",
-                    fontWeight: 900,
-                    fontSize: 13,
-                  }}
-                />
-              </div>
-            ) : null}
+                  <input
+                    type="number"
+                    min="2"
+                    max="24"
+                    value={installments}
+                    onChange={(e) => setInstallments(Number(e.target.value))}
+                    style={{
+                      width: 64,
+                      background: "transparent",
+                      color: "white",
+                      border: "none",
+                      outline: "none",
+                      fontWeight: 900,
+                      fontSize: 14,
+                    }}
+                  />
+                </div>
+              ) : null}
+            </div>
 
             {isInstallment && Number(amount) > 0 && installments > 1 ? (
               <div
@@ -1376,7 +1351,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             ) : null}
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Vencimento</label>
             <input
               type="date"
@@ -1386,7 +1361,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div style={{ ...fieldWrapStyle, gridColumn: "span 2" }}>
+          <div style={{ gridColumn: "span 2" }}>
             <label style={labelStyle}>Descrição</label>
             <input
               value={description}
@@ -1396,7 +1371,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Categoria</label>
             <input
               list="financial-category-suggestions-personal"
@@ -1412,7 +1387,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             </datalist>
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Conta</label>
             <input
               list="financial-account-suggestions-personal"
@@ -1428,7 +1403,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             </datalist>
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Pago / Recebido em</label>
             <input
               type="date"
@@ -1438,7 +1413,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div style={fieldWrapStyle}>
+          <div>
             <label style={labelStyle}>Cliente / Favorecido</label>
             <input
               value={counterpartyName}
@@ -1448,7 +1423,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             />
           </div>
 
-          <div style={{ ...fieldWrapStyle, gridColumn: "span 3" }}>
+          <div style={{ gridColumn: "span 3" }}>
             <label style={labelStyle}>Observações</label>
             <input
               value={notes}
@@ -1472,9 +1447,7 @@ export default function FinanceiroPessoalLancamentosPage() {
           </div>
         ) : null}
 
-        <div
-          style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}
-        >
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
           <button type="submit" disabled={saving} style={btnPrimary}>
             {saving
               ? "Salvando..."
@@ -1529,78 +1502,66 @@ export default function FinanceiroPessoalLancamentosPage() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns:
-              "minmax(220px, 1.4fr) repeat(4, minmax(160px, 1fr)) auto",
+            gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1fr auto",
             gap: 10,
-            alignItems: "stretch",
           }}
         >
-          <div style={fieldWrapStyle}>
-            <input
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              style={inputStyle}
-              placeholder="Buscar descrição, observação, pessoa..."
-            />
-          </div>
+          <input
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            style={inputStyle}
+            placeholder="Buscar descrição, observação, pessoa..."
+          />
 
-          <div style={fieldWrapStyle}>
-            <SelectDark
-              value={filterKind}
-              onChange={setFilterKind}
-              searchable={false}
-              options={[
-                { value: "all", label: "Todos tipos" },
-                { value: "income", label: "Receita" },
-                { value: "expense", label: "Despesa" },
-              ]}
-            />
-          </div>
+          <SelectDark
+            value={filterKind}
+            onChange={setFilterKind}
+            searchable={false}
+            options={[
+              { value: "all", label: "Todos tipos" },
+              { value: "income", label: "Receita" },
+              { value: "expense", label: "Despesa" },
+            ]}
+          />
 
-          <div style={fieldWrapStyle}>
-            <SelectDark
-              value={filterStatus}
-              onChange={setFilterStatus}
-              searchable={false}
-              options={[
-                { value: "all", label: "Todos status" },
-                { value: "pending", label: "Pendente" },
-                { value: "paid", label: "Pago" },
-                { value: "received", label: "Recebido" },
-                { value: "late", label: "Atrasado" },
-              ]}
-            />
-          </div>
+          <SelectDark
+            value={filterStatus}
+            onChange={setFilterStatus}
+            searchable={false}
+            options={[
+              { value: "all", label: "Todos status" },
+              { value: "pending", label: "Pendente" },
+              { value: "paid", label: "Pago" },
+              { value: "received", label: "Recebido" },
+              { value: "late", label: "Atrasado" },
+            ]}
+          />
 
-          <div style={fieldWrapStyle}>
-            <SelectDark
-              value={filterCategory}
-              onChange={setFilterCategory}
-              searchable
-              options={[
-                { value: "all", label: "Todas categorias" },
-                ...categories.map((c) => ({
-                  value: c.id,
-                  label: c.name,
-                })),
-              ]}
-            />
-          </div>
+          <SelectDark
+            value={filterCategory}
+            onChange={setFilterCategory}
+            searchable
+            options={[
+              { value: "all", label: "Todas categorias" },
+              ...categories.map((c) => ({
+                value: c.id,
+                label: c.name,
+              })),
+            ]}
+          />
 
-          <div style={fieldWrapStyle}>
-            <SelectDark
-              value={filterAccount}
-              onChange={setFilterAccount}
-              searchable
-              options={[
-                { value: "all", label: "Todas contas" },
-                ...accounts.map((a) => ({
-                  value: a.id,
-                  label: a.name,
-                })),
-              ]}
-            />
-          </div>
+          <SelectDark
+            value={filterAccount}
+            onChange={setFilterAccount}
+            searchable
+            options={[
+              { value: "all", label: "Todas contas" },
+              ...accounts.map((a) => ({
+                value: a.id,
+                label: a.name,
+              })),
+            ]}
+          />
 
           <button
             type="button"
@@ -1637,28 +1598,14 @@ export default function FinanceiroPessoalLancamentosPage() {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Descrição
-                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Descrição</th>
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Tipo</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Status
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Valor
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Vencimento
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Categoria
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Conta
-                  </th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>
-                    Ações
-                  </th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Status</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Vencimento</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Categoria</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Conta</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
                 </tr>
               </thead>
 
@@ -1728,9 +1675,7 @@ export default function FinanceiroPessoalLancamentosPage() {
                       >
                         <div>{formatDateBR(row.due_date)}</div>
                         <div style={{ fontSize: 12, opacity: 0.7 }}>
-                          {row.paid_at
-                            ? `Baixa: ${formatDateBR(row.paid_at)}`
-                            : "—"}
+                          {row.paid_at ? `Baixa: ${formatDateBR(row.paid_at)}` : "—"}
                         </div>
                       </td>
 

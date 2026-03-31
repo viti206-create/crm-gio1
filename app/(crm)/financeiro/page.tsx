@@ -230,37 +230,38 @@ export default function FinanceiroIndexPage() {
         ...salesRows.map((row) => ({
           sortDate: row.closed_at ? String(row.closed_at).slice(0, 10) : "",
           tipo: "Venda",
+          origem: "CRM",
           descricao: row.procedure ?? "",
           data: formatDateCSV(row.closed_at),
           valor: formatMoneyCSV(row.value_net),
           conta: "",
+          status: "Recebido",
         })),
         ...txRows.map((row) => ({
           sortDate: row.due_date ?? "",
           tipo: "Despesa",
+          origem: "Financeiro",
           descricao: row.description ?? "",
           data: formatDateCSV(row.due_date),
           valor: formatMoneyCSV(row.amount),
           conta: row.account_id ? accountMap.get(row.account_id) ?? "" : "",
+          status: "Pago", // pode evoluir depois
         })),
       ].sort((a, b) => a.sortDate.localeCompare(b.sortDate));
 
-      if (!exportRows.length) {
-        window.alert("Não encontrei vendas ou despesas da clínica nesse período.");
-        return;
-      }
-
-      const header = ["Tipo", "Descrição", "Data", "Valor", "Conta"];
+      const header = ["Tipo", "Origem", "Descrição", "Data", "Valor", "Conta", "Status"];
 
       const csvLines = [
         header.join(","),
         ...exportRows.map((row) =>
           [
             csvEscape(row.tipo),
+            csvEscape(row.origem),
             csvEscape(row.descricao),
             csvEscape(row.data),
             csvEscape(row.valor),
             csvEscape(row.conta),
+            csvEscape(row.status),
           ].join(",")
         ),
       ];
