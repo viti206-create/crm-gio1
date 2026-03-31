@@ -1,20 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import { useAdminAccess } from "../../../_hooks/useAdminAccess";
 
 type Schedule = {
   id: string;
   description: string;
-  scope: string;
+  scope: "clinic" | "personal";
   kind: "expense" | "income";
   next_due_date: string;
   default_amount: number | null;
-  last_generated_date?: string | null;
   repeat_months?: number | null;
-  generated_count?: number | null;
   is_active?: boolean | null;
+  notes?: string | null;
+  created_at?: string | null;
 };
 
 function formatDateBR(v: string | null | undefined) {
@@ -34,6 +36,26 @@ function formatBRL(v: number | null | undefined) {
     style: "currency",
     currency: "BRL",
   });
+}
+
+function monthKey(dateStr: string | null | undefined) {
+  if (!dateStr) return "";
+  return String(dateStr).slice(0, 7);
+}
+
+function todayInputValue() {
+  const dt = new Date();
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  const dd = String(dt.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function currentMonthInputValue() {
+  const dt = new Date();
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, "0");
+  return `${yyyy}-${mm}`;
 }
 
 const pageStyle: React.CSSProperties = {
@@ -146,16 +168,27 @@ function kindChip(kind: "expense" | "income"): React.CSSProperties {
   };
 }
 
-export default function AgendaFinanceira() {
+export default function AgendaFinanceiraClinicaPage() {
+  const router = useRouter();
+  const { isAdmin, loadingRole } = useAdminAccess();
+
   const [rows, setRows] = useState<Schedule[]>([]);
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<"expense" | "income">("expense");
-  const [date, setDate] = useState("");
+  const [date, setDate] = useState(todayInputValue());
   const [defaultAmount, setDefaultAmount] = useState("");
   const [repeatMonths, setRepeatMonths] = useState("12");
+  const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewMonth, setViewMonth] = useState(currentMonthInputValue());
+
+  useEffect(() => {
+    if (!loadingRole && !isAdmin) {
+      router.replace("/home");
+    }
+  }, [loadingRole, isAdmin, router]);
 
   async function fetchData() {
     setLoading(true);
@@ -178,29 +211,33 @@ export default function AgendaFinanceira() {
   }
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (isAdmin) {
+      fetchData();
+    }
+  }, [isAdmin]);
 
   function resetForm() {
     setEditingId(null);
     setDescription("");
-    setDate("");
+    setKind("expense");
+    setDate(todayInputValue());
     setDefaultAmount("");
     setRepeatMonths("12");
-    setKind("expense");
+    setNotes("");
   }
 
   function handleEdit(row: Schedule) {
     setEditingId(row.id);
     setDescription(row.description ?? "");
     setKind(row.kind ?? "expense");
-    setDate(row.next_due_date ?? "");
+    setDate(row.next_due_date ?? todayInputValue());
     setDefaultAmount(
       row.default_amount != null ? String(row.default_amount) : ""
     );
     setRepeatMonths(
       row.repeat_months != null ? String(row.repeat_months) : "12"
     );
+    setNotes(row.notes ?? "");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -228,6 +265,7 @@ export default function AgendaFinanceira() {
           ? parsedRepeatMonths
           : null,
       is_active: true,
+      notes: notes.trim() || null,
     };
 
     let error = null;
@@ -237,13 +275,11 @@ export default function AgendaFinanceira() {
         .from("financial_schedules")
         .update(payload)
         .eq("id", editingId);
-
       error = result.error;
     } else {
       const result = await supabase
         .from("financial_schedules")
         .insert(payload);
-
       error = result.error;
     }
 
@@ -255,68 +291,6 @@ export default function AgendaFinanceira() {
     }
 
     resetForm();
-    fetchData();
-  }
-
-  async function generateTransaction(schedule: Schedule) {
-    const amount = schedule.default_amount ?? 0;
-
-    const { error: insertError } = await supabase
-      .from("financial_transactions")
-      .insert({
-        scope: schedule.scope,
-        kind: schedule.kind,
-        description: schedule.description,
-        amount,
-        due_date: schedule.next_due_date,
-        status: "pending",
-        source_type: "schedule",
-        source_id: schedule.id,
-      });
-
-    if (insertError) {
-      console.error("Erro ao gerar lançamento:", insertError);
-      return;
-    }
-
-    const currentDueDate = new Date(`${schedule.next_due_date}T12:00:00`);
-    const nextDueDate = new Date(currentDueDate);
-    nextDueDate.setMonth(nextDueDate.getMonth() + 1);
-
-    const nextDueDateStr = nextDueDate.toISOString().slice(0, 10);
-
-    const currentRepeatMonths = Number(schedule.repeat_months ?? 0);
-    const currentGeneratedCount = Number((schedule as any).generated_count ?? 0);
-
-    const updatePayload: Record<string, any> = {
-      last_generated_date: new Date().toISOString().slice(0, 10),
-      generated_count: currentGeneratedCount + 1,
-    };
-
-    if (currentRepeatMonths > 1) {
-      updatePayload.repeat_months = currentRepeatMonths - 1;
-      updatePayload.next_due_date = nextDueDateStr;
-    } else if (currentRepeatMonths === 1) {
-      updatePayload.repeat_months = 0;
-      updatePayload.is_active = false;
-    } else {
-      updatePayload.next_due_date = nextDueDateStr;
-    }
-
-    const { error: updateError } = await supabase
-      .from("financial_schedules")
-      .update(updatePayload)
-      .eq("id", schedule.id);
-
-    if (updateError) {
-      console.error("Erro ao atualizar agenda após gerar lançamento:", updateError);
-      return;
-    }
-
-    if (editingId === schedule.id) {
-      resetForm();
-    }
-
     fetchData();
   }
 
@@ -334,12 +308,33 @@ export default function AgendaFinanceira() {
       return;
     }
 
-    if (editingId === id) {
-      resetForm();
-    }
-
+    if (editingId === id) resetForm();
     fetchData();
   }
+
+  const monthRows = useMemo(() => {
+    return rows.filter((r) => monthKey(r.next_due_date) === viewMonth);
+  }, [rows, viewMonth]);
+
+  const totalExpenseMonth = useMemo(() => {
+    return monthRows
+      .filter((r) => r.kind === "expense")
+      .reduce((sum, r) => sum + Number(r.default_amount ?? 0), 0);
+  }, [monthRows]);
+
+  const totalIncomeMonth = useMemo(() => {
+    return monthRows
+      .filter((r) => r.kind === "income")
+      .reduce((sum, r) => sum + Number(r.default_amount ?? 0), 0);
+  }, [monthRows]);
+
+  const totalBalanceMonth = totalIncomeMonth - totalExpenseMonth;
+
+  if (loadingRole) {
+    return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
+  }
+
+  if (!isAdmin) return null;
 
   return (
     <div style={pageStyle}>
@@ -356,14 +351,13 @@ export default function AgendaFinanceira() {
           <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 0.2 }}>
             Agenda Financeira
           </div>
-          <div style={chipStyle}>Scope: clinic</div>
+          <div style={chipStyle}>Scope: clinic • Visual בלבד</div>
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <Link href="/financeiro/clinica" style={btnStyle}>
             Voltar
           </Link>
-
           <Link href="/financeiro/clinica/lancamentos" style={btnPrimaryStyle}>
             Lançamentos
           </Link>
@@ -371,21 +365,15 @@ export default function AgendaFinanceira() {
       </div>
 
       <div style={cardStyle}>
-        <div
-          style={{
-            fontSize: 18,
-            fontWeight: 900,
-            marginBottom: 14,
-          }}
-        >
-          {editingId ? "Editar compromisso mensal" : "Novo compromisso mensal"}
+        <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 14 }}>
+          {editingId ? "Editar compromisso visual" : "Novo compromisso visual"}
         </div>
 
         <div
           style={{
             display: "grid",
             gridTemplateColumns:
-              "minmax(240px, 2fr) minmax(140px, 1fr) minmax(170px, 1fr) minmax(150px, 1fr) minmax(130px, 110px) auto",
+              "minmax(240px, 2fr) minmax(140px, 1fr) minmax(170px, 1fr) minmax(150px, 1fr) minmax(130px, 110px)",
             gap: 12,
             alignItems: "end",
           }}
@@ -413,7 +401,7 @@ export default function AgendaFinanceira() {
           </div>
 
           <div>
-            <label style={labelStyle}>Próximo vencimento</label>
+            <label style={labelStyle}>Vencimento visual</label>
             <input
               type="date"
               value={date}
@@ -423,7 +411,7 @@ export default function AgendaFinanceira() {
           </div>
 
           <div>
-            <label style={labelStyle}>Valor padrão</label>
+            <label style={labelStyle}>Valor previsto</label>
             <input
               type="number"
               min="0"
@@ -436,7 +424,7 @@ export default function AgendaFinanceira() {
           </div>
 
           <div>
-            <label style={labelStyle}>Repetir por</label>
+            <label style={labelStyle}>Meses</label>
             <input
               type="number"
               min="1"
@@ -447,7 +435,19 @@ export default function AgendaFinanceira() {
               placeholder="12"
             />
           </div>
+        </div>
 
+        <div style={{ marginTop: 12 }}>
+          <label style={labelStyle}>Observações</label>
+          <input
+            style={inputStyle}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Opcional"
+          />
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
           <button
             type="button"
             onClick={saveSchedule}
@@ -462,15 +462,55 @@ export default function AgendaFinanceira() {
               ? "Salvar alterações"
               : "Adicionar"}
           </button>
-        </div>
 
-        {editingId ? (
-          <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {editingId ? (
             <button type="button" onClick={resetForm} style={btnStyle}>
               Cancelar edição
             </button>
+          ) : null}
+        </div>
+      </div>
+
+      <div style={cardStyle}>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(180px, 240px) repeat(3, minmax(0, 1fr))",
+            gap: 12,
+            alignItems: "end",
+          }}
+        >
+          <div>
+            <label style={labelStyle}>Mês da visão</label>
+            <input
+              type="month"
+              value={viewMonth}
+              onChange={(e) => setViewMonth(e.target.value)}
+              style={inputStyle}
+            />
           </div>
-        ) : null}
+
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>Previsto a pagar</div>
+            <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+              {formatBRL(totalExpenseMonth)}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>Previsto a receber</div>
+            <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+              {formatBRL(totalIncomeMonth)}
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 12, opacity: 0.72 }}>Saldo previsto</div>
+            <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
+              {formatBRL(totalBalanceMonth)}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div style={cardStyle}>
@@ -485,7 +525,7 @@ export default function AgendaFinanceira() {
             flexWrap: "wrap",
           }}
         >
-          <span>Compromissos mensais</span>
+          <span>Compromissos visuais</span>
           <span style={{ opacity: 0.8, fontSize: 13 }}>
             {loading ? "Carregando..." : `${rows.length} item(ns)`}
           </span>
@@ -505,9 +545,9 @@ export default function AgendaFinanceira() {
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Descrição</th>
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Tipo</th>
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Vencimento</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor padrão</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor previsto</th>
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Meses</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Última geração</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Observações</th>
                   <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
                 </tr>
               </thead>
@@ -568,11 +608,10 @@ export default function AgendaFinanceira() {
                       style={{
                         padding: "10px 0",
                         borderTop: "1px solid rgba(255,255,255,0.06)",
+                        opacity: 0.8,
                       }}
                     >
-                      {r.last_generated_date
-                        ? formatDateBR(r.last_generated_date)
-                        : "—"}
+                      {r.notes ?? "—"}
                     </td>
 
                     <td
@@ -588,14 +627,6 @@ export default function AgendaFinanceira() {
                           style={btnStyle}
                         >
                           Editar
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => generateTransaction(r)}
-                          style={btnPrimaryStyle}
-                        >
-                          Gerar lançamento
                         </button>
 
                         <button

@@ -105,6 +105,21 @@ function eventStyle(row: FinancialCalendarRow): React.CSSProperties {
     border = "1px solid rgba(255,140,140,0.28)";
   }
 
+  if (row.notes === "previsto") {
+    return {
+      background: "rgba(180,120,255,0.25)",
+      border: "1px dashed rgba(180,120,255,0.6)",
+      borderRadius: 8,
+      color: "white",
+      fontWeight: 800,
+      padding: "6px 8px",
+      boxShadow: "0 6px 14px rgba(0,0,0,0.18)",
+      display: "grid",
+      gap: 2,
+      opacity: 0.9,
+    };
+  }
+
   return {
     background: bg,
     border,

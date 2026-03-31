@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import CrmShell from "./CrmShell";
+import InactivityLogout from "./_components/InactivityLogout";
 
 export default function CrmLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -68,5 +69,10 @@ export default function CrmLayout({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return <CrmShell>{children}</CrmShell>;
+  return (
+  <>
+    <InactivityLogout />
+    <CrmShell>{children}</CrmShell>
+  </>
+);
 }
