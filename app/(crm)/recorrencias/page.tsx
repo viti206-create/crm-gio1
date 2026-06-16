@@ -63,14 +63,12 @@ function normalizePhoneReadable(raw: string | null, e164: string | null) {
 function normalizeRecStatus(status: string | null | undefined) {
   const s = (status || "").trim().toLowerCase();
 
-  if (["ativa", "ativo"].includes(s)) return "ativa";
-  if (["concluida", "concluída", "encerrado", "encerrada"].includes(s)) {
-    return "concluida";
-  }
-  if (s === "pausada") return "pausada";
-  if (s === "cancelada") return "cancelada";
+  if (["ativo", "ativa"].includes(s)) return "ativo";
+  if (["pausado", "pausada"].includes(s)) return "pausado";
+  if (s === "cancelar_hoje") return "cancelar_hoje";
+  if (["finalizado", "finalizada", "concluida", "concluída", "encerrado", "encerrada"].includes(s)) return "finalizado";
 
-  return s || "ativa";
+  return "ativo";
 }
 
 const thCenter: React.CSSProperties = {
@@ -137,7 +135,7 @@ export default function RecorrenciasPage() {
       let nextStatus = normalizeRecStatus(rec.status);
 
       if (nextDone >= total) {
-        nextStatus = "concluida";
+        nextStatus = "finalizado";
       }
 
       const { error: saleError } = await supabase.from("sales").insert({
@@ -321,7 +319,7 @@ export default function RecorrenciasPage() {
                   </td>
 
                   <td style={tdCenter}>
-                    {x.normalizedStatus === "ativa" && !x.isCompleted && (
+                    {x.normalizedStatus === "ativo" && !x.isCompleted && (
                       <button
                         style={{
                           background: "rgba(180,120,255,0.15)",
@@ -340,7 +338,7 @@ export default function RecorrenciasPage() {
                       </button>
                     )}
 
-                    {(x.normalizedStatus !== "ativa" || x.isCompleted) && (
+                    {(x.normalizedStatus !== "ativo" || x.isCompleted) && (
                       <span style={{ fontSize: 12, opacity: 0.7 }}>—</span>
                     )}
                   </td>
