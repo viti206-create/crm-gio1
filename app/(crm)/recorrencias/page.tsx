@@ -171,9 +171,10 @@ export default function RecorrenciasPage() {
       }
 
       await fetchAll();
-    } catch (e) {
-      console.error(e);
-      alert("Erro ao registrar pagamento.");
+    } catch (e: any) {
+      console.error("ERRO COMPLETO:", JSON.stringify(e, null, 2));
+      const msg = e?.message || e?.error_description || e?.details || JSON.stringify(e);
+      alert("Erro ao registrar pagamento:\n\n" + msg);
     }
   }
 
