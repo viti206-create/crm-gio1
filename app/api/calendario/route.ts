@@ -71,11 +71,11 @@ function buildICS(events: IcsEvent[]) {
     lines.push(`DTEND;VALUE=DATE:${nextDay}`);
     lines.push(`SUMMARY:${escapeICS(ev.title)}`);
     lines.push(`DESCRIPTION:${escapeICS(ev.description)}`);
-    // Notificação padrão: avisa no mesmo dia, às 9h (ajustável no próprio Google Calendar depois)
+    // Notificação padrão: avisa às 14h no horário de Brasília (UTC-3 = 17h UTC)
     lines.push("BEGIN:VALARM");
     lines.push("ACTION:DISPLAY");
     lines.push("DESCRIPTION:Lembrete");
-    lines.push("TRIGGER:PT9H");
+    lines.push("TRIGGER:PT17H");
     lines.push("END:VALARM");
     lines.push("END:VEVENT");
   }
@@ -113,6 +113,8 @@ export async function GET() {
     const total = Number(rec.installments_total || 0);
     const done = Number(rec.installments_done || 0);
     const nextPayment = addMonths(start, done);
+    const finalPayment = addMonths(start, Math.max(total - 1, 0));
+    const cancelFrom = addDays(finalPayment, 1);
 
     const lead = (rec as any).leads;
     const nome = lead?.name || "Cliente sem nome";
@@ -122,29 +124,47 @@ export async function GET() {
       (lead?.phone_e164 && lead.phone_e164.trim()) ||
       "sem telefone";
 
-    // Só gera eventos futuros relevantes (evita poluir o calendário com histórico)
-    if (done >= total) continue;
+    const isCompleted = done >= total && total > 0;
 
-    // Evento 1: aviso 1 dia antes do vencimento
-    const diaAntes = addDays(nextPayment, -1);
+    // Eventos de parcela: só geram se ainda houver parcelas pendentes
+    if (!isCompleted) {
+      // Evento 1: aviso 1 dia antes do vencimento da próxima parcela
+      const diaAntes = addDays(nextPayment, -1);
+      events.push({
+        uid: `${rec.id}-aviso`,
+        date: diaAntes,
+        title: `🔔 Vence amanhã: ${nome} (${valor})`,
+        description: `Recorrência de ${nome} (${telefone}) vence amanhã. Valor: ${valor}. Parcela ${
+          done + 1
+        }/${total}.`,
+      });
+
+      // Evento 2: aviso 1 dia depois do vencimento (conferir se caiu)
+      const diaDepois = addDays(nextPayment, 1);
+      events.push({
+        uid: `${rec.id}-conferir`,
+        date: diaDepois,
+        title: `⚠️ Conferir pagamento: ${nome} (${valor})`,
+        description: `Confirme no app do banco se o pagamento de ${nome} (${telefone}) caiu. Vencimento foi ontem. Valor: ${valor}. Parcela ${
+          done + 1
+        }/${total}.`,
+      });
+    }
+
+    // Evento 3: Último pagamento (data da última parcela, mesma exibida na tela)
     events.push({
-      uid: `${rec.id}-aviso`,
-      date: diaAntes,
-      title: `🔔 Vence amanhã: ${nome} (${valor})`,
-      description: `Recorrência de ${nome} (${telefone}) vence amanhã. Valor: ${valor}. Parcela ${
-        done + 1
-      }/${total}.`,
+      uid: `${rec.id}-ultimo-pagamento`,
+      date: finalPayment,
+      title: `🏁 Último pagamento: ${nome} (${valor})`,
+      description: `Hoje é a data do último pagamento (parcela ${total}/${total}) de ${nome} (${telefone}). Valor: ${valor}.`,
     });
 
-    // Evento 2: aviso 1 dia depois do vencimento (conferir se caiu)
-    const diaDepois = addDays(nextPayment, 1);
+    // Evento 4: Cancelar recorrência (data "de", início da janela de cancelamento já calculada na tela)
     events.push({
-      uid: `${rec.id}-conferir`,
-      date: diaDepois,
-      title: `⚠️ Conferir pagamento: ${nome} (${valor})`,
-      description: `Confirme no app do banco se o pagamento de ${nome} (${telefone}) caiu. Vencimento foi ontem. Valor: ${valor}. Parcela ${
-        done + 1
-      }/${total}.`,
+      uid: `${rec.id}-cancelar-recorrencia`,
+      date: cancelFrom,
+      title: `🛑 Cancelar recorrência: ${nome}`,
+      description: `A partir de hoje está liberado cancelar a recorrência de ${nome} (${telefone}), caso o cliente não tenha renovado.`,
     });
   }
 
