@@ -126,30 +126,33 @@ export async function GET() {
 
     const isCompleted = done >= total && total > 0;
 
-    // Eventos de parcela: só geram se ainda houver parcelas pendentes
-    if (!isCompleted) {
-      // Evento 1: aviso 1 dia antes do vencimento da próxima parcela
-      const diaAntes = addDays(nextPayment, -1);
+    // Gera eventos para TODAS as parcelas (pagas e futuras) para visualização completa no calendário
+    for (let i = 0; i < total; i++) {
+      const parcela = addMonths(start, i);
+      const pago = i < done;
+
+      const diaAntes = addDays(parcela, -1);
       events.push({
-        uid: `${rec.id}-aviso`,
+        uid: `${rec.id}-aviso-${i}`,
         date: diaAntes,
-        title: `🔔 Vence amanhã: ${nome} (${valor})`,
-        description: `Recorrência de ${nome} (${telefone}) vence amanhã. Valor: ${valor}. Parcela ${
-          done + 1
-        }/${total}.`,
+        title: pago
+          ? `✅ Venceu: ${nome} (${valor})`
+          : `🔔 Vence amanhã: ${nome} (${valor})`,
+        description: `Parcela ${i + 1}/${total} de ${nome} (${telefone}). Valor: ${valor}.`,
       });
 
-      // Evento 2: aviso 1 dia depois do vencimento (conferir se caiu)
-      const diaDepois = addDays(nextPayment, 1);
+      const diaDepois = addDays(parcela, 1);
       events.push({
-        uid: `${rec.id}-conferir`,
+        uid: `${rec.id}-conferir-${i}`,
         date: diaDepois,
-        title: `⚠️ Conferir pagamento: ${nome} (${valor})`,
-        description: `Confirme no app do banco se o pagamento de ${nome} (${telefone}) caiu. Vencimento foi ontem. Valor: ${valor}. Parcela ${
-          done + 1
-        }/${total}.`,
+        title: pago
+          ? `✅ Conferido: ${nome} (${valor})`
+          : `⚠️ Conferir pagamento: ${nome} (${valor})`,
+        description: `Confirme no app do banco se o pagamento de ${nome} (${telefone}) caiu. Parcela ${i + 1}/${total}. Valor: ${valor}.`,
       });
     }
+
+    if (isCompleted) continue;
 
     // Evento 3: Último pagamento (data da última parcela, mesma exibida na tela)
     events.push({
