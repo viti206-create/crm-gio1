@@ -581,40 +581,18 @@ export default function HomePage() {
       const d = new Date(sale.closed_at);
       if (Number.isNaN(d.getTime())) continue;
 
+      // Usa o closed_at real de cada venda — sem projeção automática de parcelas.
+      // Vendas recorrentes só entram aqui quando o pagamento foi registrado manualmente
+      // via "Registrar pagamento" na aba Recorrências, gerando uma sale individual
+      // com seu próprio closed_at no mês correto.
+      if (!isInPeriod(d, filterMode, selectedYear, selectedMonth)) continue;
+
       const gross = Number(sale.value_gross ?? sale.value ?? 0);
-      const isRecurring = sale.sale_type === "recorrencia" || !!sale.recorrencia_id;
-      const installmentsTotal = parseInstallmentsTotal(sale.installments_label);
-      const monthlyValue =
-        isRecurring && installmentsTotal > 0
-          ? Number((gross / installmentsTotal).toFixed(2))
-          : gross;
 
-      if (!isRecurring) {
-        if (!isInPeriod(d, filterMode, selectedYear, selectedMonth)) continue;
-
-        if (!map.has(seller)) {
-          map.set(seller, { amount: 0, count: 0 });
-        }
-
-        const cur = map.get(seller)!;
-        cur.amount += monthlyValue;
-        cur.count += 1;
-        continue;
-      }
-
-      for (let i = 0; i < installmentsTotal; i += 1) {
-        const installmentDate = addMonths(d, i);
-        if (installmentDate > todayRef) break;
-        if (!isInPeriod(installmentDate, filterMode, selectedYear, selectedMonth)) continue;
-
-        if (!map.has(seller)) {
-          map.set(seller, { amount: 0, count: 0 });
-        }
-
-        const cur = map.get(seller)!;
-        cur.amount += monthlyValue;
-        cur.count += 1;
-      }
+      if (!map.has(seller)) map.set(seller, { amount: 0, count: 0 });
+      const cur = map.get(seller)!;
+      cur.amount += gross;
+      cur.count += 1;
     }
 
     return Array.from(map.entries())
@@ -624,7 +602,7 @@ export default function HomePage() {
         count: v.count,
       }))
       .sort((a, b) => b.amount - a.amount);
-  }, [sales, filterMode, selectedYear, selectedMonth, todayRef]);
+  }, [sales, filterMode, selectedYear, selectedMonth]);
 
   const clientsBySex = useMemo(() => {
     const order = ["Feminino", "Masculino", "Não informado"];
