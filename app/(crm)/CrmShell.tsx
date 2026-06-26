@@ -101,7 +101,9 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
   }, [loadingRole, isAdmin]);
 
   const header: React.CSSProperties = {
-    position: "relative",
+    position: "sticky",
+    top: 0,
+    zIndex: 100,
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
@@ -109,6 +111,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     borderBottom: "1px solid rgba(255,255,255,0.10)",
     background:
       "radial-gradient(1200px 600px at 30% 0%, rgba(140,80,255,0.25) 0%, rgba(10,10,16,0.92) 55%, rgba(10,10,16,0.98) 100%)",
+    backdropFilter: "blur(12px)",
   };
 
   const left: React.CSSProperties = {
