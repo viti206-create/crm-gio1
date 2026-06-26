@@ -30,6 +30,8 @@ type EditForm = {
   price_per_installment: string;
 };
 
+type TabType = "ativas" | "canceladas";
+
 function formatDateBR(d: Date | string | null | undefined) {
   if (!d) return "—";
   const dt = typeof d === "string" ? new Date(d) : d;
@@ -108,6 +110,7 @@ export default function RecorrenciasPage() {
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<RecRow[]>([]);
+  const [activeTab, setActiveTab] = useState<TabType>("ativas");
   const [editRec, setEditRec] = useState<RecRow | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [saving, setSaving] = useState(false);
@@ -168,6 +171,40 @@ export default function RecorrenciasPage() {
     }
   }
 
+  async function cancelRec(rec: RecRow) {
+    const nome = rec.leads?.name ?? "este cliente";
+    const ok = window.confirm(`Cancelar a recorrência de ${nome}? Esta ação não pode ser desfeita.`);
+    if (!ok) return;
+    try {
+      const { error } = await supabase
+        .from("recorrencias")
+        .update({ status: "finalizado" })
+        .eq("id", rec.id);
+      if (error) throw error;
+      await fetchAll();
+    } catch (e: any) {
+      const msg = e?.message || e?.details || JSON.stringify(e);
+      setDebugError(msg);
+    }
+  }
+
+  async function reativarRec(rec: RecRow) {
+    const nome = rec.leads?.name ?? "este cliente";
+    const ok = window.confirm(`Reativar a recorrência de ${nome}?`);
+    if (!ok) return;
+    try {
+      const { error } = await supabase
+        .from("recorrencias")
+        .update({ status: "ativo" })
+        .eq("id", rec.id);
+      if (error) throw error;
+      await fetchAll();
+    } catch (e: any) {
+      const msg = e?.message || e?.details || JSON.stringify(e);
+      setDebugError(msg);
+    }
+  }
+
   function openEdit(rec: RecRow) {
     setEditRec(rec);
     setEditForm({
@@ -221,102 +258,203 @@ export default function RecorrenciasPage() {
       let paymentStatus = "em dia";
       if (daysToNext < 0) paymentStatus = "atrasado";
       else if (daysToNext <= 3) paymentStatus = "vence em breve";
+
+      const normalizedStatus = normalizeRecStatus(r.status);
+      const isCompleted = done >= total && total > 0;
+      // Cancelado = status finalizado mas não completou todas as parcelas
+      const isCancelled = normalizedStatus === "finalizado" && !isCompleted;
+      // Concluído = completou todas as parcelas
+      const isConcluded = normalizedStatus === "finalizado" && isCompleted;
+
       return {
         r, nextPayment, finalPayment, cancelFrom, cancelUntil,
-        daysToNext, paymentStatus,
-        normalizedStatus: normalizeRecStatus(r.status),
-        isCompleted: done >= total && total > 0,
+        daysToNext, paymentStatus, normalizedStatus,
+        isCompleted, isCancelled, isConcluded,
       };
     });
   }, [rows]);
 
+  const ativas = useMemo(() => computed.filter(x => x.normalizedStatus === "ativo"), [computed]);
+  const canceladas = useMemo(() => computed.filter(x => x.isCancelled || x.isConcluded), [computed]);
+
   if (loadingRole) return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
   if (!isAdmin) return null;
+
+  const renderTable = (items: typeof computed, isCancelledTab = false) => (
+    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <thead>
+        <tr>
+          <th style={{ textAlign: "left", paddingBottom: 10 }}>Cliente</th>
+          <th style={thCenter}>Parcelas</th>
+          <th style={thCenter}>Mensal</th>
+          {!isCancelledTab && <th style={thCenter}>Próx pagamento</th>}
+          {!isCancelledTab && <th style={thCenter}>Último pagamento</th>}
+          {!isCancelledTab && <th style={thCenter}>Cancelar recorrência</th>}
+          {isCancelledTab && <th style={thCenter}>Status</th>}
+          <th style={thCenter}>Ação</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((x) => {
+          const leadName = x.r.leads?.name ?? "—";
+          const phone = normalizePhoneReadable(x.r.leads?.phone_raw ?? null, x.r.leads?.phone_e164 ?? null);
+          return (
+            <tr key={x.r.id} style={{ opacity: isCancelledTab ? 0.7 : 1 }}>
+              <td style={{ padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.06)", textAlign: "left", verticalAlign: "top" }}>
+                <div style={{ fontWeight: 900 }}>{leadName}</div>
+                <div style={{ fontSize: 12, opacity: 0.7 }}>{phone}</div>
+              </td>
+              <td style={tdCenter}>{x.r.installments_done} / {x.r.installments_total}</td>
+              <td style={tdCenter}>{formatBRL(x.r.price_per_installment)}</td>
+
+              {!isCancelledTab && (
+                <td style={tdCenter}>
+                  {x.isCompleted ? (
+                    <div style={{ opacity: 0.7 }}>Concluído</div>
+                  ) : (
+                    <>
+                      <div style={{ fontWeight: 900 }}>{formatDateBR(x.nextPayment)}</div>
+                      {x.paymentStatus === "atrasado" && (
+                        <div style={{ color: "#ff7aa0", fontSize: 12 }}>⚠️ Atrasado {Math.abs(x.daysToNext)} dia(s)</div>
+                      )}
+                      {x.paymentStatus === "vence em breve" && (
+                        <div style={{ color: "#ffc878", fontSize: 12 }}>⏳ Vence em {x.daysToNext} dia(s)</div>
+                      )}
+                    </>
+                  )}
+                </td>
+              )}
+
+              {!isCancelledTab && (
+                <td style={tdCenter}>
+                  <div style={{ fontWeight: 900 }}>{formatDateBR(x.finalPayment)}</div>
+                </td>
+              )}
+
+              {!isCancelledTab && (
+                <td style={tdCenter}>
+                  <div style={{ fontWeight: 900 }}>{formatDateBR(x.cancelFrom)}</div>
+                  <div style={{ fontSize: 12, opacity: 0.72 }}>até {formatDateBR(x.cancelUntil)}</div>
+                </td>
+              )}
+
+              {isCancelledTab && (
+                <td style={tdCenter}>
+                  <div style={{
+                    display: "inline-block",
+                    padding: "3px 10px",
+                    borderRadius: 999,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    background: x.isConcluded ? "rgba(120,255,180,0.12)" : "rgba(255,120,120,0.12)",
+                    border: x.isConcluded ? "1px solid rgba(120,255,180,0.3)" : "1px solid rgba(255,120,120,0.3)",
+                    color: x.isConcluded ? "#78ffb4" : "#ff7878",
+                  }}>
+                    {x.isConcluded ? "✅ Concluído" : "❌ Cancelado"}
+                  </div>
+                </td>
+              )}
+
+              <td style={tdCenter}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
+                  {!isCancelledTab && (
+                    <>
+                      {x.normalizedStatus === "ativo" && !x.isCompleted && (
+                        <button
+                          style={{ background: "rgba(180,120,255,0.15)", border: "1px solid rgba(180,120,255,0.35)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                          onClick={() => registerPayment(x.r)}
+                        >
+                          Registrar pagamento
+                        </button>
+                      )}
+                      <button
+                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                        onClick={() => openEdit(x.r)}
+                      >
+                        ✏️ Editar
+                      </button>
+                      <button
+                        style={{ background: "rgba(255,80,80,0.12)", border: "1px solid rgba(255,80,80,0.3)", color: "#ff8080", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                        onClick={() => cancelRec(x.r)}
+                      >
+                        ✕ Cancelar
+                      </button>
+                    </>
+                  )}
+                  {isCancelledTab && x.isCancelled && (
+                    <button
+                      style={{ background: "rgba(120,255,180,0.10)", border: "1px solid rgba(120,255,180,0.25)", color: "#78ffb4", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                      onClick={() => reativarRec(x.r)}
+                    >
+                      ↩ Reativar
+                    </button>
+                  )}
+                  <button
+                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                    onClick={() => openEdit(x.r)}
+                  >
+                    ✏️ Editar
+                  </button>
+                </div>
+              </td>
+            </tr>
+          );
+        })}
+        {!items.length && (
+          <tr>
+            <td colSpan={7} style={{ paddingTop: 12, opacity: 0.7 }}>
+              {isCancelledTab ? "Nenhuma recorrência cancelada ou concluída." : "Nenhuma recorrência ativa."}
+            </td>
+          </tr>
+        )}
+      </tbody>
+    </table>
+  );
+
+  const tabBtn = (tab: TabType, label: string, count: number): React.CSSProperties => ({
+    background: activeTab === tab ? "rgba(180,120,255,0.2)" : "rgba(255,255,255,0.05)",
+    border: activeTab === tab ? "1px solid rgba(180,120,255,0.4)" : "1px solid rgba(255,255,255,0.12)",
+    color: "white",
+    padding: "8px 18px",
+    borderRadius: 10,
+    cursor: "pointer",
+    fontWeight: 700,
+    fontSize: 13,
+  });
 
   return (
     <div style={{ padding: 16, color: "white" }}>
       {/* Modal de edição */}
       {editRec && editForm && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 999,
-          background: "rgba(0,0,0,0.7)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <div style={{
-            background: "#1a1625", border: "1px solid rgba(255,255,255,0.12)",
-            borderRadius: 18, padding: 28, width: "100%", maxWidth: 420,
-          }}>
+        <div style={{ position: "fixed", inset: 0, zIndex: 999, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#1a1625", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 18, padding: 28, width: "100%", maxWidth: 420 }}>
             <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 20 }}>
               Editar recorrência — {editRec.leads?.name ?? "—"}
             </div>
-
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle}>Data de início</label>
-              <input
-                type="date"
-                style={inputStyle}
-                value={editForm.start_date}
-                onChange={e => setEditForm({ ...editForm, start_date: e.target.value })}
-              />
+              <input type="date" style={inputStyle} value={editForm.start_date} onChange={e => setEditForm({ ...editForm, start_date: e.target.value })} />
             </div>
-
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle}>Valor mensal (R$)</label>
-              <input
-                type="number"
-                step="0.01"
-                style={inputStyle}
-                value={editForm.price_per_installment}
-                onChange={e => setEditForm({ ...editForm, price_per_installment: e.target.value })}
-              />
+              <input type="number" step="0.01" style={inputStyle} value={editForm.price_per_installment} onChange={e => setEditForm({ ...editForm, price_per_installment: e.target.value })} />
             </div>
-
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
               <div>
                 <label style={labelStyle}>Total de parcelas</label>
-                <input
-                  type="number"
-                  min="1"
-                  style={inputStyle}
-                  value={editForm.installments_total}
-                  onChange={e => setEditForm({ ...editForm, installments_total: e.target.value })}
-                />
+                <input type="number" min="1" style={inputStyle} value={editForm.installments_total} onChange={e => setEditForm({ ...editForm, installments_total: e.target.value })} />
               </div>
               <div>
                 <label style={labelStyle}>Parcelas pagas</label>
-                <input
-                  type="number"
-                  min="0"
-                  style={inputStyle}
-                  value={editForm.installments_done}
-                  onChange={e => setEditForm({ ...editForm, installments_done: e.target.value })}
-                />
+                <input type="number" min="0" style={inputStyle} value={editForm.installments_done} onChange={e => setEditForm({ ...editForm, installments_done: e.target.value })} />
               </div>
             </div>
-
             <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 20, lineHeight: 1.5 }}>
-              💡 Para corrigir a data de uma parcela específica, ajuste a <strong>Data de início</strong> e o número de <strong>Parcelas pagas</strong> conforme a nova data acordada.
+              💡 Para corrigir a data de uma parcela específica, ajuste a <strong>Data de início</strong> e o número de <strong>Parcelas pagas</strong>.
             </div>
-
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button
-                onClick={closeEdit}
-                style={{
-                  background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)",
-                  color: "white", padding: "8px 18px", borderRadius: 9, cursor: "pointer", fontSize: 13,
-                }}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={saveEdit}
-                disabled={saving}
-                style={{
-                  background: "rgba(180,120,255,0.2)", border: "1px solid rgba(180,120,255,0.4)",
-                  color: "white", padding: "8px 18px", borderRadius: 9, cursor: "pointer",
-                  fontSize: 13, fontWeight: 700, opacity: saving ? 0.6 : 1,
-                }}
-              >
+              <button onClick={closeEdit} style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "8px 18px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
+              <button onClick={saveEdit} disabled={saving} style={{ background: "rgba(180,120,255,0.2)", border: "1px solid rgba(180,120,255,0.4)", color: "white", padding: "8px 18px", borderRadius: 9, cursor: "pointer", fontSize: 13, fontWeight: 700, opacity: saving ? 0.6 : 1 }}>
                 {saving ? "Salvando..." : "Salvar"}
               </button>
             </div>
@@ -324,109 +462,34 @@ export default function RecorrenciasPage() {
         </div>
       )}
 
-      <div style={{
-        border: "1px solid rgba(255,255,255,0.10)",
-        background: "rgba(255,255,255,0.04)",
-        borderRadius: 18, padding: 14,
-      }}>
+      <div style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", borderRadius: 18, padding: 14 }}>
         <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>Recorrências</div>
 
+        {/* Abas */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <button style={tabBtn("ativas", "Ativas", ativas.length)} onClick={() => setActiveTab("ativas")}>
+            Ativas ({ativas.length})
+          </button>
+          <button style={tabBtn("canceladas", "Canceladas", canceladas.length)} onClick={() => setActiveTab("canceladas")}>
+            Canceladas / Concluídas ({canceladas.length})
+          </button>
+        </div>
+
         {debugError && (
-          <div style={{
-            background: "rgba(255,80,80,0.15)", border: "1px solid rgba(255,80,80,0.4)",
-            borderRadius: 12, padding: 14, marginBottom: 16, color: "#ff8080",
-            whiteSpace: "pre-wrap", fontFamily: "monospace", fontSize: 13,
-          }}>
-            <strong>Erro ao registrar pagamento:</strong><br />{debugError}<br /><br />
-            <button onClick={() => setDebugError(null)} style={{
-              background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
-              color: "white", padding: "4px 10px", borderRadius: 8, cursor: "pointer",
-            }}>Fechar</button>
+          <div style={{ background: "rgba(255,80,80,0.15)", border: "1px solid rgba(255,80,80,0.4)", borderRadius: 12, padding: 14, marginBottom: 16, color: "#ff8080", whiteSpace: "pre-wrap", fontFamily: "monospace", fontSize: 13 }}>
+            <strong>Erro:</strong><br />{debugError}<br /><br />
+            <button onClick={() => setDebugError(null)} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", color: "white", padding: "4px 10px", borderRadius: 8, cursor: "pointer" }}>Fechar</button>
           </div>
         )}
 
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: "left", paddingBottom: 10 }}>Cliente</th>
-              <th style={thCenter}>Parcelas</th>
-              <th style={thCenter}>Mensal</th>
-              <th style={thCenter}>Próx pagamento</th>
-              <th style={thCenter}>Último pagamento</th>
-              <th style={thCenter}>Cancelar recorrência</th>
-              <th style={thCenter}>Ação</th>
-            </tr>
-          </thead>
-          <tbody>
-            {computed.map((x) => {
-              const leadName = x.r.leads?.name ?? "—";
-              const phone = normalizePhoneReadable(x.r.leads?.phone_raw ?? null, x.r.leads?.phone_e164 ?? null);
-              return (
-                <tr key={x.r.id}>
-                  <td style={{ padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.06)", textAlign: "left", verticalAlign: "top" }}>
-                    <div style={{ fontWeight: 900 }}>{leadName}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7 }}>{phone}</div>
-                  </td>
-                  <td style={tdCenter}>{x.r.installments_done} / {x.r.installments_total}</td>
-                  <td style={tdCenter}>{formatBRL(x.r.price_per_installment)}</td>
-                  <td style={tdCenter}>
-                    {x.isCompleted ? (
-                      <div style={{ opacity: 0.7 }}>Concluído</div>
-                    ) : (
-                      <>
-                        <div style={{ fontWeight: 900 }}>{formatDateBR(x.nextPayment)}</div>
-                        {x.paymentStatus === "atrasado" && (
-                          <div style={{ color: "#ff7aa0", fontSize: 12 }}>⚠️ Atrasado {Math.abs(x.daysToNext)} dia(s)</div>
-                        )}
-                        {x.paymentStatus === "vence em breve" && (
-                          <div style={{ color: "#ffc878", fontSize: 12 }}>⏳ Vence em {x.daysToNext} dia(s)</div>
-                        )}
-                      </>
-                    )}
-                  </td>
-                  <td style={tdCenter}>
-                    <div style={{ fontWeight: 900 }}>{formatDateBR(x.finalPayment)}</div>
-                  </td>
-                  <td style={tdCenter}>
-                    <div style={{ fontWeight: 900 }}>{formatDateBR(x.cancelFrom)}</div>
-                    <div style={{ fontSize: 12, opacity: 0.72 }}>até {formatDateBR(x.cancelUntil)}</div>
-                  </td>
-                  <td style={tdCenter}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "center" }}>
-                      {x.normalizedStatus === "ativo" && !x.isCompleted && (
-                        <button
-                          style={{
-                            background: "rgba(180,120,255,0.15)", border: "1px solid rgba(180,120,255,0.35)",
-                            color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer",
-                            fontSize: 11, fontWeight: 700, lineHeight: 1.1,
-                          }}
-                          onClick={() => registerPayment(x.r)}
-                        >
-                          Registrar pagamento
-                        </button>
-                      )}
-                      <button
-                        style={{
-                          background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)",
-                          color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer",
-                          fontSize: 11, fontWeight: 700, lineHeight: 1.1,
-                        }}
-                        onClick={() => openEdit(x.r)}
-                      >
-                        ✏️ Editar
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-            {!computed.length && (
-              <tr>
-                <td colSpan={7} style={{ paddingTop: 12, opacity: 0.7 }}>Nenhuma recorrência encontrada.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        {loading ? (
+          <div style={{ opacity: 0.7, padding: 12 }}>Carregando...</div>
+        ) : (
+          <>
+            {activeTab === "ativas" && renderTable(ativas, false)}
+            {activeTab === "canceladas" && renderTable(canceladas, true)}
+          </>
+        )}
       </div>
     </div>
   );
