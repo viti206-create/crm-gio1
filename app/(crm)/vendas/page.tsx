@@ -996,7 +996,6 @@ export default function VendasPage() {
 
       return hay.includes(q);
     });
-    });
 
     // Separar avulsas e recorrentes
     const avulsas = filtered.filter(r => r.sale_type !== "recorrencia");
