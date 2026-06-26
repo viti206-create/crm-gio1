@@ -367,34 +367,40 @@ export default function RecorrenciasPage() {
                           Registrar pagamento
                         </button>
                       )}
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <button
+                          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                          onClick={() => openEdit(x.r)}
+                        >
+                          ✏️ Editar
+                        </button>
+                        <button
+                          style={{ background: "rgba(255,80,80,0.12)", border: "1px solid rgba(255,80,80,0.3)", color: "#ff8080", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                          onClick={() => cancelRec(x.r)}
+                        >
+                          ✕ Cancelar
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {isCancelledTab && (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}>
+                      {x.isCancelled && (
+                        <button
+                          style={{ background: "rgba(120,255,180,0.10)", border: "1px solid rgba(120,255,180,0.25)", color: "#78ffb4", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                          onClick={() => reativarRec(x.r)}
+                        >
+                          ↩ Reativar
+                        </button>
+                      )}
                       <button
                         style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
                         onClick={() => openEdit(x.r)}
                       >
                         ✏️ Editar
                       </button>
-                      <button
-                        style={{ background: "rgba(255,80,80,0.12)", border: "1px solid rgba(255,80,80,0.3)", color: "#ff8080", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
-                        onClick={() => cancelRec(x.r)}
-                      >
-                        ✕ Cancelar
-                      </button>
-                    </>
+                    </div>
                   )}
-                  {isCancelledTab && x.isCancelled && (
-                    <button
-                      style={{ background: "rgba(120,255,180,0.10)", border: "1px solid rgba(120,255,180,0.25)", color: "#78ffb4", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
-                      onClick={() => reativarRec(x.r)}
-                    >
-                      ↩ Reativar
-                    </button>
-                  )}
-                  <button
-                    style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
-                    onClick={() => openEdit(x.r)}
-                  >
-                    ✏️ Editar
-                  </button>
                 </div>
               </td>
             </tr>
