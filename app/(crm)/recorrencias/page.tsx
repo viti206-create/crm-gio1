@@ -20,6 +20,7 @@ type RecRow = {
   installments_total: number;
   installments_done: number;
   price_per_installment: number | null;
+  sale_type?: string | null;
   leads?: LeadRow | null;
 };
 
@@ -30,7 +31,7 @@ type EditForm = {
   price_per_installment: string;
 };
 
-type TabType = "ativas" | "canceladas";
+type TabType = "cartao" | "boleto" | "canceladas";
 
 function formatDateBR(d: Date | string | null | undefined) {
   if (!d) return "—";
@@ -74,7 +75,7 @@ function normalizeRecStatus(status: string | null | undefined) {
   if (["ativo", "ativa"].includes(s)) return "ativo";
   if (["pausado", "pausada"].includes(s)) return "pausado";
   if (s === "cancelar_hoje") return "cancelar_hoje";
-  if (["finalizado", "finalizada", "concluida", "concluída", "encerrado", "encerrada"].includes(s)) return "finalizado";
+  if (["finalizado", "finalizada", "concluida", "concluida", "encerrado", "encerrada"].includes(s)) return "finalizado";
   return "ativo";
 }
 
@@ -110,7 +111,7 @@ export default function RecorrenciasPage() {
 
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<RecRow[]>([]);
-  const [activeTab, setActiveTab] = useState<TabType>("ativas");
+  const [activeTab, setActiveTab] = useState<TabType>("cartao");
   const [editRec, setEditRec] = useState<RecRow | null>(null);
   const [editForm, setEditForm] = useState<EditForm | null>(null);
   const [saving, setSaving] = useState(false);
@@ -122,19 +123,41 @@ export default function RecorrenciasPage() {
 
   async function fetchAll() {
     setLoading(true);
-    const { data, error } = await supabase
+
+    const { data: recData, error: recError } = await supabase
       .from("recorrencias")
       .select("id,lead_id,status,start_date,installments_total,installments_done,price_per_installment,leads(id,name,phone_raw,phone_e164)")
       .order("start_date", { ascending: false });
-    if (error) { console.error(error); setRows([]); setLoading(false); return; }
-    setRows((data as any) ?? []);
+
+    if (recError) { console.error(recError); setRows([]); setLoading(false); return; }
+
+    const { data: salesData } = await supabase
+      .from("sales")
+      .select("recorrencia_id,sale_type")
+      .in("sale_type", ["recorrencia", "boleto_recorrente"])
+      .not("recorrencia_id", "is", null);
+
+    const recTypeMap = new Map<string, string>();
+    for (const s of (salesData ?? []) as any[]) {
+      if (s.recorrencia_id && !recTypeMap.has(s.recorrencia_id)) {
+        recTypeMap.set(s.recorrencia_id, s.sale_type);
+      }
+    }
+
+    const enriched = ((recData as any) ?? []).map((r: any) => ({
+      ...r,
+      sale_type: recTypeMap.get(r.id) ?? "recorrencia",
+    }));
+
+    setRows(enriched);
     setLoading(false);
   }
 
   useEffect(() => { if (isAdmin) fetchAll(); }, [isAdmin]);
 
   async function registerPayment(rec: RecRow) {
-    const ok = window.confirm("Registrar pagamento desta mensalidade?");
+    const isBoleto = rec.sale_type === "boleto_recorrente";
+    const ok = window.confirm(`Registrar pagamento desta mensalidade${isBoleto ? " (boleto)" : ""}?`);
     if (!ok) return;
     try {
       const price = Number(rec.price_per_installment ?? 0);
@@ -143,17 +166,29 @@ export default function RecorrenciasPage() {
       let nextStatus = normalizeRecStatus(rec.status);
       if (nextDone >= total) nextStatus = "finalizado";
 
+      // Busca o vendedor da venda original para creditar em todas as parcelas
+      const { data: originalSale } = await supabase
+        .from("sales")
+        .select("seller_name")
+        .eq("recorrencia_id", rec.id)
+        .order("closed_at", { ascending: true })
+        .limit(1)
+        .single();
+
+      const sellerName = originalSale?.seller_name ?? null;
+
       const { error: saleError } = await supabase.from("sales").insert({
         lead_id: rec.lead_id,
         recorrencia_id: rec.id,
-        sale_type: "recorrencia",
-        procedure: "Mensalidade recorrente",
+        sale_type: isBoleto ? "boleto_recorrente" : "recorrencia",
+        procedure: isBoleto ? "Mensalidade boleto" : "Mensalidade recorrente",
         value: price,
         value_gross: price,
         value_net: price,
         fee_percent: 0,
-        payment_method: "cartao_recorrente",
+        payment_method: isBoleto ? "boleto" : "cartao_recorrente",
         installments_label: "À vista",
+        seller_name: sellerName,
         closed_at: new Date().toISOString(),
       });
       if (saleError) throw saleError;
@@ -166,8 +201,7 @@ export default function RecorrenciasPage() {
 
       await fetchAll();
     } catch (e: any) {
-      const msg = e?.message || e?.error_description || e?.details || JSON.stringify(e);
-      setDebugError(msg);
+      setDebugError(e?.message || e?.error_description || e?.details || JSON.stringify(e));
     }
   }
 
@@ -176,15 +210,11 @@ export default function RecorrenciasPage() {
     const ok = window.confirm(`Cancelar a recorrência de ${nome}? Esta ação não pode ser desfeita.`);
     if (!ok) return;
     try {
-      const { error } = await supabase
-        .from("recorrencias")
-        .update({ status: "finalizado" })
-        .eq("id", rec.id);
+      const { error } = await supabase.from("recorrencias").update({ status: "finalizado" }).eq("id", rec.id);
       if (error) throw error;
       await fetchAll();
     } catch (e: any) {
-      const msg = e?.message || e?.details || JSON.stringify(e);
-      setDebugError(msg);
+      setDebugError(e?.message || e?.details || JSON.stringify(e));
     }
   }
 
@@ -193,15 +223,11 @@ export default function RecorrenciasPage() {
     const ok = window.confirm(`Reativar a recorrência de ${nome}?`);
     if (!ok) return;
     try {
-      const { error } = await supabase
-        .from("recorrencias")
-        .update({ status: "ativo" })
-        .eq("id", rec.id);
+      const { error } = await supabase.from("recorrencias").update({ status: "ativo" }).eq("id", rec.id);
       if (error) throw error;
       await fetchAll();
     } catch (e: any) {
-      const msg = e?.message || e?.details || JSON.stringify(e);
-      setDebugError(msg);
+      setDebugError(e?.message || e?.details || JSON.stringify(e));
     }
   }
 
@@ -215,10 +241,7 @@ export default function RecorrenciasPage() {
     });
   }
 
-  function closeEdit() {
-    setEditRec(null);
-    setEditForm(null);
-  }
+  function closeEdit() { setEditRec(null); setEditForm(null); }
 
   async function saveEdit() {
     if (!editRec || !editForm) return;
@@ -237,8 +260,7 @@ export default function RecorrenciasPage() {
       closeEdit();
       await fetchAll();
     } catch (e: any) {
-      const msg = e?.message || e?.details || JSON.stringify(e);
-      alert("Erro ao salvar: " + msg);
+      alert("Erro ao salvar: " + (e?.message || e?.details || JSON.stringify(e)));
     } finally {
       setSaving(false);
     }
@@ -261,20 +283,20 @@ export default function RecorrenciasPage() {
 
       const normalizedStatus = normalizeRecStatus(r.status);
       const isCompleted = done >= total && total > 0;
-      // Cancelado = status finalizado mas não completou todas as parcelas
       const isCancelled = normalizedStatus === "finalizado" && !isCompleted;
-      // Concluído = completou todas as parcelas
       const isConcluded = normalizedStatus === "finalizado" && isCompleted;
+      const isBoleto = r.sale_type === "boleto_recorrente";
 
       return {
         r, nextPayment, finalPayment, cancelFrom, cancelUntil,
         daysToNext, paymentStatus, normalizedStatus,
-        isCompleted, isCancelled, isConcluded,
+        isCompleted, isCancelled, isConcluded, isBoleto,
       };
     });
   }, [rows]);
 
-  const ativas = useMemo(() => computed.filter(x => x.normalizedStatus === "ativo"), [computed]);
+  const cartaoAtivas = useMemo(() => computed.filter(x => x.normalizedStatus === "ativo" && !x.isBoleto), [computed]);
+  const boletoAtivas = useMemo(() => computed.filter(x => x.normalizedStatus === "ativo" && x.isBoleto), [computed]);
   const canceladas = useMemo(() => computed.filter(x => x.isCancelled || x.isConcluded), [computed]);
 
   if (loadingRole) return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
@@ -290,6 +312,7 @@ export default function RecorrenciasPage() {
           {!isCancelledTab && <th style={thCenter}>Próx pagamento</th>}
           {!isCancelledTab && <th style={thCenter}>Último pagamento</th>}
           {!isCancelledTab && <th style={thCenter}>Cancelar recorrência</th>}
+          {isCancelledTab && <th style={thCenter}>Tipo</th>}
           {isCancelledTab && <th style={thCenter}>Status</th>}
           <th style={thCenter}>Ação</th>
         </tr>
@@ -314,23 +337,13 @@ export default function RecorrenciasPage() {
                   ) : (
                     <>
                       <div style={{ fontWeight: 900 }}>{formatDateBR(x.nextPayment)}</div>
-                      {x.paymentStatus === "atrasado" && (
-                        <div style={{ color: "#ff7aa0", fontSize: 12 }}>⚠️ Atrasado {Math.abs(x.daysToNext)} dia(s)</div>
-                      )}
-                      {x.paymentStatus === "vence em breve" && (
-                        <div style={{ color: "#ffc878", fontSize: 12 }}>⏳ Vence em {x.daysToNext} dia(s)</div>
-                      )}
+                      {x.paymentStatus === "atrasado" && <div style={{ color: "#ff7aa0", fontSize: 12 }}>⚠️ Atrasado {Math.abs(x.daysToNext)} dia(s)</div>}
+                      {x.paymentStatus === "vence em breve" && <div style={{ color: "#ffc878", fontSize: 12 }}>⏳ Vence em {x.daysToNext} dia(s)</div>}
                     </>
                   )}
                 </td>
               )}
-
-              {!isCancelledTab && (
-                <td style={tdCenter}>
-                  <div style={{ fontWeight: 900 }}>{formatDateBR(x.finalPayment)}</div>
-                </td>
-              )}
-
+              {!isCancelledTab && <td style={tdCenter}><div style={{ fontWeight: 900 }}>{formatDateBR(x.finalPayment)}</div></td>}
               {!isCancelledTab && (
                 <td style={tdCenter}>
                   <div style={{ fontWeight: 900 }}>{formatDateBR(x.cancelFrom)}</div>
@@ -341,16 +354,24 @@ export default function RecorrenciasPage() {
               {isCancelledTab && (
                 <td style={tdCenter}>
                   <div style={{
-                    display: "inline-block",
-                    padding: "3px 10px",
-                    borderRadius: 999,
-                    fontSize: 12,
-                    fontWeight: 700,
+                    display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 700,
+                    background: x.isBoleto ? "rgba(255,200,80,0.12)" : "rgba(120,180,255,0.12)",
+                    border: x.isBoleto ? "1px solid rgba(255,200,80,0.3)" : "1px solid rgba(120,180,255,0.3)",
+                    color: x.isBoleto ? "#ffc850" : "#78b4ff",
+                  }}>
+                    {x.isBoleto ? "Boleto" : "Cartão"}
+                  </div>
+                </td>
+              )}
+              {isCancelledTab && (
+                <td style={tdCenter}>
+                  <div style={{
+                    display: "inline-block", padding: "3px 10px", borderRadius: 999, fontSize: 12, fontWeight: 700,
                     background: x.isConcluded ? "rgba(120,255,180,0.12)" : "rgba(255,120,120,0.12)",
                     border: x.isConcluded ? "1px solid rgba(120,255,180,0.3)" : "1px solid rgba(255,120,120,0.3)",
                     color: x.isConcluded ? "#78ffb4" : "#ff7878",
                   }}>
-                    {x.isConcluded ? "✅ Concluído" : "❌ Cancelado"}
+                    {x.isConcluded ? "Concluído" : "Cancelado"}
                   </div>
                 </td>
               )}
@@ -361,44 +382,28 @@ export default function RecorrenciasPage() {
                     <>
                       {x.normalizedStatus === "ativo" && !x.isCompleted && (
                         <button
-                          style={{ background: "rgba(180,120,255,0.15)", border: "1px solid rgba(180,120,255,0.35)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
+                          style={{
+                            background: x.isBoleto ? "rgba(255,200,80,0.15)" : "rgba(180,120,255,0.15)",
+                            border: x.isBoleto ? "1px solid rgba(255,200,80,0.35)" : "1px solid rgba(180,120,255,0.35)",
+                            color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700,
+                          }}
                           onClick={() => registerPayment(x.r)}
                         >
-                          Registrar pagamento
+                          {x.isBoleto ? "Registrar boleto" : "Registrar pagamento"}
                         </button>
                       )}
                       <div style={{ display: "flex", gap: 4 }}>
-                        <button
-                          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
-                          onClick={() => openEdit(x.r)}
-                        >
-                          ✏️ Editar
-                        </button>
-                        <button
-                          style={{ background: "rgba(255,80,80,0.12)", border: "1px solid rgba(255,80,80,0.3)", color: "#ff8080", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
-                          onClick={() => cancelRec(x.r)}
-                        >
-                          ✕ Cancelar
-                        </button>
+                        <button style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }} onClick={() => openEdit(x.r)}>Editar</button>
+                        <button style={{ background: "rgba(255,80,80,0.12)", border: "1px solid rgba(255,80,80,0.3)", color: "#ff8080", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }} onClick={() => cancelRec(x.r)}>Cancelar</button>
                       </div>
                     </>
                   )}
                   {isCancelledTab && (
                     <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}>
                       {x.isCancelled && (
-                        <button
-                          style={{ background: "rgba(120,255,180,0.10)", border: "1px solid rgba(120,255,180,0.25)", color: "#78ffb4", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
-                          onClick={() => reativarRec(x.r)}
-                        >
-                          ↩ Reativar
-                        </button>
+                        <button style={{ background: "rgba(120,255,180,0.10)", border: "1px solid rgba(120,255,180,0.25)", color: "#78ffb4", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }} onClick={() => reativarRec(x.r)}>Reativar</button>
                       )}
-                      <button
-                        style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }}
-                        onClick={() => openEdit(x.r)}
-                      >
-                        ✏️ Editar
-                      </button>
+                      <button style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "4px 7px", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700 }} onClick={() => openEdit(x.r)}>Editar</button>
                     </div>
                   )}
                 </div>
@@ -408,8 +413,8 @@ export default function RecorrenciasPage() {
         })}
         {!items.length && (
           <tr>
-            <td colSpan={7} style={{ paddingTop: 12, opacity: 0.7 }}>
-              {isCancelledTab ? "Nenhuma recorrência cancelada ou concluída." : "Nenhuma recorrência ativa."}
+            <td colSpan={8} style={{ paddingTop: 12, opacity: 0.7 }}>
+              {isCancelledTab ? "Nenhuma recorrência cancelada ou concluída." : "Nenhuma recorrência nesta categoria."}
             </td>
           </tr>
         )}
@@ -417,26 +422,18 @@ export default function RecorrenciasPage() {
     </table>
   );
 
-  const tabBtn = (tab: TabType, label: string, count: number): React.CSSProperties => ({
+  const tabBtn = (tab: TabType): React.CSSProperties => ({
     background: activeTab === tab ? "rgba(180,120,255,0.2)" : "rgba(255,255,255,0.05)",
     border: activeTab === tab ? "1px solid rgba(180,120,255,0.4)" : "1px solid rgba(255,255,255,0.12)",
-    color: "white",
-    padding: "8px 18px",
-    borderRadius: 10,
-    cursor: "pointer",
-    fontWeight: 700,
-    fontSize: 13,
+    color: "white", padding: "8px 18px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13,
   });
 
   return (
     <div style={{ padding: 16, color: "white" }}>
-      {/* Modal de edição */}
       {editRec && editForm && (
         <div style={{ position: "fixed", inset: 0, zIndex: 999, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ background: "#1a1625", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 18, padding: 28, width: "100%", maxWidth: 420 }}>
-            <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 20 }}>
-              Editar recorrência — {editRec.leads?.name ?? "—"}
-            </div>
+            <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 20 }}>Editar — {editRec.leads?.name ?? "—"}</div>
             <div style={{ marginBottom: 14 }}>
               <label style={labelStyle}>Data de início</label>
               <input type="date" style={inputStyle} value={editForm.start_date} onChange={e => setEditForm({ ...editForm, start_date: e.target.value })} />
@@ -456,7 +453,7 @@ export default function RecorrenciasPage() {
               </div>
             </div>
             <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 20, lineHeight: 1.5 }}>
-              💡 Para corrigir a data de uma parcela específica, ajuste a <strong>Data de início</strong> e o número de <strong>Parcelas pagas</strong>.
+              Para corrigir a data de uma parcela, ajuste a Data de início e Parcelas pagas.
             </div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
               <button onClick={closeEdit} style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.15)", color: "white", padding: "8px 18px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>Cancelar</button>
@@ -471,12 +468,14 @@ export default function RecorrenciasPage() {
       <div style={{ border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", borderRadius: 18, padding: 14 }}>
         <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 16 }}>Recorrências</div>
 
-        {/* Abas */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          <button style={tabBtn("ativas", "Ativas", ativas.length)} onClick={() => setActiveTab("ativas")}>
-            Ativas ({ativas.length})
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" }}>
+          <button style={tabBtn("cartao")} onClick={() => setActiveTab("cartao")}>
+            Cartão ({cartaoAtivas.length})
           </button>
-          <button style={tabBtn("canceladas", "Canceladas", canceladas.length)} onClick={() => setActiveTab("canceladas")}>
+          <button style={tabBtn("boleto")} onClick={() => setActiveTab("boleto")}>
+            Boleto ({boletoAtivas.length})
+          </button>
+          <button style={tabBtn("canceladas")} onClick={() => setActiveTab("canceladas")}>
             Canceladas / Concluídas ({canceladas.length})
           </button>
         </div>
@@ -492,7 +491,8 @@ export default function RecorrenciasPage() {
           <div style={{ opacity: 0.7, padding: 12 }}>Carregando...</div>
         ) : (
           <>
-            {activeTab === "ativas" && renderTable(ativas, false)}
+            {activeTab === "cartao" && renderTable(cartaoAtivas, false)}
+            {activeTab === "boleto" && renderTable(boletoAtivas, false)}
             {activeTab === "canceladas" && renderTable(canceladas, true)}
           </>
         )}

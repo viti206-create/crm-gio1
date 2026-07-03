@@ -185,8 +185,13 @@ function getFeePercent(params: {
   brand: CardBrand | "";
   installments: number;
   gross: number;
+  saleType?: string;
 }) {
-  const { provider, kind, brand, installments, gross } = params;
+  const { provider, kind, brand, installments, gross, saleType } = params;
+
+  // Taxas fixas para recorrências
+  if (saleType === "boleto_recorrente") return 2.2;
+  if (saleType === "recorrencia") return 3.48;
 
   if (kind === "pix" || kind === "dinheiro" || kind === "deposito") return 0;
 
@@ -410,6 +415,7 @@ function getPaymentKindsForProvider(provider: PaymentProvider) {
       { value: "pix", label: "Pix" },
       { value: "dinheiro", label: "Dinheiro" },
       { value: "deposito", label: "Depósito" },
+      { value: "boleto", label: "Boleto" },
     ] as Array<{ value: PaymentKind; label: string }>;
   }
 
@@ -880,7 +886,9 @@ export default function VendasPage() {
   }, [paymentMethod, paymentProvider]);
 
   const installmentOptions = useMemo(() => {
-    if (paymentMethod !== "credito") {
+    // Boleto recorrente e crédito permitem múltiplas parcelas (meses do contrato)
+    const allowsInstallments = paymentMethod === "credito" || saleType === "boleto_recorrente";
+    if (!allowsInstallments) {
       return [{ value: "À vista", label: "À vista" }];
     }
 
@@ -893,7 +901,7 @@ export default function VendasPage() {
         return { value: `${n}x`, label: `${n}x` };
       }),
     ];
-  }, [paymentMethod, paymentProvider]);
+  }, [paymentMethod, paymentProvider, saleType]);
 
   useEffect(() => {
     const validKinds = paymentKindOptions.map((x) => x.value);
@@ -916,7 +924,8 @@ export default function VendasPage() {
   }, [requiresBrand, brandOptions, cardBrand]);
 
   useEffect(() => {
-    if (paymentMethod !== "credito") {
+    const allowsInstallments = paymentMethod === "credito" || saleType === "boleto_recorrente";
+    if (!allowsInstallments) {
       if (installmentsLabel !== "À vista") {
         setInstallmentsLabel("À vista");
       }
@@ -926,7 +935,7 @@ export default function VendasPage() {
         setInstallmentsLabel("À vista");
       }
     }
-  }, [paymentMethod, installmentOptions, installmentsLabel]);
+  }, [paymentMethod, saleType, installmentOptions, installmentsLabel]);
 
   useEffect(() => {
     const gross = Number(grossValue || 0);
@@ -946,6 +955,7 @@ export default function VendasPage() {
       brand: cardBrand,
       installments: installmentsTotal,
       gross,
+      saleType,
     });
 
     if (lastEditedField === "net") {
@@ -967,10 +977,10 @@ export default function VendasPage() {
     cardBrand,
     installmentsLabel,
     lastEditedField,
+    saleType,
   ]);
 
-  // Agrupa recorrências pelo recorrencia_id para exibir como linha única expansível
-  const { flatRows, recGroups } = useMemo(() => {
+  const { flatRows, recGroups, filteredRows } = useMemo(() => {
     const q = filterQ.trim().toLowerCase();
 
     const filtered = rows.filter((r) => {
@@ -997,28 +1007,23 @@ export default function VendasPage() {
       return hay.includes(q);
     });
 
-    // Separar avulsas e recorrentes
-    const avulsas = filtered.filter(r => r.sale_type !== "recorrencia");
-    const recorrentes = filtered.filter(r => r.sale_type === "recorrencia");
+    const isRec = (r: SaleRow) => r.sale_type === "recorrencia" || r.sale_type === "boleto_recorrente";
+    const avulsas = filtered.filter(r => !isRec(r));
+    const recorrentes = filtered.filter(r => isRec(r));
 
-    // Agrupar recorrentes por recorrencia_id
     const groupMap = new Map<string, SaleRow[]>();
-    const semGrupo: SaleRow[] = [];
     for (const r of recorrentes) {
       const key = r.recorrencia_id ?? r.id;
       if (!groupMap.has(key)) groupMap.set(key, []);
       groupMap.get(key)!.push(r);
     }
 
-    return { flatRows: avulsas, recGroups: groupMap };
+    return {
+      flatRows: avulsas,
+      recGroups: groupMap,
+      filteredRows: [...avulsas, ...recorrentes],
+    };
   }, [rows, filterQ, filterType, filterPayment]);
-
-  // Para manter compatibilidade com total/resumo, filteredRows combina tudo
-  const filteredRows = useMemo(() => {
-    const avulsas = flatRows;
-    const recorrentes = Array.from(recGroups.values()).flat();
-    return [...avulsas, ...recorrentes];
-  }, [flatRows, recGroups]);
 
   function resetForm() {
     setEditingId(null);
@@ -1152,7 +1157,7 @@ export default function VendasPage() {
       } else {
         let recorrenciaId: string | null = null;
 
-        if (saleType === "recorrencia") {
+        if (saleType === "recorrencia" || saleType === "boleto_recorrente") {
           const monthlyGross =
             installmentsTotal > 0 ? Number((gross / installmentsTotal).toFixed(2)) : gross;
 
@@ -1361,7 +1366,8 @@ export default function VendasPage() {
               searchable={false}
               options={[
                 { value: "avulsa", label: "Avulsa" },
-                { value: "recorrencia", label: "Recorrência" },
+                { value: "recorrencia", label: "Recorrência (Cartão)" },
+                { value: "boleto_recorrente", label: "Recorrência (Boleto)" },
               ]}
             />
           </div>
@@ -1553,7 +1559,7 @@ export default function VendasPage() {
           </div>
         </div>
 
-        {saleType === "recorrencia" ? (
+        {(saleType === "recorrencia" || saleType === "boleto_recorrente") ? (
           <div
             style={{
               marginTop: 12,
@@ -1673,7 +1679,8 @@ export default function VendasPage() {
               options={[
                 { value: "all", label: "Todos os tipos" },
                 { value: "avulsa", label: "Avulsa" },
-                { value: "recorrencia", label: "Recorrência" },
+                { value: "recorrencia", label: "Recorrência (Cartão)" },
+                { value: "boleto_recorrente", label: "Recorrência (Boleto)" },
               ]}
             />
           </div>
@@ -1725,126 +1732,158 @@ export default function VendasPage() {
             </thead>
 
             <tbody>
-              {/* Grupos de recorrência — uma linha por grupo com expandir */}
               {Array.from(recGroups.entries()).map(([groupKey, groupRows]) => {
-                const sorted = [...groupRows].sort((a, b) =>
-                  (a.closed_at ?? "").localeCompare(b.closed_at ?? "")
-                );
+                const sorted = [...groupRows].sort((a, b) => (a.closed_at ?? "").localeCompare(b.closed_at ?? ""));
                 const first = sorted[0];
                 const isExpanded = expandedGroups.has(groupKey);
                 const leadName = first.leads?.name ?? "—";
                 const phone = normalizePhoneReadable(first.leads?.phone_raw ?? null, first.leads?.phone_e164 ?? null);
                 const totalValue = sorted.reduce((s, r) => s + Number(r.value ?? 0), 0);
                 const totalNet = sorted.reduce((s, r) => s + Number(r.value_net ?? r.value ?? 0), 0);
+                const isBoleto = first.sale_type === "boleto_recorrente";
                 const tdStyle: React.CSSProperties = { padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.06)" };
-
                 return (
                   <React.Fragment key={groupKey}>
-                    {/* Linha resumo do grupo */}
-                    <tr
-                      style={{ cursor: "pointer" }}
-                      onClick={() => toggleGroup(groupKey)}
-                    >
-                      <td style={tdStyle}>
-                        <div style={{ fontWeight: 900 }}>{leadName}</div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>{phone}</div>
-                      </td>
+                    <tr style={{ cursor: "pointer" }} onClick={() => toggleGroup(groupKey)}>
+                      <td style={tdStyle}><div style={{ fontWeight: 900 }}>{leadName}</div><div style={{ fontSize: 12, opacity: 0.7 }}>{phone}</div></td>
                       <td style={tdStyle}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span style={{ fontSize: 13 }}>{isExpanded ? "▼" : "▶"}</span>
+                          <span>{isExpanded ? "▼" : "▶"}</span>
                           <div>
-                            <div style={{ fontWeight: 700 }}>Recorrência</div>
-                            <div style={{ fontSize: 12, opacity: 0.7 }}>
-                              {sorted.length} pagamento(s) registrado(s)
-                            </div>
+                            <div style={{ fontWeight: 700 }}>{isBoleto ? "Recorrência (Boleto)" : "Recorrência (Cartão)"}</div>
+                            <div style={{ fontSize: 12, opacity: 0.7 }}>{sorted.length} pagamento(s)</div>
                           </div>
                         </div>
                       </td>
-                      <td style={tdStyle}>
-                        <div>{normalizePaymentKindLabel(first.payment_method)}</div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>Cartão recorrente</div>
-                      </td>
-                      <td style={tdStyle}>
-                        <div style={{ fontWeight: 700 }}>{formatBRL(totalValue)}</div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>Líq. {formatBRL(totalNet)}</div>
-                      </td>
-                      <td style={tdStyle}>
-                        <div style={{ fontSize: 12 }}>
-                          {formatDateBR(sorted[0]?.closed_at)} →<br />
-                          {formatDateBR(sorted[sorted.length - 1]?.closed_at)}
-                        </div>
-                      </td>
-                      <td style={tdStyle}>
-                        <span style={{ fontSize: 12, opacity: 0.6 }}>Clique para {isExpanded ? "recolher" : "expandir"}</span>
-                      </td>
+                      <td style={tdStyle}><div>{isBoleto ? "Boleto" : normalizePaymentKindLabel(first.payment_method)}</div></td>
+                      <td style={tdStyle}><div style={{ fontWeight: 700 }}>{formatBRL(totalValue)}</div><div style={{ fontSize: 12, opacity: 0.7 }}>Líq. {formatBRL(totalNet)}</div></td>
+                      <td style={tdStyle}><div style={{ fontSize: 12 }}>{formatDateBR(sorted[0]?.closed_at)} →<br/>{formatDateBR(sorted[sorted.length-1]?.closed_at)}</div></td>
+                      <td style={tdStyle}><span style={{ fontSize: 12, opacity: 0.6 }}>Clique para {isExpanded ? "recolher" : "expandir"}</span></td>
                     </tr>
-
-                    {/* Linhas individuais (expandidas) */}
                     {isExpanded && sorted.map((r) => (
                       <tr key={r.id} style={{ background: "rgba(255,255,255,0.02)" }}>
-                        <td style={{ ...tdStyle, paddingLeft: 20 }}>
-                          <div style={{ fontSize: 12, opacity: 0.5 }}>└</div>
-                        </td>
-                        <td style={{ ...tdStyle, fontSize: 13 }}>
-                          <div>{r.procedure ?? "Mensalidade"}</div>
-                        </td>
-                        <td style={{ ...tdStyle, fontSize: 13 }}>
-                          <div>{normalizePaymentKindLabel(r.payment_method)}</div>
-                          {r.card_brand ? <div style={{ fontSize: 12, opacity: 0.7 }}>{normalizeBrandLabel(r.card_brand)}</div> : null}
-                          <div style={{ fontSize: 12, opacity: 0.7 }}>{r.installments_label ?? "—"}</div>
-                        </td>
-                        <td style={{ ...tdStyle, fontSize: 13 }}>
-                          <div>{formatBRL(r.value)}</div>
-                          {r.value_net != null ? <div style={{ fontSize: 12, opacity: 0.7 }}>Líq. {formatBRL(r.value_net)}</div> : null}
-                        </td>
-                        <td style={{ ...tdStyle, fontSize: 13 }}>
-                          {formatDateBR(r.closed_at)}
-                        </td>
-                        <td style={tdStyle}>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <button type="button" style={btn} onClick={(e) => { e.stopPropagation(); handleEdit(r); }}>Editar</button>
-                            <button type="button" style={btnDanger} onClick={(e) => { e.stopPropagation(); handleDelete(r); }}>Excluir</button>
-                          </div>
-                        </td>
+                        <td style={{ ...tdStyle, paddingLeft: 20 }}><div style={{ fontSize: 12, opacity: 0.5 }}>└</div></td>
+                        <td style={{ ...tdStyle, fontSize: 13 }}><div>{r.procedure ?? "Mensalidade"}</div></td>
+                        <td style={{ ...tdStyle, fontSize: 13 }}><div>{normalizePaymentKindLabel(r.payment_method)}</div>{r.card_brand ? <div style={{ fontSize: 12, opacity: 0.7 }}>{normalizeBrandLabel(r.card_brand)}</div> : null}</td>
+                        <td style={{ ...tdStyle, fontSize: 13 }}><div>{formatBRL(r.value)}</div>{r.value_net != null ? <div style={{ fontSize: 12, opacity: 0.7 }}>Líq. {formatBRL(r.value_net)}</div> : null}</td>
+                        <td style={{ ...tdStyle, fontSize: 13 }}>{formatDateBR(r.closed_at)}</td>
+                        <td style={tdStyle}><div style={{ display: "flex", gap: 8 }}><button type="button" style={btn} onClick={(e) => { e.stopPropagation(); handleEdit(r); }}>Editar</button><button type="button" style={btnDanger} onClick={(e) => { e.stopPropagation(); handleDelete(r); }}>Excluir</button></div></td>
                       </tr>
                     ))}
                   </React.Fragment>
                 );
               })}
-
-              {/* Vendas avulsas — renderização normal */}
               {flatRows.map((r) => {
                 const leadName = r.leads?.name ?? "—";
                 const phone = normalizePhoneReadable(r.leads?.phone_raw ?? null, r.leads?.phone_e164 ?? null);
-                const tdStyle: React.CSSProperties = { padding: "10px 0", borderTop: "1px solid rgba(255,255,255,0.06)" };
-
                 return (
                   <tr key={r.id}>
-                    <td style={tdStyle}>
+                    <td
+                      style={{
+                        padding: "10px 0",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
                       <div style={{ fontWeight: 900 }}>{leadName}</div>
                       <div style={{ fontSize: 12, opacity: 0.7 }}>{phone}</div>
                     </td>
-                    <td style={tdStyle}>
+
+                    <td
+                      style={{
+                        padding: "10px 0",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
                       <div>{r.procedure ?? "—"}</div>
-                      {r.indicated_client ? <div style={{ fontSize: 12, opacity: 0.7 }}>Indicação cliente: {r.indicated_client}</div> : null}
-                      {r.indicated_professional ? <div style={{ fontSize: 12, opacity: 0.7 }}>Indicação profissional: {r.indicated_professional}</div> : null}
+
+                      {r.recorrencia_id ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          Vinculada à recorrência
+                        </div>
+                      ) : null}
+
+                      {r.indicated_client ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          Indicação cliente: {r.indicated_client}
+                        </div>
+                      ) : null}
+
+                      {r.indicated_professional ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          Indicação profissional: {r.indicated_professional}
+                        </div>
+                      ) : null}
                     </td>
-                    <td style={tdStyle}>
+
+                    <td
+                      style={{
+                        padding: "10px 0",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
                       <div>{normalizePaymentKindLabel(r.payment_method)}</div>
-                      <div style={{ fontSize: 12, opacity: 0.7 }}>{normalizeProviderLabel(r.payment_provider)}</div>
-                      {r.card_brand ? <div style={{ fontSize: 12, opacity: 0.7 }}>{normalizeBrandLabel(r.card_brand)}</div> : null}
-                      <div style={{ fontSize: 12, opacity: 0.7 }}>{r.installments_label ?? "—"}</div>
+                      <div style={{ fontSize: 12, opacity: 0.7 }}>
+                        {normalizeProviderLabel(r.payment_provider)}
+                      </div>
+                      {r.card_brand ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          {normalizeBrandLabel(r.card_brand)}
+                        </div>
+                      ) : null}
+                      <div style={{ fontSize: 12, opacity: 0.7 }}>
+                        {r.installments_label ?? "—"}
+                      </div>
                     </td>
-                    <td style={tdStyle}>
+
+                    <td
+                      style={{
+                        padding: "10px 0",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
                       <div>{formatBRL(r.value)}</div>
-                      {r.value_net != null ? <div style={{ fontSize: 12, opacity: 0.7 }}>Líq. {formatBRL(r.value_net)}</div> : null}
-                      {r.fee_percent != null ? <div style={{ fontSize: 12, opacity: 0.7 }}>Taxa {Number(r.fee_percent).toFixed(2)}%</div> : null}
+                      {r.value_net != null ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          Líq. {formatBRL(r.value_net)}
+                        </div>
+                      ) : null}
+                      {r.fee_percent != null ? (
+                        <div style={{ fontSize: 12, opacity: 0.7 }}>
+                          Taxa {Number(r.fee_percent).toFixed(2)}%
+                        </div>
+                      ) : null}
                     </td>
-                    <td style={tdStyle}>{formatDateBR(r.closed_at)}</td>
-                    <td style={tdStyle}>
+
+                    <td
+                      style={{
+                        padding: "10px 0",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
+                      {formatDateBR(r.closed_at)}
+                    </td>
+
+                    <td
+                      style={{
+                        padding: "10px 0",
+                        borderTop: "1px solid rgba(255,255,255,0.06)",
+                      }}
+                    >
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button type="button" style={btn} onClick={() => handleEdit(r)}>Editar</button>
-                        <button type="button" style={btnDanger} onClick={() => handleDelete(r)}>Excluir</button>
+                        <button
+                          type="button"
+                          style={btn}
+                          onClick={() => handleEdit(r)}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          type="button"
+                          style={btnDanger}
+                          onClick={() => handleDelete(r)}
+                        >
+                          Excluir
+                        </button>
                       </div>
                     </td>
                   </tr>
