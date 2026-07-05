@@ -79,6 +79,7 @@ function chipStyle(kind: "primary" | "muted" | "warn" = "muted"): React.CSSPrope
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
+  boxSizing: "border-box",
   background: "rgba(255,255,255,0.06)",
   color: "white",
   border: "1px solid rgba(255,255,255,0.12)",

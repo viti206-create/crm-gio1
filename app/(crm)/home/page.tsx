@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
 
@@ -51,6 +52,7 @@ type SellerItem = {
 };
 
 type FilterMode = "monthly" | "yearly";
+type AgendaRange = "7d" | "30d" | "mes";
 
 function FilterToggle({
   options,
@@ -151,9 +153,7 @@ function formatWhenCompact(iso: string) {
     const d = new Date(iso);
     const dd = String(d.getDate()).padStart(2, "0");
     const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const hh = String(d.getHours()).padStart(2, "0");
-    const mi = String(d.getMinutes()).padStart(2, "0");
-    return `${dd}/${mm} ${hh}:${mi}`;
+    return `${dd}/${mm}`;
   } catch {
     return iso;
   }
@@ -260,9 +260,11 @@ function ageRange(age: number | null) {
 function MiniFunnelCard({
   title,
   items,
+  onItemClick,
 }: {
   title: string;
   items: GroupItem[];
+  onItemClick?: (label: string) => void;
 }) {
   const sectionTitle: React.CSSProperties = {
     fontWeight: 950,
@@ -300,6 +302,7 @@ function MiniFunnelCard({
             return (
               <div
                 key={`${title}-${item.label}`}
+                onClick={() => onItemClick?.(item.label)}
                 style={{
                   width: `${width}%`,
                   minWidth: 180,
@@ -309,7 +312,11 @@ function MiniFunnelCard({
                   border: "1px solid rgba(180,120,255,0.18)",
                   background:
                     "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.06) 100%)",
+                  cursor: onItemClick ? "pointer" : "default",
+                  transition: "opacity 0.15s",
                 }}
+                onMouseEnter={(e) => { if (onItemClick) (e.currentTarget as HTMLDivElement).style.opacity = "0.75"; }}
+                onMouseLeave={(e) => { if (onItemClick) (e.currentTarget as HTMLDivElement).style.opacity = "1"; }}
               >
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
                   <div
@@ -347,8 +354,10 @@ export default function HomePage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [agendaRange, setAgendaRange] = useState<AgendaRange>("7d");
 
   useEffect(() => {
     fetchAll();
@@ -479,6 +488,18 @@ export default function HomePage() {
     return d;
   }, [todayEnd]);
 
+  const next30End = useMemo(() => {
+    const d = new Date(todayEnd);
+    d.setDate(d.getDate() + 30);
+    return d;
+  }, [todayEnd]);
+
+  const nextMesEnd = useMemo(() => {
+    const d = new Date(todayEnd);
+    d.setMonth(d.getMonth() + 1);
+    return d;
+  }, [todayEnd]);
+
   const periodStart = useMemo(() => {
     if (filterMode === "yearly") {
       return new Date(selectedYear, 0, 1, 0, 0, 0, 0);
@@ -523,6 +544,24 @@ export default function HomePage() {
         return t > todayEnd.getTime() && t <= next7End.getTime();
       }),
     [leadsWithNext, todayEnd, next7End]
+  );
+
+  const next30 = useMemo(
+    () =>
+      leadsWithNext.filter((l: any) => {
+        const t = l._next.getTime();
+        return t > todayEnd.getTime() && t <= next30End.getTime();
+      }),
+    [leadsWithNext, todayEnd, next30End]
+  );
+
+  const nextMes = useMemo(
+    () =>
+      leadsWithNext.filter((l: any) => {
+        const t = l._next.getTime();
+        return t > todayEnd.getTime() && t <= nextMesEnd.getTime();
+      }),
+    [leadsWithNext, todayEnd, nextMesEnd]
   );
 
   const countsByStage = useMemo(() => {
@@ -723,7 +762,7 @@ export default function HomePage() {
 
   const funnelGrid: React.CSSProperties = {
     display: "grid",
-    gridTemplateColumns: "1.1fr 1fr 1fr 1fr",
+    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
     gap: 12,
   };
 
@@ -993,33 +1032,49 @@ export default function HomePage() {
               </div>
 
               <div>
-                <div style={{ fontWeight: 950, marginBottom: 10 }}>
-                  Próximos 7 dias <span style={{ ...chipStyle("muted"), marginLeft: 8 }}>{next7.length}</span>
+                {/* Seletor de período da agenda */}
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                  {([
+                    { value: "7d", label: "7 dias" },
+                    { value: "30d", label: "30 dias" },
+                    { value: "mes", label: "1 mês" },
+                  ] as { value: AgendaRange; label: string }[]).map((opt) => (
+                    <button key={opt.value} type="button" onClick={() => setAgendaRange(opt.value)}
+                      style={{ background: agendaRange === opt.value ? "rgba(180,120,255,0.2)" : "rgba(255,255,255,0.05)", border: agendaRange === opt.value ? "1px solid rgba(180,120,255,0.4)" : "1px solid rgba(255,255,255,0.12)", color: "white", padding: "6px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                      {opt.label}
+                    </button>
+                  ))}
                 </div>
 
-                {next7.length === 0 ? (
-                  <div style={soft}>Nenhuma ação nos próximos 7 dias.</div>
-                ) : (
-                  <div style={listWrap}>
-                    {next7.slice(0, 6).map((l: any) => (
-                      <div key={l.id} style={row}>
-                        <div style={rowLeft}>
-                          <div style={rowName}>{l.name}</div>
-                          <div style={rowMeta}>
-                            <span style={chipStyle("primary")}>{prettyNextAction(l.next_action_type)}</span>
-                            <span style={chipStyle("muted")}>Quando: {formatWhenCompact(l.next_action_at!)}</span>
-                            <span style={chipStyle("muted")}>Etapa: {stageNameFromId(l.stage_id)}</span>
-                          </div>
-                        </div>
+                <div style={{ fontWeight: 950, marginBottom: 10 }}>
+                  Próximos {agendaRange === "7d" ? "7 dias" : agendaRange === "30d" ? "30 dias" : "1 mês"}{" "}
+                  <span style={{ ...chipStyle("muted"), marginLeft: 8 }}>
+                    {agendaRange === "7d" ? next7.length : agendaRange === "30d" ? next30.length : nextMes.length}
+                  </span>
+                </div>
 
-                        <Link href={`/dashboard?lead=${l.id}`} style={openBtn}>
-                          Abrir lead
-                        </Link>
-                      </div>
-                    ))}
-                    {next7.length > 6 ? <div style={soft}>+ {next7.length - 6} a mais…</div> : null}
-                  </div>
-                )}
+                {(() => {
+                  const items = agendaRange === "7d" ? next7 : agendaRange === "30d" ? next30 : nextMes;
+                  if (items.length === 0) return <div style={soft}>Nenhuma ação no período.</div>;
+                  return (
+                    <div style={listWrap}>
+                      {items.slice(0, 10).map((l: any) => (
+                        <div key={l.id} style={row}>
+                          <div style={rowLeft}>
+                            <div style={rowName}>{l.name}</div>
+                            <div style={rowMeta}>
+                              <span style={chipStyle("primary")}>{prettyNextAction(l.next_action_type)}</span>
+                              <span style={chipStyle("muted")}>Quando: {formatWhenCompact(l.next_action_at!)}</span>
+                              <span style={chipStyle("muted")}>Etapa: {stageNameFromId(l.stage_id)}</span>
+                            </div>
+                          </div>
+                          <Link href={`/dashboard?lead=${l.id}`} style={openBtn}>Abrir lead</Link>
+                        </div>
+                      ))}
+                      {items.length > 10 ? <div style={soft}>+ {items.length - 10} a mais…</div> : null}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
           )}
@@ -1090,68 +1145,12 @@ export default function HomePage() {
       </div>
 
       <div style={funnelGrid}>
-        <MiniFunnelCard title="Funil por campanhas" items={campaignsFunnel} />
-        <MiniFunnelCard title="Funil por origem" items={sourceFunnel} />
-        <MiniFunnelCard title="Funil por interesses" items={interestFunnel} />
-        <div style={card}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
-            <div style={sectionTitle}>Resumo rápido</div>
-            <div style={soft}>Topos do funil</div>
-          </div>
-
-          <div style={{ display: "grid", gap: 10 }}>
-            <div
-              style={{
-                border: "1px solid rgba(255,255,255,0.10)",
-                background: "rgba(255,255,255,0.03)",
-                borderRadius: 14,
-                padding: 12,
-              }}
-            >
-              <div style={soft}>Campanha líder</div>
-              <div style={{ fontWeight: 950, marginTop: 4 }}>
-                {campaignsFunnel[0]?.label ?? "Não definido"}
-              </div>
-              <div style={{ marginTop: 6, opacity: 0.8, fontSize: 12 }}>
-                {campaignsFunnel[0]?.count ?? 0} leads • {campaignsFunnel[0]?.pct ?? 0}%
-              </div>
-            </div>
-
-            <div
-              style={{
-                border: "1px solid rgba(255,255,255,0.10)",
-                background: "rgba(255,255,255,0.03)",
-                borderRadius: 14,
-                padding: 12,
-              }}
-            >
-              <div style={soft}>Origem líder</div>
-              <div style={{ fontWeight: 950, marginTop: 4 }}>
-                {sourceFunnel[0]?.label ?? "Não definido"}
-              </div>
-              <div style={{ marginTop: 6, opacity: 0.8, fontSize: 12 }}>
-                {sourceFunnel[0]?.count ?? 0} leads • {sourceFunnel[0]?.pct ?? 0}%
-              </div>
-            </div>
-
-            <div
-              style={{
-                border: "1px solid rgba(255,255,255,0.10)",
-                background: "rgba(255,255,255,0.03)",
-                borderRadius: 14,
-                padding: 12,
-              }}
-            >
-              <div style={soft}>Interesse líder</div>
-              <div style={{ fontWeight: 950, marginTop: 4 }}>
-                {interestFunnel[0]?.label ?? "Não definido"}
-              </div>
-              <div style={{ marginTop: 6, opacity: 0.8, fontSize: 12 }}>
-                {interestFunnel[0]?.count ?? 0} leads • {interestFunnel[0]?.pct ?? 0}%
-              </div>
-            </div>
-          </div>
-        </div>
+        <MiniFunnelCard title="Funil por campanhas" items={campaignsFunnel}
+          onItemClick={(label) => router.push(`/leads?campaign=${encodeURIComponent(label)}`)} />
+        <MiniFunnelCard title="Funil por origem" items={sourceFunnel}
+          onItemClick={(label) => router.push(`/leads?source=${encodeURIComponent(label)}`)} />
+        <MiniFunnelCard title="Funil por interesses" items={interestFunnel}
+          onItemClick={(label) => router.push(`/leads?interest=${encodeURIComponent(label)}`)} />
       </div>
     </div>
   );

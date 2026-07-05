@@ -1,483 +1,334 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useAdminAccess } from "../../_hooks/useAdminAccess";
 import { supabase } from "@/lib/supabaseClient";
-import FinancialCalendar, {
-  type FinancialCalendarRow,
-} from "../../_components/FinancialCalendar";
 
-type RecorrenciaResumo = {
-  installments_total: number | null;
-};
-
-type SaleFinanceRow = {
+type Tx = {
   id: string;
-  value: number | null;
-  value_gross: number | null;
-  value_net: number | null;
-  fee_percent: number | null;
-  sale_type: string | null;
-  recorrencia_id: string | null;
-  installments_label: string | null;
-  closed_at: string | null;
-  recorrencias?: RecorrenciaResumo | RecorrenciaResumo[] | null;
-};
-
-type FinancialTransactionRow = {
-  id: string;
-  scope: "clinic" | "personal";
-  kind: "income" | "expense";
-  status: "pending" | "paid" | "received" | "late";
+  scope: string;
+  kind: string;
+  status: string;
   description: string;
-  amount: number | null;
+  amount: number;
+  gross_amount: number | null;
+  net_amount: number | null;
   due_date: string | null;
   paid_at: string | null;
+  competency_date: string | null;
   counterparty_name: string | null;
   notes: string | null;
+  is_future: boolean;
+  category_id: string | null;
+  account_id: string | null;
 };
 
-type FinancialScheduleRow = {
-  id: string;
-  scope: "clinic" | "personal";
-  kind: "income" | "expense";
-  description: string;
-  next_due_date: string | null;
-  default_amount: number | null;
-  is_active: boolean | null;
-  notes?: string | null;
-};
+type Category = { id: string; name: string; color: string | null; };
+type Account = { id: string; name: string; };
 
-const pageStyle: React.CSSProperties = {
-  padding: 12,
-  color: "white",
-  display: "grid",
-  gap: 12,
-};
-
-const summaryCardStyle: React.CSSProperties = {
-  border: "1px solid rgba(255,255,255,0.10)",
-  background:
-    "linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%)",
-  borderRadius: 16,
-  padding: 12,
-  display: "grid",
-  gap: 4,
-  boxShadow: "0 12px 34px rgba(0,0,0,0.28)",
-};
-
-const btnStyle: React.CSSProperties = {
-  background: "rgba(255,255,255,0.06)",
-  color: "white",
-  border: "1px solid rgba(255,255,255,0.12)",
-  padding: "9px 11px",
-  borderRadius: 10,
-  cursor: "pointer",
-  fontWeight: 900,
-  fontSize: 12,
-  textDecoration: "none",
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 6,
-};
-
-const btnPrimaryStyle: React.CSSProperties = {
-  ...btnStyle,
-  border: "1px solid rgba(180,120,255,0.30)",
-  background:
-    "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
-};
-
-const chipStyle: React.CSSProperties = {
-  fontSize: 11,
-  padding: "3px 8px",
-  borderRadius: 999,
-  border: "1px solid rgba(180,120,255,0.30)",
-  background: "rgba(180,120,255,0.10)",
-  color: "rgba(255,255,255,0.92)",
-  display: "inline-flex",
-  alignItems: "center",
-  width: "fit-content",
-  fontWeight: 800,
-};
-
-function formatBRL(value: number) {
-  return new Intl.NumberFormat("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  }).format(value || 0);
+function formatBRL(v: number | null | undefined) {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return "R$ 0,00";
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-function addMonths(dt: Date, months: number) {
-  const x = new Date(dt.getTime());
-  x.setMonth(x.getMonth() + months);
-  return x;
+function getDaysInMonth(year: number, month: number) {
+  return new Date(year, month + 1, 0).getDate();
 }
 
-function getInstallmentsTotal(row: SaleFinanceRow) {
-  const rel = Array.isArray(row.recorrencias)
-    ? row.recorrencias[0]
-    : row.recorrencias;
-
-  return (
-    Number(rel?.installments_total ?? 0) ||
-    Number((row.installments_label || "").replace(/\D/g, "")) ||
-    1
-  );
+function getFirstDayOfWeek(year: number, month: number) {
+  return new Date(year, month, 1).getDay();
 }
 
-function calcularLiquidoMesAtual(sales: SaleFinanceRow[]) {
-  const hoje = new Date();
-  const mesAtual = hoje.getMonth();
-  const anoAtual = hoje.getFullYear();
-
-  let total = 0;
-
-  for (const row of sales) {
-    if (!row.closed_at) continue;
-
-    const saleDate = new Date(row.closed_at);
-    if (Number.isNaN(saleDate.getTime())) continue;
-
-    const isRecurring =
-      row.sale_type === "recorrencia" || !!row.recorrencia_id;
-
-    const grossTotal = Number(row.value_gross ?? row.value ?? 0);
-    const netTotal = Number(row.value_net ?? 0);
-    const feePercent = Number(row.fee_percent ?? 0);
-
-    if (!isRecurring) {
-      if (
-        saleDate <= hoje &&
-        saleDate.getFullYear() === anoAtual &&
-        saleDate.getMonth() === mesAtual
-      ) {
-        const effectiveNet =
-          netTotal > 0
-            ? netTotal
-            : Number((grossTotal * (1 - feePercent / 100)).toFixed(2));
-
-        total += effectiveNet;
-      }
-
-      continue;
-    }
-
-    const totalInstallments = getInstallmentsTotal(row);
-
-    const monthlyGross =
-      totalInstallments > 0
-        ? Number((grossTotal / totalInstallments).toFixed(2))
-        : grossTotal;
-
-    const monthlyNet =
-      totalInstallments > 0
-        ? Number((netTotal / totalInstallments).toFixed(2))
-        : Number((monthlyGross * (1 - feePercent / 100)).toFixed(2));
-
-    for (let i = 0; i < totalInstallments; i += 1) {
-      const installmentDate = addMonths(saleDate, i);
-
-      if (installmentDate > hoje) break;
-
-      if (
-        installmentDate.getFullYear() === anoAtual &&
-        installmentDate.getMonth() === mesAtual
-      ) {
-        const effectiveNet =
-          monthlyNet > 0
-            ? monthlyNet
-            : Number((monthlyGross * (1 - feePercent / 100)).toFixed(2));
-
-        total += effectiveNet;
-      }
-    }
-  }
-
-  return Number(total.toFixed(2));
-}
-
-function isSameMonth(dateStr: string | null | undefined, baseDate: Date) {
-  if (!dateStr) return false;
-  const d = new Date(`${dateStr}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return false;
-
-  return (
-    d.getFullYear() === baseDate.getFullYear() &&
-    d.getMonth() === baseDate.getMonth()
-  );
-}
-
-function calcularDespesasMesAtual(rows: FinancialTransactionRow[]) {
-  const hoje = new Date();
-
-  const total = rows.reduce((acc, row) => {
-    if (row.scope !== "clinic") return acc;
-    if (row.kind !== "expense") return acc;
-
-    const entrouNoMes =
-      isSameMonth(row.paid_at, hoje) || isSameMonth(row.due_date, hoje);
-
-    if (!entrouNoMes) return acc;
-
-    return acc + Number(row.amount ?? 0);
-  }, 0);
-
-  return Number(total.toFixed(2));
-}
-
-function calcularPrevistoMesAtual(rows: FinancialScheduleRow[]) {
-  const hoje = new Date();
-
-  const total = rows.reduce((acc, row) => {
-    if (row.scope !== "clinic") return acc;
-    if (!row.is_active) return acc;
-    if (!row.next_due_date) return acc;
-
-    const d = new Date(`${row.next_due_date}T12:00:00`);
-    if (Number.isNaN(d.getTime())) return acc;
-
-    if (
-      d.getMonth() === hoje.getMonth() &&
-      d.getFullYear() === hoje.getFullYear()
-    ) {
-      return acc + Number(row.default_amount ?? 0);
-    }
-
-    return acc;
-  }, 0);
-
-  return Number(total.toFixed(2));
-}
+const MONTH_NAMES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+const WEEK_DAYS = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 
 export default function FinanceiroClinicaPage() {
   const router = useRouter();
-  const { isAdmin, loadingRole } = useAdminAccess();
+  const today = new Date();
+  const [currentYear, setCurrentYear] = useState(today.getFullYear());
+  const [currentMonth, setCurrentMonth] = useState(today.getMonth());
+  const [transactions, setTransactions] = useState<Tx[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedDay, setExpandedDay] = useState<number | null>(null);
+  const [view, setView] = useState<"calendar" | "list">("calendar");
 
-  const [totalLiquidoMes, setTotalLiquidoMes] = useState(0);
-  const [totalDespesasMes, setTotalDespesasMes] = useState(0);
-  const [totalPrevistoMes, setTotalPrevistoMes] = useState(0);
-  const [calendarRows, setCalendarRows] = useState<FinancialCalendarRow[]>([]);
-  const [loadingTotal, setLoadingTotal] = useState(true);
+  useEffect(() => { fetchAll(); }, []);
 
-  const monthLabel = useMemo(() => {
-    const now = new Date();
-    return now.toLocaleDateString("pt-BR", {
-      month: "long",
-      year: "numeric",
-    });
-  }, []);
-
-  const resultadoMes = totalLiquidoMes - totalDespesasMes;
-
-  useEffect(() => {
-    if (!loadingRole && !isAdmin) {
-      router.replace("/home");
-    }
-  }, [loadingRole, isAdmin, router]);
-
-  useEffect(() => {
-    if (loadingRole || !isAdmin) return;
-
-    let active = true;
-
-    async function loadResumoFinanceiro() {
-      try {
-        setLoadingTotal(true);
-
-        const [
-          { data: salesData, error: salesError },
-          { data: txData, error: txError },
-          { data: schedulesData, error: schedulesError },
-        ] = await Promise.all([
-          supabase
-            .from("sales")
-            .select(
-              "id,value,value_gross,value_net,fee_percent,sale_type,recorrencia_id,installments_label,closed_at,recorrencias(installments_total)"
-            )
-            .order("closed_at", { ascending: false }),
-
-          supabase
-            .from("financial_transactions")
-            .select(
-              "id,scope,kind,status,description,amount,due_date,paid_at,counterparty_name,notes"
-            )
-            .eq("scope", "clinic")
-            .order("due_date", { ascending: false })
-            .order("created_at", { ascending: false }),
-
-          supabase
-            .from("financial_schedules")
-            .select("id,scope,kind,description,next_due_date,default_amount,is_active,notes")
-            .eq("scope", "clinic")
-            .eq("is_active", true)
-            .order("next_due_date", { ascending: true }),
-        ]);
-
-        if (salesError) {
-          console.error("Erro ao buscar vendas para o financeiro:", salesError);
-        }
-
-        if (txError) {
-          console.error("Erro ao buscar transações para o financeiro:", txError);
-        }
-
-        if (schedulesError) {
-          console.error("Erro ao buscar agenda financeira:", schedulesError);
-        }
-
-        const totalLiquido = calcularLiquidoMesAtual(
-          (salesData as SaleFinanceRow[]) ?? []
-        );
-
-        const txRows = (txData as FinancialTransactionRow[]) ?? [];
-        const scheduleRowsRaw = (schedulesData as FinancialScheduleRow[]) ?? [];
-
-        const totalDespesas = calcularDespesasMesAtual(txRows);
-        const totalPrevisto = calcularPrevistoMesAtual(scheduleRowsRaw);
-
-        const nextCalendarRows: FinancialCalendarRow[] = txRows.map((row) => ({
-          id: row.id,
-          kind: row.kind,
-          status: row.status,
-          description: row.description,
-          amount: Number(row.amount ?? 0),
-          due_date: row.due_date,
-          paid_at: row.paid_at,
-          counterparty_name: row.counterparty_name,
-          notes: row.notes,
-        }));
-
-        const visualScheduleRows: FinancialCalendarRow[] = scheduleRowsRaw.map((s) => ({
-          id: `schedule-${s.id}`,
-          kind: s.kind,
-          status: "pending",
-          description: `${s.description} (Previsto)`,
-          amount: Number(s.default_amount ?? 0),
-          due_date: s.next_due_date,
-          paid_at: null,
-          counterparty_name: null,
-          notes: "previsto",
-        }));
-
-        if (active) {
-          setTotalLiquidoMes(totalLiquido);
-          setTotalDespesasMes(totalDespesas);
-          setTotalPrevistoMes(totalPrevisto);
-          setCalendarRows([...nextCalendarRows, ...visualScheduleRows]);
-        }
-      } catch (err) {
-        console.error("Erro inesperado ao carregar resumo financeiro:", err);
-        if (active) {
-          setTotalLiquidoMes(0);
-          setTotalDespesasMes(0);
-          setTotalPrevistoMes(0);
-          setCalendarRows([]);
-        }
-      } finally {
-        if (active) setLoadingTotal(false);
-      }
-    }
-
-    loadResumoFinanceiro();
-
-    return () => {
-      active = false;
-    };
-  }, [loadingRole, isAdmin]);
-
-  if (loadingRole) {
-    return (
-      <div style={{ padding: 20, color: "white" }}>
-        Carregando permissões...
-      </div>
-    );
+  async function fetchAll() {
+    setLoading(true);
+    const [txRes, catRes, accRes] = await Promise.all([
+      supabase.from("financial_transactions").select("*").eq("scope", "clinic").order("due_date", { ascending: true }),
+      supabase.from("financial_categories").select("id,name,color").eq("scope", "clinic"),
+      supabase.from("financial_accounts").select("id,name").eq("scope", "clinic"),
+    ]);
+    setTransactions((txRes.data as any) ?? []);
+    setCategories((catRes.data as any) ?? []);
+    setAccounts((accRes.data as any) ?? []);
+    setLoading(false);
   }
 
-  if (!isAdmin) return null;
+  function prevMonth() {
+    if (currentMonth === 0) { setCurrentMonth(11); setCurrentYear(y => y - 1); }
+    else setCurrentMonth(m => m - 1);
+    setExpandedDay(null);
+  }
+
+  function nextMonth() {
+    if (currentMonth === 11) { setCurrentMonth(0); setCurrentYear(y => y + 1); }
+    else setCurrentMonth(m => m + 1);
+    setExpandedDay(null);
+  }
+
+  function goToday() {
+    setCurrentYear(today.getFullYear());
+    setCurrentMonth(today.getMonth());
+    setExpandedDay(null);
+  }
+
+  // Filtrar transações do mês atual do calendário
+  const txOfMonth = useMemo(() => {
+    return transactions.filter(tx => {
+      const dateStr = tx.due_date || tx.paid_at || tx.competency_date;
+      if (!dateStr) return false;
+      const d = new Date(dateStr + "T12:00:00");
+      return d.getFullYear() === currentYear && d.getMonth() === currentMonth;
+    });
+  }, [transactions, currentYear, currentMonth]);
+
+  // Totais do mês visível no calendário (não do mês atual)
+  const totals = useMemo(() => {
+    const receitas = txOfMonth.filter(tx => tx.kind === "income").reduce((s, tx) => s + Number(tx.amount ?? 0), 0);
+    const despesas = txOfMonth.filter(tx => tx.kind === "expense").reduce((s, tx) => s + Number(tx.amount ?? 0), 0);
+    const resultado = receitas - despesas;
+
+    // Previsto: pendentes do mês
+    const previsto = txOfMonth.filter(tx => tx.status === "pending").reduce((s, tx) => {
+      return s + (tx.kind === "income" ? Number(tx.amount ?? 0) : -Number(tx.amount ?? 0));
+    }, 0);
+
+    return { receitas, despesas, resultado, previsto };
+  }, [txOfMonth]);
+
+  // Agrupar por dia do mês
+  const txByDay = useMemo(() => {
+    const map = new Map<number, Tx[]>();
+    for (const tx of txOfMonth) {
+      const dateStr = tx.due_date || tx.paid_at || tx.competency_date;
+      if (!dateStr) continue;
+      const d = new Date(dateStr + "T12:00:00");
+      const day = d.getDate();
+      if (!map.has(day)) map.set(day, []);
+      map.get(day)!.push(tx);
+    }
+    return map;
+  }, [txOfMonth]);
+
+  function txColor(tx: Tx) {
+    if (tx.status === "late") return "rgba(255,120,80,0.85)";
+    if (tx.kind === "income" && tx.status === "paid") return "rgba(80,200,120,0.85)";
+    if (tx.kind === "income") return "rgba(80,180,255,0.85)";
+    if (tx.status === "paid") return "rgba(100,120,255,0.85)";
+    return "rgba(100,120,255,0.70)";
+  }
+
+  const daysInMonth = getDaysInMonth(currentYear, currentMonth);
+  const firstDay = getFirstDayOfWeek(currentYear, currentMonth);
+  const isThisMonth = currentYear === today.getFullYear() && currentMonth === today.getMonth();
+
+  const card: React.CSSProperties = { border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", borderRadius: 14, padding: 14 };
+  const btn: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "8px 14px", borderRadius: 10, cursor: "pointer", fontWeight: 700, fontSize: 13 };
+  const btnActive: React.CSSProperties = { ...btn, border: "1px solid rgba(180,120,255,0.4)", background: "rgba(180,120,255,0.2)" };
 
   return (
-    <div style={pageStyle}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-          alignItems: "flex-start",
-        }}
-      >
-        <div style={{ display: "grid", gap: 6 }}>
-          <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: 0.2 }}>
-            Financeiro Clínica
-          </div>
-          <div style={chipStyle}>Scope: clinic</div>
+    <div style={{ color: "white", display: "grid", gap: 14 }}>
+      {/* Header */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 950 }}>Financeiro Clínica</div>
+          <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2, border: "1px solid rgba(255,255,255,0.12)", padding: "2px 10px", borderRadius: 999, display: "inline-block" }}>Scope: clinic</div>
         </div>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link href="/financeiro" style={btnStyle}>
-            Voltar
-          </Link>
-          <Link href="/financeiro/clinica/lancamentos" style={btnPrimaryStyle}>
-            Lançamentos
-          </Link>
-          <Link href="/financeiro/clinica/agenda" style={btnStyle}>
-            Agenda
-          </Link>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => router.back()} style={btn}>Voltar</button>
+          <button onClick={() => setView("calendar")} style={view === "calendar" ? btnActive : btn}>Calendário</button>
+          <button onClick={() => router.push("/financeiro/clinica/lancamentos")} style={btn}>Lançamentos</button>
         </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-          gap: 10,
-        }}
-      >
-        <div style={summaryCardStyle}>
-          <div style={{ fontSize: 11, opacity: 0.72 }}>Receitas</div>
-          <div style={{ fontSize: 24, fontWeight: 950 }}>
-            {loadingTotal ? "Carregando..." : formatBRL(totalLiquidoMes)}
-          </div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Total líquido de {monthLabel}
-          </div>
+      {/* Totais — sempre do mês visível no calendário */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+        <div style={card}>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>Receitas</div>
+          <div style={{ fontSize: 22, fontWeight: 950, marginTop: 4, color: "#78ffb4" }}>{formatBRL(totals.receitas)}</div>
+          <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>Total líquido de {MONTH_NAMES[currentMonth].toLowerCase()} de {currentYear}</div>
         </div>
-
-        <div style={summaryCardStyle}>
-          <div style={{ fontSize: 11, opacity: 0.72 }}>Despesas</div>
-          <div style={{ fontSize: 24, fontWeight: 950 }}>
-            {loadingTotal ? "Carregando..." : formatBRL(totalDespesasMes)}
-          </div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Despesas do mês atual
-          </div>
+        <div style={card}>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>Despesas</div>
+          <div style={{ fontSize: 22, fontWeight: 950, marginTop: 4, color: "#ff8080" }}>{formatBRL(totals.despesas)}</div>
+          <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>Despesas de {MONTH_NAMES[currentMonth].toLowerCase()}</div>
         </div>
-
-        <div style={summaryCardStyle}>
-          <div style={{ fontSize: 11, opacity: 0.72 }}>Resultado</div>
-          <div style={{ fontSize: 24, fontWeight: 950 }}>
-            {loadingTotal ? "Carregando..." : formatBRL(resultadoMes)}
-          </div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Receitas menos despesas
-          </div>
+        <div style={card}>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>Resultado</div>
+          <div style={{ fontSize: 22, fontWeight: 950, marginTop: 4, color: totals.resultado >= 0 ? "#78ffb4" : "#ff8080" }}>{formatBRL(totals.resultado)}</div>
+          <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>Receitas menos despesas</div>
         </div>
-
-        <div style={summaryCardStyle}>
-          <div style={{ fontSize: 11, opacity: 0.72 }}>Previsto</div>
-          <div style={{ fontSize: 24, fontWeight: 950 }}>
-            {loadingTotal ? "Carregando..." : formatBRL(totalPrevistoMes)}
-          </div>
-          <div style={{ fontSize: 11, opacity: 0.7 }}>
-            Compromissos visuais de {monthLabel}
-          </div>
+        <div style={card}>
+          <div style={{ fontSize: 12, opacity: 0.7 }}>Previsto</div>
+          <div style={{ fontSize: 22, fontWeight: 950, marginTop: 4 }}>{formatBRL(totals.previsto)}</div>
+          <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>Compromissos pendentes de {MONTH_NAMES[currentMonth].toLowerCase()}</div>
         </div>
       </div>
 
-      <FinancialCalendar transactions={calendarRows} />
+      {loading && <div style={{ opacity: 0.7 }}>Carregando...</div>}
+
+      {/* Controles do calendário */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontSize: 16, fontWeight: 950 }}>
+          {MONTH_NAMES[currentMonth]} de {currentYear}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={prevMonth} style={btn}>Anterior</button>
+          <button onClick={goToday} style={isThisMonth ? btnActive : btn}>Hoje</button>
+          <button onClick={nextMonth} style={btn}>Próximo</button>
+        </div>
+      </div>
+
+      {/* Legenda */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+        {[
+          { color: "rgba(80,200,120,0.85)", label: "Receber" },
+          { color: "rgba(255,120,80,0.85)", label: "Pagar" },
+          { color: "rgba(100,120,255,0.85)", label: "Pago" },
+          { color: "rgba(255,120,80,0.85)", label: "Atrasado" },
+        ].map(l => (
+          <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 999, background: l.color, display: "inline-block" }} />
+            {l.label}
+          </div>
+        ))}
+      </div>
+
+      {/* Calendário */}
+      {view === "calendar" && (
+        <div style={{ border: "1px solid rgba(255,255,255,0.08)", borderRadius: 16, overflow: "hidden" }}>
+          {/* Cabeçalho dos dias da semana */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", background: "rgba(255,255,255,0.04)" }}>
+            {WEEK_DAYS.map(d => (
+              <div key={d} style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900, fontSize: 13, opacity: 0.8, borderRight: "1px solid rgba(255,255,255,0.06)" }}>{d}</div>
+            ))}
+          </div>
+
+          {/* Grid dos dias */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)" }}>
+            {/* Dias em branco antes do início do mês */}
+            {Array.from({ length: firstDay }).map((_, i) => (
+              <div key={`blank-${i}`} style={{ minHeight: 100, borderRight: "1px solid rgba(255,255,255,0.06)", borderBottom: "1px solid rgba(255,255,255,0.06)", background: "rgba(0,0,0,0.15)" }} />
+            ))}
+
+            {/* Dias do mês */}
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const day = i + 1;
+              const dayTx = txByDay.get(day) ?? [];
+              const isToday = isThisMonth && day === today.getDate();
+              const isExpanded = expandedDay === day;
+              const MAX_VISIBLE = 3;
+              const visibleTx = isExpanded ? dayTx : dayTx.slice(0, MAX_VISIBLE);
+              const hiddenCount = dayTx.length - MAX_VISIBLE;
+
+              return (
+                <div key={day} style={{
+                  minHeight: 100, padding: "6px 6px 8px",
+                  borderRight: "1px solid rgba(255,255,255,0.06)",
+                  borderBottom: "1px solid rgba(255,255,255,0.06)",
+                  background: isToday ? "rgba(180,120,255,0.08)" : "transparent",
+                  verticalAlign: "top",
+                }}>
+                  <div style={{
+                    fontSize: 13, fontWeight: isToday ? 950 : 700,
+                    color: isToday ? "rgba(180,120,255,0.95)" : "rgba(255,255,255,0.85)",
+                    marginBottom: 4, textAlign: "right",
+                  }}>{day}</div>
+
+                  <div style={{ display: "grid", gap: 3 }}>
+                    {visibleTx.map(tx => (
+                      <div key={tx.id} style={{
+                        background: txColor(tx),
+                        borderRadius: 6, padding: "3px 6px",
+                        fontSize: 11, fontWeight: 700,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        cursor: "default",
+                        title: tx.description,
+                      }} title={`${tx.description} — ${formatBRL(tx.amount)}`}>
+                        {tx.description}
+                        <span style={{ opacity: 0.85, marginLeft: 4 }}>{formatBRL(tx.amount)}</span>
+                      </div>
+                    ))}
+
+                    {/* Botão +N clicável para expandir */}
+                    {!isExpanded && hiddenCount > 0 && (
+                      <button
+                        onClick={() => setExpandedDay(day)}
+                        style={{
+                          background: "rgba(180,120,255,0.15)",
+                          border: "1px solid rgba(180,120,255,0.3)",
+                          borderRadius: 6, padding: "3px 6px",
+                          fontSize: 11, fontWeight: 700, color: "white",
+                          cursor: "pointer", textAlign: "left",
+                        }}
+                      >
+                        +{hiddenCount} mais
+                      </button>
+                    )}
+
+                    {/* Botão para recolher */}
+                    {isExpanded && dayTx.length > MAX_VISIBLE && (
+                      <button
+                        onClick={() => setExpandedDay(null)}
+                        style={{
+                          background: "rgba(255,255,255,0.06)",
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          borderRadius: 6, padding: "3px 6px",
+                          fontSize: 11, fontWeight: 700, color: "white",
+                          cursor: "pointer", textAlign: "left",
+                        }}
+                      >
+                        ▲ recolher
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Lista de lançamentos */}
+      {view === "list" && (
+        <div style={{ display: "grid", gap: 8 }}>
+          {txOfMonth.length === 0 ? (
+            <div style={{ opacity: 0.7 }}>Nenhum lançamento em {MONTH_NAMES[currentMonth]} de {currentYear}.</div>
+          ) : txOfMonth.map(tx => (
+            <div key={tx.id} style={{
+              display: "flex", justifyContent: "space-between", alignItems: "center",
+              border: "1px solid rgba(255,255,255,0.10)", borderRadius: 12, padding: "10px 14px",
+              background: "rgba(255,255,255,0.03)", gap: 12, flexWrap: "wrap",
+            }}>
+              <div style={{ display: "grid", gap: 4, minWidth: 0 }}>
+                <div style={{ fontWeight: 900 }}>{tx.description}</div>
+                <div style={{ fontSize: 12, opacity: 0.7 }}>
+                  {tx.due_date ?? tx.paid_at ?? "—"} • {tx.counterparty_name ?? "—"} • {tx.status}
+                </div>
+              </div>
+              <div style={{ fontWeight: 900, fontSize: 15, color: tx.kind === "income" ? "#78ffb4" : "#ff8080", whiteSpace: "nowrap" }}>
+                {tx.kind === "expense" ? "-" : ""}{formatBRL(tx.amount)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

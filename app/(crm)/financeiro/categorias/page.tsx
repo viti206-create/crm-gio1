@@ -22,6 +22,7 @@ type FinancialCategory = {
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
+  boxSizing: "border-box",
   background: "rgba(255,255,255,0.06)",
   color: "white",
   border: "1px solid rgba(255,255,255,0.12)",
@@ -308,7 +309,7 @@ export default function FinanceiroCategoriasPage() {
   if (!isAdmin) return null;
 
   return (
-    <div style={{ padding: 16, color: "white", display: "grid", gap: 16 }}>
+    <div style={{ padding: 16, color: "white", display: "grid", gap: 16, width: "100%", minWidth: 0 }}>
       <div
         style={{
           display: "flex",
@@ -488,6 +489,8 @@ export default function FinanceiroCategoriasPage() {
           boxShadow: "0 18px 60px rgba(0,0,0,0.35)",
           display: "grid",
           gap: 14,
+          minWidth: 0,
+          overflow: "hidden",
         }}
       >
         <div
@@ -546,16 +549,16 @@ export default function FinanceiroCategoriasPage() {
           <div>Carregando...</div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
               <thead>
                 <tr>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Nome</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Ambiente</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Tipo</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Pai</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Ordem</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Status</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10, width: "28%" }}>Nome</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10, width: "10%" }}>Ambiente</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10, width: "10%" }}>Tipo</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10, width: "8%" }}>Pai</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10, width: "7%" }}>Ordem</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10, width: "9%" }}>Status</th>
+                  <th style={{ textAlign: "left", paddingBottom: 10, width: "28%" }}>Ações</th>
                 </tr>
               </thead>
 

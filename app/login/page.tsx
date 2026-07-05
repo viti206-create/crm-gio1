@@ -103,6 +103,7 @@ export default function LoginPage() {
     borderRadius: 12,
     outline: "none",
     width: "100%",
+    boxSizing: "border-box",
   };
 
   const labelStyle: React.CSSProperties = {

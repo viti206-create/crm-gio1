@@ -20,21 +20,40 @@ function Select({ value, onChange, placeholder = "Selecione…", options, disabl
   options: { value: string; label: string }[]; disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [openUp, setOpenUp] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const selected = options.find((o) => o.value === value);
+
   useEffect(() => {
     function onDoc(e: MouseEvent) { if (!wrapRef.current) return; if (!wrapRef.current.contains(e.target as Node)) setOpen(false); }
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+
+  function handleToggle() {
+    if (disabled) return;
+    if (!open && wrapRef.current) {
+      const rect = wrapRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setOpenUp(spaceBelow < 280);
+    }
+    setOpen((v) => !v);
+  }
+
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
-      <button type="button" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.92)", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, outline: "none", width: "100%", cursor: disabled ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, opacity: disabled ? 0.6 : 1 }} disabled={disabled} onClick={() => !disabled && setOpen((v) => !v)}>
-        <span style={{ opacity: selected ? 1 : 0.75 }}>{selected ? selected.label : placeholder}</span>
-        <span style={{ opacity: 0.7, fontWeight: 900 }}>{open ? "▲" : "▼"}</span>
+      <button type="button" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.92)", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, outline: "none", width: "100%", boxSizing: "border-box", cursor: disabled ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, opacity: disabled ? 0.6 : 1 }} disabled={disabled} onClick={handleToggle}>
+        <span style={{ opacity: selected ? 1 : 0.75, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selected ? selected.label : placeholder}</span>
+        <span style={{ opacity: 0.7, fontWeight: 900, flexShrink: 0 }}>{open ? "▲" : "▼"}</span>
       </button>
       {open ? (
-        <div style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, right: 0, zIndex: 50, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,14,0.96)", backdropFilter: "blur(12px)", boxShadow: "0 24px 80px rgba(0,0,0,0.65)", overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
+        <div style={{ position: "fixed", zIndex: 9999, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,14,0.98)", backdropFilter: "blur(12px)", boxShadow: "0 24px 80px rgba(0,0,0,0.75)", overflow: "hidden", maxHeight: 260, overflowY: "auto",
+          width: wrapRef.current ? wrapRef.current.getBoundingClientRect().width : "auto",
+          left: wrapRef.current ? wrapRef.current.getBoundingClientRect().left : 0,
+          ...(openUp
+            ? { bottom: wrapRef.current ? window.innerHeight - wrapRef.current.getBoundingClientRect().top + 4 : 0 }
+            : { top: wrapRef.current ? wrapRef.current.getBoundingClientRect().bottom + 4 : 0 }),
+        }}>
           {options.map((o) => { const active = o.value === value; return (
             <button key={o.value} type="button" onClick={() => { onChange(o.value); setOpen(false); }}
               style={{ width: "100%", textAlign: "left", padding: "10px 12px", cursor: "pointer", background: active ? "rgba(180,120,255,0.18)" : "transparent", border: "none", color: "rgba(255,255,255,0.92)", fontWeight: 850 }}
@@ -239,19 +258,18 @@ export default function EditLeadPage() {
   }
 
   const card: React.CSSProperties = { border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", borderRadius: 18, padding: 16, boxShadow: "0 24px 80px rgba(0,0,0,0.55)", maxWidth: 920 };
-  const inputStyle: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, outline: "none", width: "100%" };
+  const inputStyle: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, outline: "none", width: "100%", boxSizing: "border-box", minWidth: 0 };
   const labelStyle: React.CSSProperties = { fontSize: 12, opacity: 0.8, fontWeight: 900, letterSpacing: 0.2 };
   const btn: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, cursor: "pointer", fontWeight: 900 };
   const btnPrimary: React.CSSProperties = { ...btn, border: "1px solid rgba(180,120,255,0.30)", background: "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)" };
   const btnDisabled: React.CSSProperties = { ...btnPrimary, opacity: 0.55, cursor: "not-allowed" };
-  const smallLockedStyle: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, minHeight: 42, display: "inline-flex", alignItems: "center", fontWeight: 900, width: "fit-content", minWidth: 160 };
+  const smallLockedStyle: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, minHeight: 42, display: "flex", alignItems: "center", fontWeight: 900, width: "100%", boxSizing: "border-box", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
   return (
     <div style={{ padding: 16, color: "white" }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
         <div style={{ display: "grid", gap: 6 }}>
           <div style={{ fontSize: 18, fontWeight: 950 }}>Editar lead</div>
-          <div style={{ fontSize: 12, opacity: 0.75 }}>{leadId}</div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button onClick={() => router.replace("/leads")} style={btn}>Voltar</button>
@@ -270,26 +288,26 @@ export default function EditLeadPage() {
           <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>Telefone (BR) *</div><input style={inputStyle} value={phoneRaw} onChange={(e) => setPhoneRaw(e.target.value)} /></div>
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-            <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>CPF</div><input style={inputStyle} value={cpf} onChange={(e) => setCpf(e.target.value)} /></div>
-            <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>Data de nascimento</div><input type="date" style={inputStyle} value={birthDate} onChange={(e) => setBirthDate(e.target.value)} /></div>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>CPF</div><input style={inputStyle} value={cpf} onChange={(e) => setCpf(e.target.value)} /></div>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Data de nascimento</div><input type="date" style={inputStyle} value={birthDate} onChange={(e) => setBirthDate(e.target.value)} /></div>
           </div>
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-            <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>Sexo</div><Select value={sex} onChange={setSex} options={sexOptions} placeholder="Selecione…" /></div>
-            <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>Origem *</div><Select value={source} onChange={setSource} options={sourceOptions} /></div>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Sexo</div><Select value={sex} onChange={setSex} options={sexOptions} placeholder="Selecione…" /></div>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Origem *</div><Select value={source} onChange={setSource} options={sourceOptions} /></div>
           </div>
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
-            <div style={{ display: "grid", gap: 10 }}>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
               <div style={labelStyle}>Interesses * <span style={{ fontWeight: 400, opacity: 0.6 }}>(pode adicionar vários)</span></div>
               <InterestTags values={interests} onChange={setInterests} suggestions={interestSuggestions} />
             </div>
-            <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>Campanha (opcional)</div><input style={inputStyle} value={campaign} onChange={(e) => setCampaign(e.target.value)} /></div>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Campanha (opcional)</div><input style={inputStyle} value={campaign} onChange={(e) => setCampaign(e.target.value)} /></div>
           </div>
 
-          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "220px 1fr", alignItems: "end" }}>
-            <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>Responsável</div><div style={smallLockedStyle}>{responsibleName || "Não definido"}</div></div>
-            <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>Etapa atual *</div><Select value={stageId} onChange={setStageId} options={stageOptions} disabled={stages.length === 0} /></div>
+          <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0, 220px) minmax(0, 1fr)", alignItems: "end" }}>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Responsável</div><div style={smallLockedStyle}>{responsibleName || "Não definido"}</div></div>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Etapa atual *</div><Select value={stageId} onChange={setStageId} options={stageOptions} disabled={stages.length === 0} /></div>
           </div>
         </div>
       </div>

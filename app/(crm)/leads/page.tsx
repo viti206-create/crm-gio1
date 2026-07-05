@@ -87,12 +87,28 @@ export default function LeadsListPage() {
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [interestFilter, setInterestFilter] = useState<string>("all");
+  const [campaignFilter, setCampaignFilter] = useState<string>("all");
 
   // Filtros aba responsáveis
   const [dateFrom, setDateFrom] = useState(firstDayOfMonth());
   const [dateTo, setDateTo] = useState(todayValue());
 
   useEffect(() => { fetchAll(); }, []);
+
+  // Ler filtros da URL (para links vindos da Home)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const camp = params.get("campaign");
+    const inter = params.get("interest");
+    const src = params.get("source");
+    if (camp) setCampaignFilter(camp);
+    if (inter) setInterestFilter(inter);
+    if (src) setSourceFilter(src);
+    if (camp || inter || src) {
+      // Limpar URL sem reload
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   async function fetchAll() {
     setLoading(true);
@@ -126,6 +142,12 @@ export default function LeadsListPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [leads]);
 
+  const campaignOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const l of leads) if (l.campaign) set.add(l.campaign);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [leads]);
+
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     return leads.filter((l) => {
@@ -135,6 +157,7 @@ export default function LeadsListPage() {
         const li = getLeadInterests(l).map(i => i.toLowerCase());
         if (!li.includes(interestFilter.toLowerCase())) return false;
       }
+      if (campaignFilter !== "all" && (l.campaign ?? "") !== campaignFilter) return false;
       if (!query) return true;
       const age = calculateAge(l.birth_date);
       const hay = [l.name ?? "", l.phone_raw ?? "", l.phone_e164 ?? "", l.source ?? "",
@@ -144,7 +167,7 @@ export default function LeadsListPage() {
       ].join(" ").toLowerCase();
       return hay.includes(query);
     });
-  }, [leads, q, stageFilter, sourceFilter, interestFilter, stages]);
+  }, [leads, q, stageFilter, sourceFilter, interestFilter, campaignFilter, stages]);
 
   // Contagem por responsável filtrada por período
   const responsaveisCounts = useMemo(() => {
@@ -191,6 +214,7 @@ export default function LeadsListPage() {
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {loading ? <span style={chipStyle("primary")}>Carregando…</span> : <span style={chipStyle("muted")}>Total: {filtered.length}</span>}
             {interestFilter !== "all" && <span style={chipStyle("primary")}>Interesse: {interestFilter}</span>}
+            {campaignFilter !== "all" && <span style={chipStyle("primary")}>Campanha: {campaignFilter}</span>}
           </div>
         </div>
         <Link href="/leads/new" style={btnPrimary}>+ Novo lead</Link>
@@ -213,7 +237,9 @@ export default function LeadsListPage() {
               options={[{ value: "all", label: "Todas as origens" }, ...sourceOptions.map((s) => ({ value: s, label: s }))]} />
             <SelectDark value={interestFilter} onChange={setInterestFilter} placeholder="Todos os interesses" searchable={true} minWidth={220}
               options={[{ value: "all", label: "Todos os interesses" }, ...interestOptions.map((i) => ({ value: i, label: i }))]} />
-            <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); }} style={btn}>Limpar</button>
+            <SelectDark value={campaignFilter} onChange={setCampaignFilter} placeholder="Todas as campanhas" searchable={true} minWidth={220}
+              options={[{ value: "all", label: "Todas as campanhas" }, ...campaignOptions.map((c) => ({ value: c, label: c }))]} />
+            <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); setCampaignFilter("all"); }} style={btn}>Limpar</button>
           </div>
 
           {loading ? (
