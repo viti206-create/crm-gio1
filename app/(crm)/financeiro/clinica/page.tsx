@@ -258,8 +258,6 @@ export default function FinanceiroClinicaPage() {
                         borderRadius: 6, padding: "3px 6px",
                         fontSize: 11, fontWeight: 700,
                         overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        cursor: "default",
-                        title: tx.description,
                       }} title={`${tx.description} — ${formatBRL(tx.amount)}`}>
                         {tx.description}
                         <span style={{ opacity: 0.85, marginLeft: 4 }}>{formatBRL(tx.amount)}</span>
