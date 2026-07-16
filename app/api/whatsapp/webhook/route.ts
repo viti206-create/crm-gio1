@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { normalizePhoneE164 } from "@/lib/phone";
+import Anthropic from "@anthropic-ai/sdk";
 
 type SupabaseClient = ReturnType<typeof createSupabaseServerClient>;
 
@@ -110,6 +111,10 @@ const DEFAULT_SOURCE = "outros";
 const DEFAULT_CHANNEL = "whatsapp";
 const DEFAULT_DIRECTION = "inbound";
 const DEFAULT_CREATED_BY = "18896cbe-849b-4091-9ea3-73ed6f6a6523";
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+});
 
 function jsonError(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
@@ -348,8 +353,6 @@ async function createLead(
     created_by: DEFAULT_CREATED_BY,
   };
 
-  console.log("CREATE LEAD PAYLOAD:", JSON.stringify(insertPayload, null, 2));
-
   const { data, error } = await supabase
     .from("leads")
     .insert(insertPayload)
@@ -413,6 +416,67 @@ async function updateLead(
   return data as LeadRow;
 }
 
+// NOVA FUNÇÃO: busca as informações da clínica no Supabase
+async function buscarContextoClinica(supabase: SupabaseClient) {
+  const { data, error } = await supabase
+    .from("clinica_conhecimento")
+    .select("titulo, conteudo")
+    .eq("ativo", true);
+
+  if (error || !data) {
+    return "";
+  }
+
+  return data.map((item) => `${item.titulo}: ${item.conteudo}`).join("\n\n");
+}
+
+// NOVA FUNÇÃO: pergunta pro Claude o que responder
+async function gerarRespostaIA(
+  mensagemCliente: string,
+  contextoClinica: string
+) {
+  const systemPrompt = `Você é o assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Sempre que se apresentar ou for perguntado, informe que você atende pela GIO Boituva.
+
+Responda de forma breve e direta, como uma conversa real de WhatsApp — frases curtas, tom acolhedor e próximo.
+
+REGRAS OBRIGATÓRIAS:
+- Nunca mencione, recomende ou compare com outras clínicas ou concorrentes, mesmo se perguntado diretamente.
+- Se a pergunta for sobre algo que não está nas informações abaixo, diga que vai verificar com a equipe.
+- Nunca dê conselhos médicos, diagnósticos ou opiniões técnicas sobre procedimentos.
+
+INFORMAÇÕES DA CLÍNICA:
+${contextoClinica}`;
+
+  const resposta = await anthropic.messages.create({
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 300,
+    system: systemPrompt,
+    messages: [{ role: "user", content: mensagemCliente }],
+  });
+
+  const bloco = resposta.content[0];
+  return bloco.type === "text" ? bloco.text : "";
+}
+
+// NOVA FUNÇÃO: envia a resposta de volta pro cliente no WhatsApp
+async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
+  await fetch(
+    `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: numeroCliente,
+        text: { body: texto },
+      }),
+    }
+  );
+}
+
 async function processIncomingMessage(
   supabase: SupabaseClient,
   event: IncomingMessage,
@@ -442,7 +506,19 @@ async function processIncomingMessage(
   } else {
     lead = await createLead(supabase, event, defaultStageId);
   }
-  
+
+  // NOVO: gera e envia a resposta da IA (só pra mensagens de texto reais)
+  try {
+    const contextoClinica = await buscarContextoClinica(supabase);
+    const respostaIA = await gerarRespostaIA(event.message, contextoClinica);
+
+    if (respostaIA) {
+      await enviarMensagemWhatsApp(event.phoneRaw, respostaIA);
+    }
+  } catch (iaError) {
+    console.error("ERRO AO GERAR/ENVIAR RESPOSTA DA IA:", iaError);
+  }
+
   return {
     processed: true,
     duplicate: false,
