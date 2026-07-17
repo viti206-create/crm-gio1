@@ -14,6 +14,7 @@ type LeadRow = {
   source?: string | null;
   interest?: string | null;
   stage_id?: string | null;
+  ia_pausada?: boolean | null;
 };
 
 type StageRow = {
@@ -117,7 +118,10 @@ const DEFAULT_SOURCE = "outros";
 const DEFAULT_CHANNEL = "whatsapp";
 const DEFAULT_DIRECTION = "inbound";
 const DEFAULT_CREATED_BY = "18896cbe-849b-4091-9ea3-73ed6f6a6523";
-const MAX_HISTORICO_MENSAGENS = 10; // quantas trocas anteriores a IA vai "lembrar"
+const MAX_HISTORICO_MENSAGENS = 10;
+const MARCADOR_HANDOFF = "[HANDOFF_HUMANO]";
+const MENSAGEM_HANDOFF =
+  "Entendo! Vou chamar alguém da nossa equipe pra te ajudar melhor com isso. Só um momento 🙋‍♀️";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -309,7 +313,9 @@ async function getDefaultStageId(supabase: SupabaseClient) {
 async function findExistingLead(supabase: SupabaseClient, phoneE164: string) {
   const { data, error } = await supabase
     .from("leads")
-    .select("id,created_at,name,phone_raw,phone_e164,source,interest,stage_id")
+    .select(
+      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada"
+    )
     .eq("phone_e164", phoneE164)
     .order("created_at", { ascending: true })
     .order("id", { ascending: true });
@@ -363,7 +369,9 @@ async function createLead(
   const { data, error } = await supabase
     .from("leads")
     .insert(insertPayload)
-    .select("id,created_at,name,phone_raw,phone_e164,source,interest,stage_id")
+    .select(
+      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada"
+    )
     .single();
 
   if (error) {
@@ -413,7 +421,9 @@ async function updateLead(
     .from("leads")
     .update(updatePayload)
     .eq("id", lead.id)
-    .select("id,created_at,name,phone_raw,phone_e164,source,interest,stage_id")
+    .select(
+      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada"
+    )
     .single();
 
   if (error) {
@@ -421,6 +431,10 @@ async function updateLead(
   }
 
   return data as LeadRow;
+}
+
+async function pausarIAparaLead(supabase: SupabaseClient, leadId: string) {
+  await supabase.from("leads").update({ ia_pausada: true }).eq("id", leadId);
 }
 
 async function buscarContextoClinica(supabase: SupabaseClient) {
@@ -436,7 +450,6 @@ async function buscarContextoClinica(supabase: SupabaseClient) {
   return data.map((item) => `${item.titulo}: ${item.conteudo}`).join("\n\n");
 }
 
-// NOVA FUNÇÃO: busca as últimas mensagens dessa conversa, pra dar memória à IA
 async function buscarHistoricoConversa(
   supabase: SupabaseClient,
   telefoneCliente: string
@@ -452,30 +465,76 @@ async function buscarHistoricoConversa(
     return [];
   }
 
-  // Vem do banco em ordem "mais recente primeiro" — invertemos pra ordem cronológica
   return (data as ConversaRow[]).reverse();
 }
 
-// ATUALIZADA: agora recebe e usa o histórico da conversa
-async function gerarRespostaIA(
-  mensagemCliente: string,
+function obterSaudacaoPeriodo(): string {
+  const hora = Number(
+    new Intl.DateTimeFormat("pt-BR", {
+      hour: "numeric",
+      hour12: false,
+      timeZone: "America/Sao_Paulo",
+    }).format(new Date())
+  );
+
+  if (hora >= 5 && hora < 12) return "Bom dia";
+  if (hora >= 12 && hora < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+function montarSystemPrompt(
   contextoClinica: string,
-  historico: ConversaRow[]
-) {
-  const systemPrompt = `Você é o assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Sempre que se apresentar ou for perguntado, informe que você atende pela GIO Boituva.
+  ehPrimeiraMensagem: boolean,
+  nomeConhecido: string | null
+): string {
+  const saudacao = obterSaudacaoPeriodo();
 
-Responda de forma breve e direta, como uma conversa real de WhatsApp — frases curtas, tom acolhedor e próximo.
+  return `Você é o assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Sempre que se apresentar ou for perguntado, informe que você atende pela GIO Boituva.
 
-REGRAS OBRIGATÓRIAS:
+Responda de forma breve e direta, como uma conversa real de WhatsApp — frases curtas, tom acolhedor, próximo e caloroso, podendo usar emojis com moderação.
+
+${
+  ehPrimeiraMensagem
+    ? `Esta é a PRIMEIRA mensagem dessa conversa. Cumprimente usando "${saudacao}!" seguido de um emoji apropriado ao período do dia, se apresente como assistente da GIO Boituva, e pergunte como pode ajudar. Exemplo de tom (não copie literalmente, adapte): "${saudacao}! 🌙 Tudo bem? Sou o assistente da GIO Boituva, uma clínica de estética facial e corporal. Como posso te ajudar? Tem alguma dúvida sobre nossos procedimentos ou quer agendar uma avaliação? 😊"`
+    : `Esta NÃO é a primeira mensagem — não repita a saudação inicial nem a apresentação completa de novo.`
+}
+
+REGRA SOBRE PERGUNTAR O NOME:
+${
+  nomeConhecido
+    ? `O nome do cliente já é conhecido: ${nomeConhecido}. Use o nome dele(a) na conversa quando fizer sentido, de forma natural.`
+    : `O nome do cliente ainda não é conhecido. Pergunte o nome dele(a) UMA VEZ, de forma natural e gentil, preferencialmente logo no início da conversa. Se a pessoa não responder o nome ou preferir não informar, continue o atendimento normalmente sem insistir ou perguntar de novo.`
+}
+
+REGRA SOBRE OFERECER AVALIAÇÃO/AGENDAMENTO:
+Não ofereça agendamento de avaliação em toda mensagem — isso soa insistente e incomoda o cliente. Só sugira agendar uma avaliação quando fizer sentido no contexto: quando o cliente já tirou as dúvidas principais e parece pronto para avançar, quando ele demonstrar interesse claro em algum procedimento, ou quando a pergunta dele exigir avaliação presencial para ser respondida com precisão (ex: qual procedimento é mais indicado pro caso dele). Em respostas que são só esclarecimento de dúvida simples, não precisa oferecer agendamento.
+
+REGRA SOBRE TRANSFERIR PARA ATENDIMENTO HUMANO:
+Se você não souber responder algo com base nas informações da clínica abaixo, se o cliente pedir explicitamente para falar com uma pessoa/atendente, ou se a pergunta exigir avaliação/julgamento humano que você não pode dar com segurança, você deve ENCERRAR o atendimento automatizado. Nesse caso, NUNCA diga que vai "passar o contato" ou sugerir outro canal — o cliente já está no canal de atendimento correto. Ao invés disso, adicione o texto exato "${MARCADOR_HANDOFF}" no final da sua resposta (isso é um marcador interno, o cliente não vai ver esse texto).
+
+REGRAS OBRIGATÓRIAS ADICIONAIS:
 - Nunca mencione, recomende ou compare com outras clínicas ou concorrentes, mesmo se perguntado diretamente.
-- Se a pergunta for sobre algo que não está nas informações abaixo, diga que vai verificar com a equipe.
+- Responda APENAS sobre os procedimentos listados abaixo. Nunca mencione, confirme ou sugira procedimentos que não estejam nesta lista, mesmo que sejam comuns em outras clínicas de estética (exemplos do que NÃO fazer: nunca invente procedimentos como "laser para manchas" ou "fotorejuvenescimento" se não estiverem na lista).
 - Nunca dê conselhos médicos, diagnósticos ou opiniões técnicas sobre procedimentos.
-- Use o histórico da conversa abaixo para entender o contexto e não repetir perguntas já respondidas.
+- Use o histórico da conversa para entender o contexto e não repetir perguntas já respondidas.
 
 INFORMAÇÕES DA CLÍNICA:
 ${contextoClinica}`;
+}
 
-  // Monta o histórico como mensagens alternadas (cliente / assistente)
+async function gerarRespostaIA(
+  mensagemCliente: string,
+  contextoClinica: string,
+  historico: ConversaRow[],
+  nomeConhecido: string | null
+) {
+  const ehPrimeiraMensagem = historico.length === 0;
+  const systemPrompt = montarSystemPrompt(
+    contextoClinica,
+    ehPrimeiraMensagem,
+    nomeConhecido
+  );
+
   const mensagensParaIA: Anthropic.MessageParam[] = [];
 
   for (const item of historico) {
@@ -487,7 +546,6 @@ ${contextoClinica}`;
     }
   }
 
-  // Adiciona a mensagem atual por último
   mensagensParaIA.push({ role: "user", content: mensagemCliente });
 
   const resposta = await anthropic.messages.create({
@@ -499,6 +557,29 @@ ${contextoClinica}`;
 
   const bloco = resposta.content[0];
   return bloco.type === "text" ? bloco.text : "";
+}
+
+async function marcarComoLidoEDigitando(messageId: string) {
+  try {
+    await fetch(
+      `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          status: "read",
+          message_id: messageId,
+          typing_indicator: { type: "text" },
+        }),
+      }
+    );
+  } catch (erro) {
+    console.error("Erro ao marcar como lido/digitando:", erro);
+  }
 }
 
 async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
@@ -519,7 +600,6 @@ async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
   );
 }
 
-// NOVA FUNÇÃO: salva a troca de mensagens no histórico, pra próxima vez lembrar
 async function salvarConversa(
   supabase: SupabaseClient,
   telefoneCliente: string,
@@ -564,16 +644,39 @@ async function processIncomingMessage(
     lead = await createLead(supabase, event, defaultStageId);
   }
 
+  // Se a IA já foi pausada para esse lead, um humano assumiu — não responde mais automaticamente
+  if (lead.ia_pausada) {
+    return {
+      processed: true,
+      duplicate: false,
+      leadId: lead.id,
+      dedupeMode: existingLead ? "phone_e164" : "created",
+      duplicateLeadsFound: duplicatesFound,
+    };
+  }
+
   try {
+    await marcarComoLidoEDigitando(event.messageId);
+
     const contextoClinica = await buscarContextoClinica(supabase);
     const historico = await buscarHistoricoConversa(supabase, event.phoneRaw);
-    const respostaIA = await gerarRespostaIA(
+    const nomeConhecido = trimOrNull(lead.name) ?? event.contactName;
+
+    let respostaIA = await gerarRespostaIA(
       event.message,
       contextoClinica,
-      historico
+      historico,
+      nomeConhecido
     );
 
     if (respostaIA) {
+      const precisaHumano = respostaIA.includes(MARCADOR_HANDOFF);
+
+      if (precisaHumano) {
+        respostaIA = MENSAGEM_HANDOFF;
+        await pausarIAparaLead(supabase, lead.id);
+      }
+
       await enviarMensagemWhatsApp(event.phoneRaw, respostaIA);
       await salvarConversa(supabase, event.phoneRaw, event.message, respostaIA);
     }
