@@ -24,6 +24,12 @@ type ActivityRow = {
   id: string;
 };
 
+type ConversaRow = {
+  mensagem: string | null;
+  resposta: string | null;
+  created_at?: string | null;
+};
+
 type WhatsAppMessage = {
   id?: string;
   from?: string;
@@ -111,6 +117,7 @@ const DEFAULT_SOURCE = "outros";
 const DEFAULT_CHANNEL = "whatsapp";
 const DEFAULT_DIRECTION = "inbound";
 const DEFAULT_CREATED_BY = "18896cbe-849b-4091-9ea3-73ed6f6a6523";
+const MAX_HISTORICO_MENSAGENS = 10; // quantas trocas anteriores a IA vai "lembrar"
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -416,7 +423,6 @@ async function updateLead(
   return data as LeadRow;
 }
 
-// NOVA FUNÇÃO: busca as informações da clínica no Supabase
 async function buscarContextoClinica(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from("clinica_conhecimento")
@@ -430,10 +436,31 @@ async function buscarContextoClinica(supabase: SupabaseClient) {
   return data.map((item) => `${item.titulo}: ${item.conteudo}`).join("\n\n");
 }
 
-// NOVA FUNÇÃO: pergunta pro Claude o que responder
+// NOVA FUNÇÃO: busca as últimas mensagens dessa conversa, pra dar memória à IA
+async function buscarHistoricoConversa(
+  supabase: SupabaseClient,
+  telefoneCliente: string
+) {
+  const { data, error } = await supabase
+    .from("whatsapp_conversas")
+    .select("mensagem, resposta, created_at")
+    .eq("telefone_cliente", telefoneCliente)
+    .order("created_at", { ascending: false })
+    .limit(MAX_HISTORICO_MENSAGENS);
+
+  if (error || !data) {
+    return [];
+  }
+
+  // Vem do banco em ordem "mais recente primeiro" — invertemos pra ordem cronológica
+  return (data as ConversaRow[]).reverse();
+}
+
+// ATUALIZADA: agora recebe e usa o histórico da conversa
 async function gerarRespostaIA(
   mensagemCliente: string,
-  contextoClinica: string
+  contextoClinica: string,
+  historico: ConversaRow[]
 ) {
   const systemPrompt = `Você é o assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Sempre que se apresentar ou for perguntado, informe que você atende pela GIO Boituva.
 
@@ -443,22 +470,37 @@ REGRAS OBRIGATÓRIAS:
 - Nunca mencione, recomende ou compare com outras clínicas ou concorrentes, mesmo se perguntado diretamente.
 - Se a pergunta for sobre algo que não está nas informações abaixo, diga que vai verificar com a equipe.
 - Nunca dê conselhos médicos, diagnósticos ou opiniões técnicas sobre procedimentos.
+- Use o histórico da conversa abaixo para entender o contexto e não repetir perguntas já respondidas.
 
 INFORMAÇÕES DA CLÍNICA:
 ${contextoClinica}`;
+
+  // Monta o histórico como mensagens alternadas (cliente / assistente)
+  const mensagensParaIA: Anthropic.MessageParam[] = [];
+
+  for (const item of historico) {
+    if (item.mensagem) {
+      mensagensParaIA.push({ role: "user", content: item.mensagem });
+    }
+    if (item.resposta) {
+      mensagensParaIA.push({ role: "assistant", content: item.resposta });
+    }
+  }
+
+  // Adiciona a mensagem atual por último
+  mensagensParaIA.push({ role: "user", content: mensagemCliente });
 
   const resposta = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
     max_tokens: 300,
     system: systemPrompt,
-    messages: [{ role: "user", content: mensagemCliente }],
+    messages: mensagensParaIA,
   });
 
   const bloco = resposta.content[0];
   return bloco.type === "text" ? bloco.text : "";
 }
 
-// NOVA FUNÇÃO: envia a resposta de volta pro cliente no WhatsApp
 async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
   await fetch(
     `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
@@ -475,6 +517,21 @@ async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
       }),
     }
   );
+}
+
+// NOVA FUNÇÃO: salva a troca de mensagens no histórico, pra próxima vez lembrar
+async function salvarConversa(
+  supabase: SupabaseClient,
+  telefoneCliente: string,
+  mensagem: string,
+  resposta: string
+) {
+  await supabase.from("whatsapp_conversas").insert({
+    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    telefone_cliente: telefoneCliente,
+    mensagem,
+    resposta,
+  });
 }
 
 async function processIncomingMessage(
@@ -507,13 +564,18 @@ async function processIncomingMessage(
     lead = await createLead(supabase, event, defaultStageId);
   }
 
-  // NOVO: gera e envia a resposta da IA (só pra mensagens de texto reais)
   try {
     const contextoClinica = await buscarContextoClinica(supabase);
-    const respostaIA = await gerarRespostaIA(event.message, contextoClinica);
+    const historico = await buscarHistoricoConversa(supabase, event.phoneRaw);
+    const respostaIA = await gerarRespostaIA(
+      event.message,
+      contextoClinica,
+      historico
+    );
 
     if (respostaIA) {
       await enviarMensagemWhatsApp(event.phoneRaw, respostaIA);
+      await salvarConversa(supabase, event.phoneRaw, event.message, respostaIA);
     }
   } catch (iaError) {
     console.error("ERRO AO GERAR/ENVIAR RESPOSTA DA IA:", iaError);
