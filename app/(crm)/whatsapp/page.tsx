@@ -119,7 +119,15 @@ export default function WhatsAppPainelPage() {
   }
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "sans-serif" }}>
+    <div
+      style={{
+        height: "100%",
+        width: "100%",
+        display: "flex",
+        fontFamily: "sans-serif",
+        overflow: "hidden",
+      }}
+    >
       {/* Lista de conversas */}
       <div
         style={{
@@ -128,20 +136,22 @@ export default function WhatsAppPainelPage() {
           display: "flex",
           flexDirection: "column",
           background: "#ffffff",
+          height: "100%",
         }}
       >
         <div
           style={{
             background: "#008069",
-            color: "white",
+            color: "#ffffff",
             padding: "16px",
             fontWeight: 700,
             fontSize: 18,
+            flexShrink: 0,
           }}
         >
           Conversas
         </div>
-        <div style={{ overflowY: "auto", flex: 1 }}>
+        <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
           {conversas.map((conversa) => (
             <div
               key={conversa.telefone}
@@ -157,7 +167,9 @@ export default function WhatsAppPainelPage() {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontWeight: 600 }}>{conversa.nome}</span>
+                <span style={{ fontWeight: 600, color: "#111b21" }}>
+                  {conversa.nome}
+                </span>
                 <span style={{ fontSize: 12, color: "#667781" }}>
                   {formatarHorario(conversa.ultimoHorario)}
                 </span>
@@ -178,17 +190,26 @@ export default function WhatsAppPainelPage() {
                   <span
                     style={{
                       background: "#ffb020",
-                      color: "white",
+                      color: "#ffffff",
                       fontSize: 10,
                       padding: "1px 6px",
                       borderRadius: 8,
                       fontWeight: 700,
+                      flexShrink: 0,
                     }}
                   >
                     HUMANO
                   </span>
                 )}
-                {conversa.ultimaMensagem}
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {conversa.ultimaMensagem}
+                </span>
               </div>
             </div>
           ))}
@@ -207,6 +228,8 @@ export default function WhatsAppPainelPage() {
           display: "flex",
           flexDirection: "column",
           background: "#e5ddd5",
+          height: "100%",
+          minWidth: 0,
         }}
       >
         {telefoneSelecionado ? (
@@ -214,16 +237,19 @@ export default function WhatsAppPainelPage() {
             <div
               style={{
                 background: "#008069",
-                color: "white",
+                color: "#ffffff",
                 padding: "12px 20px",
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
+                flexShrink: 0,
               }}
             >
               <div>
-                <div style={{ fontWeight: 700 }}>{nomeSelecionado}</div>
-                <div style={{ fontSize: 12, opacity: 0.85 }}>
+                <div style={{ fontWeight: 700, color: "#ffffff" }}>
+                  {nomeSelecionado}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.85, color: "#ffffff" }}>
                   {telefoneSelecionado}
                 </div>
               </div>
@@ -231,7 +257,7 @@ export default function WhatsAppPainelPage() {
                 onClick={alternarPausaIA}
                 style={{
                   background: iaPausada ? "#ffb020" : "rgba(255,255,255,0.2)",
-                  color: "white",
+                  color: "#ffffff",
                   border: "none",
                   borderRadius: 20,
                   padding: "8px 16px",
@@ -244,7 +270,14 @@ export default function WhatsAppPainelPage() {
               </button>
             </div>
 
-            <div style={{ flex: 1, overflowY: "auto", padding: "16px 24px" }}>
+            <div
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "16px 24px",
+                minHeight: 0,
+              }}
+            >
               {bolhas.map((bolha, indice) => (
                 <div
                   key={indice}
@@ -265,7 +298,13 @@ export default function WhatsAppPainelPage() {
                       boxShadow: "0 1px 1px rgba(0,0,0,0.1)",
                     }}
                   >
-                    <div style={{ fontSize: 14, whiteSpace: "pre-wrap" }}>
+                    <div
+                      style={{
+                        fontSize: 14,
+                        whiteSpace: "pre-wrap",
+                        color: "#111b21",
+                      }}
+                    >
                       {bolha.texto}
                     </div>
                     <div
@@ -290,6 +329,7 @@ export default function WhatsAppPainelPage() {
                 gap: 8,
                 padding: "12px 16px",
                 background: "#f0f2f5",
+                flexShrink: 0,
               }}
             >
               <input
@@ -305,6 +345,8 @@ export default function WhatsAppPainelPage() {
                   borderRadius: 20,
                   padding: "10px 16px",
                   fontSize: 14,
+                  color: "#111b21",
+                  background: "#ffffff",
                 }}
               />
               <button
@@ -312,13 +354,14 @@ export default function WhatsAppPainelPage() {
                 disabled={enviando}
                 style={{
                   background: "#008069",
-                  color: "white",
+                  color: "#ffffff",
                   border: "none",
                   borderRadius: "50%",
                   width: 40,
                   height: 40,
                   cursor: "pointer",
                   fontSize: 16,
+                  flexShrink: 0,
                 }}
               >
                 ➤
