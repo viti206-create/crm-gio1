@@ -717,6 +717,21 @@ async function salvarConversa(
   });
 }
 
+// NOVA FUNÇÃO: salva a mensagem do cliente mesmo quando a IA está pausada
+// (sem isso, o painel não mostrava nada durante o atendimento humano)
+async function salvarMensagemSemResposta(
+  supabase: SupabaseClient,
+  telefoneCliente: string,
+  mensagem: string
+) {
+  await supabase.from("whatsapp_conversas").insert({
+    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    telefone_cliente: telefoneCliente,
+    mensagem,
+    resposta: null,
+  });
+}
+
 async function processIncomingMessage(
   supabase: SupabaseClient,
   event: IncomingMessage,
@@ -747,8 +762,10 @@ async function processIncomingMessage(
     lead = await createLead(supabase, event, defaultStageId);
   }
 
-  // Se a IA já foi pausada de vez para esse lead (handoff), não responde mais
+  // Se a IA já foi pausada de vez para esse lead (handoff), não responde mais,
+  // mas salva a mensagem do cliente para aparecer no painel
   if (lead.ia_pausada) {
+    await salvarMensagemSemResposta(supabase, event.phoneRaw, event.message);
     return {
       processed: true,
       duplicate: false,
@@ -758,8 +775,10 @@ async function processIncomingMessage(
     };
   }
 
-  // Se um humano respondeu manualmente pelo app há menos de 1h, a IA aguarda
+  // Se um humano respondeu manualmente pelo app há menos de 1h, a IA aguarda,
+  // mas salva a mensagem do cliente para aparecer no painel
   if (humanoAtivoRecentemente(lead)) {
+    await salvarMensagemSemResposta(supabase, event.phoneRaw, event.message);
     return {
       processed: true,
       duplicate: false,
