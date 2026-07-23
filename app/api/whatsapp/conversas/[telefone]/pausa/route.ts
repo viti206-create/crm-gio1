@@ -10,9 +10,24 @@ export async function POST(
 
   const supabase = createSupabaseServerClient();
 
+  const novoValor = Boolean(pausada);
+
+  const updatePayload: {
+    ia_pausada: boolean;
+    ultima_intervencao_humana?: null;
+  } = {
+    ia_pausada: novoValor,
+  };
+
+  // Ao reativar a IA (botão "voltar"), também limpa o timer de 1h que
+  // poderia continuar bloqueando as respostas mesmo com ia_pausada = false
+  if (!novoValor) {
+    updatePayload.ultima_intervencao_humana = null;
+  }
+
   const { error } = await supabase
     .from("leads")
-    .update({ ia_pausada: Boolean(pausada) })
+    .update(updatePayload)
     .eq("phone_raw", telefone);
 
   if (error) {
