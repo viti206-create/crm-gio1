@@ -4,9 +4,9 @@ import { sendWhatsAppMessage } from "@/lib/whatsapp";
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { telefone: string } }
+  { params }: { params: Promise<{ telefone: string }> }
 ) {
-  const { telefone } = params;
+  const { telefone } = await params;
   const { texto } = await req.json();
 
   if (!texto || !String(texto).trim()) {
@@ -24,8 +24,6 @@ export async function POST(
     resposta: texto,
   });
 
-  // Enviar manualmente conta como intervenção humana:
-  // a IA fica 1h sem responder automaticamente para esse cliente
   await supabase
     .from("leads")
     .update({ ultima_intervencao_humana: new Date().toISOString() })
