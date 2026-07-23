@@ -15,6 +15,7 @@ type LeadRow = {
   interest?: string | null;
   stage_id?: string | null;
   ia_pausada?: boolean | null;
+  ultima_intervencao_humana?: string | null;
 };
 
 type StageRow = {
@@ -83,6 +84,14 @@ type WhatsAppMessage = {
   }>;
 };
 
+type MessageEcho = {
+  id?: string;
+  to?: string;
+  from?: string;
+  timestamp?: string;
+  type?: string;
+};
+
 type WhatsAppWebhookPayload = {
   object?: string;
   entry?: Array<{
@@ -96,6 +105,7 @@ type WhatsAppWebhookPayload = {
           };
         }>;
         messages?: WhatsAppMessage[];
+        message_echoes?: MessageEcho[];
         statuses?: Array<unknown>;
       };
     }>;
@@ -122,6 +132,7 @@ const MAX_HISTORICO_MENSAGENS = 10;
 const MARCADOR_HANDOFF = "[HANDOFF_HUMANO]";
 const MENSAGEM_HANDOFF =
   "Entendo! Vou chamar alguém da nossa equipe pra te ajudar melhor com isso. Só um momento 🙋‍♀️";
+const PAUSA_APOS_HUMANO_MS = 60 * 60 * 1000; // 1 hora
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY!,
@@ -165,6 +176,12 @@ function toIsoTimestamp(timestamp: string | null | undefined) {
 function trimOrNull(value: string | null | undefined) {
   const trimmed = String(value ?? "").trim();
   return trimmed ? trimmed : null;
+}
+
+// NOVA FUNÇÃO: corrige formatação de negrito para o padrão do WhatsApp
+// (WhatsApp usa *texto* para negrito, não **texto** como markdown comum)
+function corrigirFormatacaoWhatsApp(texto: string) {
+  return texto.replace(/\*\*(.+?)\*\*/g, "*$1*");
 }
 
 function extractMessageText(message: WhatsAppMessage) {
@@ -252,6 +269,8 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
 
   for (const entry of body.entry ?? []) {
     for (const change of entry.changes ?? []) {
+      if (change.field !== "messages") continue;
+
       const value = change.value;
 
       if (!value?.messages?.length) continue;
@@ -290,6 +309,29 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
   return events;
 }
 
+// NOVA FUNÇÃO: extrai números de telefone que receberam mensagem de um humano via app
+function extractHumanEchoPhones(body: WhatsAppWebhookPayload) {
+  const telefones: string[] = [];
+
+  for (const entry of body.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      if (change.field !== "smb_message_echoes") continue;
+
+      const echoes = change.value?.message_echoes ?? [];
+
+      for (const echo of echoes) {
+        const destino = trimOrNull(echo.to);
+        const normalizado = normalizePhoneE164(destino);
+        if (normalizado) {
+          telefones.push(normalizado);
+        }
+      }
+    }
+  }
+
+  return telefones;
+}
+
 async function getDefaultStageId(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from("stages")
@@ -314,7 +356,7 @@ async function findExistingLead(supabase: SupabaseClient, phoneE164: string) {
   const { data, error } = await supabase
     .from("leads")
     .select(
-      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada"
+      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada,ultima_intervencao_humana"
     )
     .eq("phone_e164", phoneE164)
     .order("created_at", { ascending: true })
@@ -370,7 +412,7 @@ async function createLead(
     .from("leads")
     .insert(insertPayload)
     .select(
-      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada"
+      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada,ultima_intervencao_humana"
     )
     .single();
 
@@ -422,7 +464,7 @@ async function updateLead(
     .update(updatePayload)
     .eq("id", lead.id)
     .select(
-      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada"
+      "id,created_at,name,phone_raw,phone_e164,source,interest,stage_id,ia_pausada,ultima_intervencao_humana"
     )
     .single();
 
@@ -435,6 +477,26 @@ async function updateLead(
 
 async function pausarIAparaLead(supabase: SupabaseClient, leadId: string) {
   await supabase.from("leads").update({ ia_pausada: true }).eq("id", leadId);
+}
+
+// NOVA FUNÇÃO: marca que um humano acabou de intervir manualmente numa conversa
+async function marcarIntervencaoHumana(
+  supabase: SupabaseClient,
+  phoneE164: string
+) {
+  await supabase
+    .from("leads")
+    .update({ ultima_intervencao_humana: new Date().toISOString() })
+    .eq("phone_e164", phoneE164);
+}
+
+function humanoAtivoRecentemente(lead: LeadRow) {
+  if (!lead.ultima_intervencao_humana) return false;
+
+  const ultimaIntervencao = new Date(lead.ultima_intervencao_humana).getTime();
+  const agora = Date.now();
+
+  return agora - ultimaIntervencao < PAUSA_APOS_HUMANO_MS;
 }
 
 async function buscarContextoClinica(supabase: SupabaseClient) {
@@ -493,9 +555,11 @@ function montarSystemPrompt(
 
 Responda de forma breve e direta, como uma conversa real de WhatsApp — frases curtas, tom acolhedor, próximo e caloroso, podendo usar emojis com moderação.
 
+FORMATAÇÃO: se quiser destacar uma palavra, use APENAS um asterisco de cada lado, no padrão do WhatsApp (exemplo: *importante*). NUNCA use dois asteriscos de cada lado (like **importante**), isso não é o formato correto do WhatsApp. Use negrito com moderação, não é necessário em toda mensagem.
+
 ${
   ehPrimeiraMensagem
-    ? `Esta é a PRIMEIRA mensagem dessa conversa. Cumprimente usando "${saudacao}!" seguido de um emoji apropriado ao período do dia, se apresente como assistente da GIO Boituva, e pergunte como pode ajudar. Exemplo de tom (não copie literalmente, adapte): "${saudacao}! 🌙 Tudo bem? Sou o assistente da GIO Boituva, uma clínica de estética facial e corporal. Como posso te ajudar? Tem alguma dúvida sobre nossos procedimentos ou quer agendar uma avaliação? 😊"`
+    ? `Esta é a PRIMEIRA mensagem dessa conversa. Cumprimente usando "${saudacao}!" seguido de um emoji apropriado ao período do dia, se apresente como assistente da GIO Boituva, e pergunte como pode ajudar.`
     : `Esta NÃO é a primeira mensagem — não repita a saudação inicial nem a apresentação completa de novo.`
 }
 
@@ -507,14 +571,17 @@ ${
 }
 
 REGRA SOBRE OFERECER AVALIAÇÃO/AGENDAMENTO:
-Não ofereça agendamento de avaliação em toda mensagem — isso soa insistente e incomoda o cliente. Só sugira agendar uma avaliação quando fizer sentido no contexto: quando o cliente já tirou as dúvidas principais e parece pronto para avançar, quando ele demonstrar interesse claro em algum procedimento, ou quando a pergunta dele exigir avaliação presencial para ser respondida com precisão (ex: qual procedimento é mais indicado pro caso dele). Em respostas que são só esclarecimento de dúvida simples, não precisa oferecer agendamento.
+Não ofereça agendamento de avaliação em toda mensagem — isso soa insistente e incomoda o cliente. Só sugira agendar uma avaliação quando fizer sentido no contexto: quando o cliente já tirou as dúvidas principais e parece pronto para avançar, quando ele demonstrar interesse claro em algum procedimento, ou quando a pergunta dele exigir avaliação presencial para ser respondida com precisão.
+
+REGRA SOBRE AGENDAMENTO DE HORÁRIO:
+Se o cliente quiser marcar um horário, verifique se o horário pedido está dentro do funcionamento da clínica (segunda a sexta, das 11h às 20h — não atendemos fora desses dias/horários, exceto sábado das 9h às 13h conforme informado abaixo). Se o cliente pedir um horário fora do funcionamento, explique educadamente os horários disponíveis e peça para escolher dentro dessa faixa. Depois de o cliente indicar um horário válido, informe que o agendamento já está sendo considerado, mas que a recepção da clínica vai entrar em contato para confirmar os detalhes finais.
 
 REGRA SOBRE TRANSFERIR PARA ATENDIMENTO HUMANO:
 Se você não souber responder algo com base nas informações da clínica abaixo, se o cliente pedir explicitamente para falar com uma pessoa/atendente, ou se a pergunta exigir avaliação/julgamento humano que você não pode dar com segurança, você deve ENCERRAR o atendimento automatizado. Nesse caso, NUNCA diga que vai "passar o contato" ou sugerir outro canal — o cliente já está no canal de atendimento correto. Ao invés disso, adicione o texto exato "${MARCADOR_HANDOFF}" no final da sua resposta (isso é um marcador interno, o cliente não vai ver esse texto).
 
 REGRAS OBRIGATÓRIAS ADICIONAIS:
 - Nunca mencione, recomende ou compare com outras clínicas ou concorrentes, mesmo se perguntado diretamente.
-- Responda APENAS sobre os procedimentos listados abaixo. Nunca mencione, confirme ou sugira procedimentos que não estejam nesta lista, mesmo que sejam comuns em outras clínicas de estética (exemplos do que NÃO fazer: nunca invente procedimentos como "laser para manchas" ou "fotorejuvenescimento" se não estiverem na lista).
+- Responda APENAS sobre os procedimentos listados abaixo. Nunca mencione, confirme ou sugira procedimentos que não estejam nesta lista, mesmo que sejam comuns em outras clínicas de estética.
 - Nunca dê conselhos médicos, diagnósticos ou opiniões técnicas sobre procedimentos.
 - Use o histórico da conversa para entender o contexto e não repetir perguntas já respondidas.
 
@@ -556,7 +623,8 @@ async function gerarRespostaIA(
   });
 
   const bloco = resposta.content[0];
-  return bloco.type === "text" ? bloco.text : "";
+  const textoOriginal = bloco.type === "text" ? bloco.text : "";
+  return corrigirFormatacaoWhatsApp(textoOriginal);
 }
 
 async function marcarComoLidoEDigitando(messageId: string) {
@@ -582,6 +650,21 @@ async function marcarComoLidoEDigitando(messageId: string) {
   }
 }
 
+// NOVA FUNÇÃO: calcula um atraso proposital antes de enviar,
+// simulando tempo de digitação humana (combina com o indicador "digitando...")
+function calcularAtrasoDigitacao(texto: string) {
+  const MINIMO_MS = 3000;
+  const MAXIMO_MS = 8000;
+  const msPorCaractere = 40;
+
+  const calculado = texto.length * msPorCaractere;
+  return Math.min(MAXIMO_MS, Math.max(MINIMO_MS, calculado));
+}
+
+function aguardar(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
   await fetch(
     `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
@@ -598,6 +681,26 @@ async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
       }),
     }
   );
+}
+
+// NOVA FUNÇÃO: notifica a equipe quando a IA transfere para humano
+async function notificarEquipeHandoff(
+  numeroCliente: string,
+  nomeCliente: string | null,
+  ultimaMensagem: string
+) {
+  const numeroAdmin = process.env.ADMIN_WHATSAPP_NUMBER;
+  if (!numeroAdmin) return;
+
+  const texto = `⚠️ *Atenção necessária*\nCliente: ${
+    nomeCliente ?? numeroCliente
+  }\nTelefone: ${numeroCliente}\nÚltima mensagem: "${ultimaMensagem}"\n\nA IA identificou que esse atendimento precisa de um humano.`;
+
+  try {
+    await enviarMensagemWhatsApp(numeroAdmin, texto);
+  } catch (erro) {
+    console.error("Erro ao notificar equipe sobre handoff:", erro);
+  }
 }
 
 async function salvarConversa(
@@ -644,8 +747,19 @@ async function processIncomingMessage(
     lead = await createLead(supabase, event, defaultStageId);
   }
 
-  // Se a IA já foi pausada para esse lead, um humano assumiu — não responde mais automaticamente
+  // Se a IA já foi pausada de vez para esse lead (handoff), não responde mais
   if (lead.ia_pausada) {
+    return {
+      processed: true,
+      duplicate: false,
+      leadId: lead.id,
+      dedupeMode: existingLead ? "phone_e164" : "created",
+      duplicateLeadsFound: duplicatesFound,
+    };
+  }
+
+  // Se um humano respondeu manualmente pelo app há menos de 1h, a IA aguarda
+  if (humanoAtivoRecentemente(lead)) {
     return {
       processed: true,
       duplicate: false,
@@ -675,7 +789,15 @@ async function processIncomingMessage(
       if (precisaHumano) {
         respostaIA = MENSAGEM_HANDOFF;
         await pausarIAparaLead(supabase, lead.id);
+        await notificarEquipeHandoff(
+          event.phoneRaw,
+          nomeConhecido,
+          event.message
+        );
       }
+
+      const atrasoMs = calcularAtrasoDigitacao(respostaIA);
+      await aguardar(atrasoMs);
 
       await enviarMensagemWhatsApp(event.phoneRaw, respostaIA);
       await salvarConversa(supabase, event.phoneRaw, event.message, respostaIA);
@@ -728,6 +850,14 @@ export async function POST(req: NextRequest) {
     return jsonError("Body JSON invalido", 400);
   }
 
+  const supabase = createSupabaseServerClient();
+
+  // Processa avisos de mensagens enviadas manualmente por humano (via app)
+  const telefonesComIntervencaoHumana = extractHumanEchoPhones(body);
+  for (const telefone of telefonesComIntervencaoHumana) {
+    await marcarIntervencaoHumana(supabase, telefone);
+  }
+
   const events = extractIncomingMessages(body);
 
   if (events.length === 0) {
@@ -742,8 +872,6 @@ export async function POST(req: NextRequest) {
       { status: 200 }
     );
   }
-
-  const supabase = createSupabaseServerClient();
 
   try {
     const defaultStageId = await getDefaultStageId(supabase);
