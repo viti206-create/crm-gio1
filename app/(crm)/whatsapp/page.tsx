@@ -17,6 +17,9 @@ type Bolha = {
 };
 
 export default function WhatsAppPainelPage() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mensagensContainerRef = useRef<HTMLDivElement>(null);
+  const [alturaDisponivel, setAlturaDisponivel] = useState<number | null>(null);
   const [conversas, setConversas] = useState<Conversa[]>([]);
   const [telefoneSelecionado, setTelefoneSelecionado] = useState<string | null>(
     null
@@ -26,7 +29,6 @@ export default function WhatsAppPainelPage() {
   const [bolhas, setBolhas] = useState<Bolha[]>([]);
   const [textoInput, setTextoInput] = useState("");
   const [enviando, setEnviando] = useState(false);
-  const fimDaConversaRef = useRef<HTMLDivElement>(null);
 
   async function carregarConversas() {
     try {
@@ -69,8 +71,39 @@ export default function WhatsAppPainelPage() {
   }, [telefoneSelecionado]);
 
   useEffect(() => {
-    fimDaConversaRef.current?.scrollIntoView({ behavior: "smooth" });
+    const container = mensagensContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
   }, [bolhas]);
+
+  // Trava a rolagem da página inteira enquanto essa tela estiver aberta,
+  // sem precisar alterar o layout do CRM — restaura ao sair da página
+  useEffect(() => {
+    const overflowOriginalHtml = document.documentElement.style.overflow;
+    const overflowOriginalBody = document.body.style.overflow;
+
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.documentElement.style.overflow = overflowOriginalHtml;
+      document.body.style.overflow = overflowOriginalBody;
+    };
+  }, []);
+
+  useEffect(() => {
+    function calcularAltura() {
+      if (!containerRef.current) return;
+      const topo = containerRef.current.getBoundingClientRect().top;
+      const margemInferior = 18; // mesmo padding que o CrmShell usa embaixo
+      const altura = window.innerHeight - topo - margemInferior;
+      setAlturaDisponivel(altura > 300 ? altura : 300);
+    }
+
+    calcularAltura();
+    window.addEventListener("resize", calcularAltura);
+    return () => window.removeEventListener("resize", calcularAltura);
+  }, []);
 
   async function enviarMensagem() {
     if (!telefoneSelecionado || !textoInput.trim() || enviando) return;
@@ -120,8 +153,9 @@ export default function WhatsAppPainelPage() {
 
   return (
     <div
+      ref={containerRef}
       style={{
-        height: "100%",
+        height: alturaDisponivel ? `${alturaDisponivel}px` : "80vh",
         width: "100%",
         display: "flex",
         fontFamily: "sans-serif",
@@ -271,6 +305,7 @@ export default function WhatsAppPainelPage() {
             </div>
 
             <div
+              ref={mensagensContainerRef}
               style={{
                 flex: 1,
                 overflowY: "auto",
@@ -320,7 +355,6 @@ export default function WhatsAppPainelPage() {
                   </div>
                 </div>
               ))}
-              <div ref={fimDaConversaRef} />
             </div>
 
             <div

@@ -555,6 +555,8 @@ function montarSystemPrompt(
 
 Responda de forma breve e direta, como uma conversa real de WhatsApp — frases curtas, tom acolhedor, próximo e caloroso, podendo usar emojis com moderação.
 
+REGRA DE TAMANHO (MUITO IMPORTANTE): seja extremamente objetiva. Use no máximo 2 a 4 frases curtas por resposta. Nunca escreva parágrafos longos. Se o cliente perguntar sobre um problema (ex: "tem tratamento pra mancha?"), cite NO MÁXIMO 1 ou 2 procedimentos relevantes, com uma frase curta cada — não liste 3, 4 ou mais opções de uma vez, e não explique tecnicamente como cada um funciona, a menos que o cliente peça mais detalhes especificamente. Termine com uma pergunta curta apenas se fizer sentido continuar o assunto, não em toda mensagem.
+
 FORMATAÇÃO: se quiser destacar uma palavra, use APENAS um asterisco de cada lado, no padrão do WhatsApp (exemplo: *importante*). NUNCA use dois asteriscos de cada lado (like **importante**), isso não é o formato correto do WhatsApp. Use negrito com moderação, não é necessário em toda mensagem.
 
 ${
@@ -617,7 +619,7 @@ async function gerarRespostaIA(
 
   const resposta = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 300,
+    max_tokens: 180,
     system: systemPrompt,
     messages: mensagensParaIA,
   });
