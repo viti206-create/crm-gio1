@@ -29,6 +29,8 @@ export default function WhatsAppPainelPage() {
   const [bolhas, setBolhas] = useState<Bolha[]>([]);
   const [textoInput, setTextoInput] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [mostrarBotaoDescer, setMostrarBotaoDescer] = useState(false);
+  const quantidadeAnteriorRef = useRef(0);
 
   async function carregarConversas() {
     try {
@@ -73,8 +75,36 @@ export default function WhatsAppPainelPage() {
   useEffect(() => {
     const container = mensagensContainerRef.current;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
+
+    const quantidadeAumentou = bolhas.length > quantidadeAnteriorRef.current;
+    quantidadeAnteriorRef.current = bolhas.length;
+
+    if (quantidadeAumentou) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [bolhas]);
+
+  // Zera a contagem ao trocar de conversa, para rolar até o final na abertura
+  useEffect(() => {
+    quantidadeAnteriorRef.current = 0;
+  }, [telefoneSelecionado]);
+
+  function aoRolarMensagens() {
+    const container = mensagensContainerRef.current;
+    if (!container) return;
+
+    const distanciaDoFinal =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+
+    setMostrarBotaoDescer(distanciaDoFinal > 150);
+  }
+
+  function descerParaFinal() {
+    const container = mensagensContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    setMostrarBotaoDescer(false);
+  }
 
   // Trava a rolagem da página inteira enquanto essa tela estiver aberta,
   // sem precisar alterar o layout do CRM — restaura ao sair da página
@@ -305,56 +335,91 @@ export default function WhatsAppPainelPage() {
             </div>
 
             <div
-              ref={mensagensContainerRef}
               style={{
                 flex: 1,
-                overflowY: "auto",
-                padding: "16px 24px",
+                position: "relative",
                 minHeight: 0,
+                overflow: "hidden",
               }}
             >
-              {bolhas.map((bolha, indice) => (
-                <div
-                  key={indice}
-                  style={{
-                    display: "flex",
-                    justifyContent:
-                      bolha.tipo === "enviada" ? "flex-end" : "flex-start",
-                    marginBottom: 8,
-                  }}
-                >
+              <div
+                ref={mensagensContainerRef}
+                onScroll={aoRolarMensagens}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  overflowY: "auto",
+                  padding: "16px 24px",
+                }}
+              >
+                {bolhas.map((bolha, indice) => (
                   <div
+                    key={indice}
                     style={{
-                      maxWidth: "65%",
-                      background:
-                        bolha.tipo === "enviada" ? "#d9fdd3" : "#ffffff",
-                      borderRadius: 8,
-                      padding: "8px 12px",
-                      boxShadow: "0 1px 1px rgba(0,0,0,0.1)",
+                      display: "flex",
+                      justifyContent:
+                        bolha.tipo === "enviada" ? "flex-end" : "flex-start",
+                      marginBottom: 8,
                     }}
                   >
                     <div
                       style={{
-                        fontSize: 14,
-                        whiteSpace: "pre-wrap",
-                        color: "#111b21",
+                        maxWidth: "65%",
+                        background:
+                          bolha.tipo === "enviada" ? "#d9fdd3" : "#ffffff",
+                        borderRadius: 8,
+                        padding: "8px 12px",
+                        boxShadow: "0 1px 1px rgba(0,0,0,0.1)",
                       }}
                     >
-                      {bolha.texto}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 10,
-                        color: "#667781",
-                        textAlign: "right",
-                        marginTop: 2,
-                      }}
-                    >
-                      {formatarHorario(bolha.horario)}
+                      <div
+                        style={{
+                          fontSize: 14,
+                          whiteSpace: "pre-wrap",
+                          color: "#111b21",
+                        }}
+                      >
+                        {bolha.texto}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: "#667781",
+                          textAlign: "right",
+                          marginTop: 2,
+                        }}
+                      >
+                        {formatarHorario(bolha.horario)}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+
+              {mostrarBotaoDescer && (
+                <button
+                  onClick={descerParaFinal}
+                  style={{
+                    position: "absolute",
+                    bottom: 16,
+                    right: 24,
+                    width: 40,
+                    height: 40,
+                    borderRadius: "50%",
+                    background: "#ffffff",
+                    border: "1px solid #d1d7db",
+                    boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
+                    cursor: "pointer",
+                    fontSize: 18,
+                    color: "#111b21",
+                  }}
+                >
+                  ↓
+                </button>
+              )}
             </div>
 
             <div
