@@ -5,6 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminAccess } from "./_hooks/useAdminAccess";
+import { useWhatsappAccess } from "./_hooks/useWhatsappAccess";
+import { useUserRole } from "./_hooks/useUserRole";
 
 type ProfileRow = {
   id: string;
@@ -16,6 +18,8 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
+  const { hasWhatsappAccess, loadingWhatsappAccess } = useWhatsappAccess();
+  const { role, loadingUserRole } = useUserRole();
 
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -100,6 +104,29 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     return isAdmin ? "Admin" : "Usuário";
   }, [loadingRole, isAdmin]);
 
+  // "whatsapp" é um nível restrito: só deve ver a área de WhatsApp, nada mais.
+  // "admin" e "agent" continuam vendo Home, Kanban e Contatos normalmente.
+  const isWhatsappOnly = useMemo(() => {
+    if (loadingUserRole) return false;
+    return role === "whatsapp";
+  }, [loadingUserRole, role]);
+
+  const canSeeGeneralNav = useMemo(() => {
+    if (loadingUserRole) return false;
+    return role === "admin" || role === "agent";
+  }, [loadingUserRole, role]);
+
+  // Proteção central: se o usuário é "whatsapp-only" e está em qualquer página
+  // fora de /whatsapp (seja por redirecionamento padrão pós-login, seja por
+  // digitar a URL direto), manda ele de volta para /whatsapp.
+  useEffect(() => {
+    if (loadingUserRole) return;
+    if (!isWhatsappOnly) return;
+    if (pathname.startsWith("/whatsapp")) return;
+
+    router.replace("/whatsapp");
+  }, [loadingUserRole, isWhatsappOnly, pathname, router]);
+
   const header: React.CSSProperties = {
     position: "sticky",
     top: 0,
@@ -170,6 +197,7 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
     if (href === "/home") return pathname === "/home";
     if (href === "/dashboard") return pathname.startsWith("/dashboard");
     if (href === "/leads") return pathname.startsWith("/leads");
+    if (href === "/whatsapp") return pathname.startsWith("/whatsapp");
     if (href === "/vendas") return pathname.startsWith("/vendas");
     if (href === "/recorrencias") return pathname.startsWith("/recorrencias");
     if (href === "/relatorios") return pathname.startsWith("/relatorios");
@@ -182,6 +210,17 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
       {label}
     </Link>
   );
+
+  // Enquanto ainda não sabemos a role, ou enquanto o redirecionamento
+  // de um usuário whatsapp-only está em andamento, evita "piscar" a tela
+  // errada por um instante.
+  if (loadingUserRole) {
+    return null;
+  }
+
+  if (isWhatsappOnly && !pathname.startsWith("/whatsapp")) {
+    return null;
+  }
 
   return (
     <div>
@@ -210,9 +249,17 @@ export default function CrmShell({ children }: { children: React.ReactNode }) {
         </div>
 
         <div style={right}>
-          <NavBtn href="/home" label="Home" />
-          <NavBtn href="/dashboard" label="Kanban" />
-          <NavBtn href="/leads" label="Contatos" />
+          {canSeeGeneralNav ? (
+            <>
+              <NavBtn href="/home" label="Home" />
+              <NavBtn href="/dashboard" label="Kanban" />
+              <NavBtn href="/leads" label="Contatos" />
+            </>
+          ) : null}
+
+          {!loadingWhatsappAccess && hasWhatsappAccess ? (
+            <NavBtn href="/whatsapp" label="WhatsApp" />
+          ) : null}
 
           {!loadingRole && isAdmin ? (
             <>
