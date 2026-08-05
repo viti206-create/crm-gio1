@@ -691,6 +691,7 @@ async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
       body: JSON.stringify({
         messaging_product: "whatsapp",
         to: numeroCliente,
+        type: "text",
         text: { body: texto },
       }),
     }
