@@ -22,10 +22,6 @@ type StageRow = {
   id: string;
 };
 
-type ActivityRow = {
-  id: string;
-};
-
 type ConversaRow = {
   mensagem: string | null;
   resposta: string | null;
@@ -178,7 +174,7 @@ function trimOrNull(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
-// NOVA FUNÇÃO: corrige formatação de negrito para o padrão do WhatsApp
+// Corrige formatação de negrito para o padrão do WhatsApp
 // (WhatsApp usa *texto* para negrito, não **texto** como markdown comum)
 function corrigirFormatacaoWhatsApp(texto: string) {
   return texto.replace(/\*\*(.+?)\*\*/g, "*$1*");
@@ -309,7 +305,7 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
   return events;
 }
 
-// NOVA FUNÇÃO: extrai números de telefone que receberam mensagem de um humano via app
+// Extrai números de telefone que receberam mensagem de um humano via app
 function extractHumanEchoPhones(body: WhatsAppWebhookPayload) {
   const telefones: string[] = [];
 
@@ -375,22 +371,25 @@ async function findExistingLead(supabase: SupabaseClient, phoneE164: string) {
   };
 }
 
+// CORRIGIDO: verifica duplicidade direto na tabela whatsapp_conversas,
+// que e a que realmente e preenchida (a tabela "activities" nunca era populada
+// com type "contact_whatsapp", entao a checagem antiga nunca encontrava nada
+// e mensagens duplicadas do WhatsApp/Dualhook eram sempre processadas de novo).
 async function hasProcessedMessage(
   supabase: SupabaseClient,
   messageId: string
 ) {
   const { data, error } = await supabase
-    .from("activities")
+    .from("whatsapp_conversas")
     .select("id")
-    .eq("type", "contact_whatsapp")
-    .contains("payload", { message_id: messageId })
+    .eq("message_id", messageId)
     .limit(1);
 
   if (error) {
     throw new Error(`Nao consegui validar idempotencia: ${error.message}`);
   }
 
-  return ((data ?? []) as ActivityRow[]).length > 0;
+  return (data ?? []).length > 0;
 }
 
 async function createLead(
@@ -479,7 +478,7 @@ async function pausarIAparaLead(supabase: SupabaseClient, leadId: string) {
   await supabase.from("leads").update({ ia_pausada: true }).eq("id", leadId);
 }
 
-// NOVA FUNÇÃO: marca que um humano acabou de intervir manualmente numa conversa
+// Marca que um humano acabou de intervir manualmente numa conversa
 async function marcarIntervencaoHumana(
   supabase: SupabaseClient,
   phoneE164: string
@@ -629,14 +628,16 @@ async function gerarRespostaIA(
   return corrigirFormatacaoWhatsApp(textoOriginal);
 }
 
+// CORRIGIDO: agora envia via Dualhook (proxy oficial de coexistencia) em vez de
+// direto para graph.facebook.com, e verifica se a resposta deu erro.
 async function marcarComoLidoEDigitando(messageId: string) {
   try {
-    await fetch(
-      `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    const response = await fetch(
+      `https://api.dualhook.com/v25.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          Authorization: `Bearer ${process.env.DUALHOOK_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -647,13 +648,21 @@ async function marcarComoLidoEDigitando(messageId: string) {
         }),
       }
     );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(
+        `Falha ao marcar como lido/digitando (status ${response.status}):`,
+        errorBody
+      );
+    }
   } catch (erro) {
     console.error("Erro ao marcar como lido/digitando:", erro);
   }
 }
 
-// NOVA FUNÇÃO: calcula um atraso proposital antes de enviar,
-// simulando tempo de digitação humana (combina com o indicador "digitando...")
+// Calcula um atraso proposital antes de enviar,
+// simulando tempo de digitacao humana (combina com o indicador "digitando...")
 function calcularAtrasoDigitacao(texto: string) {
   const MINIMO_MS = 3000;
   const MAXIMO_MS = 8000;
@@ -667,13 +676,16 @@ function aguardar(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// CORRIGIDO: agora envia via Dualhook (proxy oficial de coexistencia) em vez de
+// direto para graph.facebook.com, e lanca erro explicito se a resposta falhar
+// (antes falhava em silencio e a IA parecia simplesmente "nao responder").
 async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
-  await fetch(
-    `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+  const response = await fetch(
+    `https://api.dualhook.com/v25.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        Authorization: `Bearer ${process.env.DUALHOOK_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -683,9 +695,20 @@ async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
       }),
     }
   );
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error(
+      `Falha ao enviar mensagem WhatsApp (status ${response.status}):`,
+      errorBody
+    );
+    throw new Error(
+      `Falha ao enviar mensagem WhatsApp: ${response.status} - ${errorBody}`
+    );
+  }
 }
 
-// NOVA FUNÇÃO: notifica a equipe quando a IA transfere para humano
+// Notifica a equipe quando a IA transfere para humano
 async function notificarEquipeHandoff(
   numeroCliente: string,
   nomeCliente: string | null,
@@ -705,32 +728,38 @@ async function notificarEquipeHandoff(
   }
 }
 
+// CORRIGIDO: agora salva tambem o message_id, usado para deduplicacao real
 async function salvarConversa(
   supabase: SupabaseClient,
   telefoneCliente: string,
   mensagem: string,
-  resposta: string
+  resposta: string,
+  messageId: string
 ) {
   await supabase.from("whatsapp_conversas").insert({
     numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
     telefone_cliente: telefoneCliente,
     mensagem,
     resposta,
+    message_id: messageId,
   });
 }
 
-// NOVA FUNÇÃO: salva a mensagem do cliente mesmo quando a IA está pausada
-// (sem isso, o painel não mostrava nada durante o atendimento humano)
+// Salva a mensagem do cliente mesmo quando a IA esta pausada
+// (sem isso, o painel nao mostrava nada durante o atendimento humano)
+// CORRIGIDO: agora salva tambem o message_id, usado para deduplicacao real
 async function salvarMensagemSemResposta(
   supabase: SupabaseClient,
   telefoneCliente: string,
-  mensagem: string
+  mensagem: string,
+  messageId: string
 ) {
   await supabase.from("whatsapp_conversas").insert({
     numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
     telefone_cliente: telefoneCliente,
     mensagem,
     resposta: null,
+    message_id: messageId,
   });
 }
 
@@ -764,10 +793,15 @@ async function processIncomingMessage(
     lead = await createLead(supabase, event, defaultStageId);
   }
 
-  // Se a IA já foi pausada de vez para esse lead (handoff), não responde mais,
+  // Se a IA ja foi pausada de vez para esse lead (handoff), nao responde mais,
   // mas salva a mensagem do cliente para aparecer no painel
   if (lead.ia_pausada) {
-    await salvarMensagemSemResposta(supabase, event.phoneRaw, event.message);
+    await salvarMensagemSemResposta(
+      supabase,
+      event.phoneRaw,
+      event.message,
+      event.messageId
+    );
     return {
       processed: true,
       duplicate: false,
@@ -777,10 +811,15 @@ async function processIncomingMessage(
     };
   }
 
-  // Se um humano respondeu manualmente pelo app há menos de 1h, a IA aguarda,
+  // Se um humano respondeu manualmente pelo app ha menos de 1h, a IA aguarda,
   // mas salva a mensagem do cliente para aparecer no painel
   if (humanoAtivoRecentemente(lead)) {
-    await salvarMensagemSemResposta(supabase, event.phoneRaw, event.message);
+    await salvarMensagemSemResposta(
+      supabase,
+      event.phoneRaw,
+      event.message,
+      event.messageId
+    );
     return {
       processed: true,
       duplicate: false,
@@ -821,7 +860,13 @@ async function processIncomingMessage(
       await aguardar(atrasoMs);
 
       await enviarMensagemWhatsApp(event.phoneRaw, respostaIA);
-      await salvarConversa(supabase, event.phoneRaw, event.message, respostaIA);
+      await salvarConversa(
+        supabase,
+        event.phoneRaw,
+        event.message,
+        respostaIA,
+        event.messageId
+      );
     }
   } catch (iaError) {
     console.error("ERRO AO GERAR/ENVIAR RESPOSTA DA IA:", iaError);
