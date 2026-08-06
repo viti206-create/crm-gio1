@@ -78,6 +78,14 @@ type WhatsAppMessage = {
       formatted_name?: string;
     };
   }>;
+  referral?: {
+    source_url?: string;
+    source_type?: string;
+    source_id?: string;
+    headline?: string;
+    body?: string;
+    ctwa_clid?: string;
+  };
 };
 
 type MessageEcho = {
@@ -117,6 +125,8 @@ type IncomingMessage = {
   timestamp: string | null;
   channel: "whatsapp";
   direction: "inbound";
+  campaignName: string | null;
+  campaignSourceId: string | null;
 };
 
 const FALLBACK_INTEREST = "A definir";
@@ -297,6 +307,11 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
           timestamp: toIsoTimestamp(message.timestamp),
           channel: DEFAULT_CHANNEL,
           direction: DEFAULT_DIRECTION,
+          // Se a mensagem veio de um anuncio Click-to-WhatsApp, a Meta manda
+          // esses dados junto na PRIMEIRA mensagem da conversa (nao vem em
+          // mensagens seguintes do mesmo contato).
+          campaignName: trimOrNull(message.referral?.headline),
+          campaignSourceId: trimOrNull(message.referral?.source_id),
         });
       }
     }
@@ -450,6 +465,7 @@ async function createLead(
     interest: FALLBACK_INTEREST,
     stage_id: defaultStageId,
     created_by: DEFAULT_CREATED_BY,
+    campaign: event.campaignName ?? event.campaignSourceId ?? null,
   };
 
   const { data, error } = await supabase
@@ -932,6 +948,11 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = createSupabaseServerClient();
+
+  // LOG TEMPORARIO: para identificar o formato exato do campo "referral"
+  // enviado pela Meta em mensagens vindas de anuncios Click-to-WhatsApp.
+  // Remover depois de confirmar o formato.
+  console.log("PAYLOAD COMPLETO DO WEBHOOK:", JSON.stringify(body, null, 2));
 
   // Processa avisos de mensagens enviadas manualmente por humano (via app)
   const telefonesComIntervencaoHumana = extractHumanEchoPhones(body);
