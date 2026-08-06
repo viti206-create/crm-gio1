@@ -574,6 +574,46 @@ function extrairAgendamento(respostaIA: string) {
   };
 }
 
+// PROTECAO INDEPENDENTE DA IA: valida o horario no CODIGO, nao so confiando
+// que a IA seguiu a regra do prompt corretamente (modelos de linguagem podem
+// falhar em regras numericas/condicionais, mesmo bem escritas no prompt).
+// Retorna true se o horario esta dentro do expediente permitido para agendamento.
+function horarioDentroDoExpediente(dataHoraISO: string): boolean {
+  const dataHoraBrasilia = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "short",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(new Date(dataHoraISO));
+
+  const partes: Record<string, string> = {};
+  for (const parte of dataHoraBrasilia) {
+    partes[parte.type] = parte.value;
+  }
+
+  const diaSemana = partes.weekday; // "Mon", "Tue", ..., "Sat", "Sun"
+  const hora = Number(partes.hour);
+  const minuto = Number(partes.minute);
+  const minutosDoDia = hora * 60 + minuto;
+
+  const SEGUNDA_A_SEXTA = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const INICIO_SEMANA = 11 * 60; // 11:00
+  const FIM_SEMANA = 19 * 60 + 30; // 19:30
+  const INICIO_SABADO = 9 * 60; // 09:00
+  const FIM_SABADO = 13 * 60; // 13:00
+
+  if (SEGUNDA_A_SEXTA.includes(diaSemana)) {
+    return minutosDoDia >= INICIO_SEMANA && minutosDoDia <= FIM_SEMANA;
+  }
+
+  if (diaSemana === "Sat") {
+    return minutosDoDia >= INICIO_SABADO && minutosDoDia <= FIM_SABADO;
+  }
+
+  return false; // domingo nunca e valido
+}
+
 // Cria o registro na tabela appointments quando a IA confirma um agendamento.
 // Isso e o que faz o compromisso aparecer no feed ICS/Google Agenda.
 async function criarAgendamento(
@@ -978,12 +1018,24 @@ async function processIncomingMessage(
         respostaIA = textoLimpo;
 
         if (agendamento) {
-          await criarAgendamento(
-            supabase,
-            lead.id,
-            agendamento.scheduledAt,
-            agendamento.procedure
-          );
+          if (horarioDentroDoExpediente(agendamento.scheduledAt)) {
+            await criarAgendamento(
+              supabase,
+              lead.id,
+              agendamento.scheduledAt,
+              agendamento.procedure
+            );
+          } else {
+            // A IA confirmou um horario fora do expediente (falha de
+            // instrucao do modelo) -- nao cria o agendamento, e substitui a
+            // resposta por uma correcao, evitando prometer algo invalido.
+            console.error(
+              "IA tentou agendar fora do expediente, bloqueado pelo codigo:",
+              agendamento.scheduledAt
+            );
+            respostaIA =
+              "Esse horário não está dentro do nosso expediente para agendamentos (segunda a sexta, 11h às 19h30, ou sábado das 9h às 13h). Consegue me indicar outro horário dentro desses períodos?";
+          }
         }
       }
 
