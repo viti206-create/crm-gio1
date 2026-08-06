@@ -392,6 +392,51 @@ async function hasProcessedMessage(
   return (data ?? []).length > 0;
 }
 
+// NOVO: "reivindica" a mensagem no banco IMEDIATAMENTE, antes de qualquer
+// processamento demorado (IA, atraso de digitacao, envio). Isso fecha a janela
+// de corrida: se dois webhooks para a MESMA mensagem chegarem quase juntos
+// (comum quando a Meta reenvia por demora na resposta), o segundo vai bater
+// na restricao UNIQUE(message_id) do banco e sabemos que e duplicata --
+// mesmo que os dois tenham passado pela checagem "hasProcessedMessage" antes
+// de qualquer um terminar de salvar.
+async function claimMessage(
+  supabase: SupabaseClient,
+  telefoneCliente: string,
+  mensagem: string,
+  messageId: string
+) {
+  const { error } = await supabase.from("whatsapp_conversas").insert({
+    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    telefone_cliente: telefoneCliente,
+    mensagem,
+    resposta: null,
+    message_id: messageId,
+  });
+
+  if (error) {
+    // codigo 23505 = violacao de restricao UNIQUE no Postgres/Supabase
+    if (error.code === "23505") {
+      return { claimed: false };
+    }
+    throw new Error(`Nao consegui reivindicar mensagem: ${error.message}`);
+  }
+
+  return { claimed: true };
+}
+
+// NOVO: atualiza a resposta da IA na mesma linha ja reivindicada,
+// em vez de inserir uma linha nova (evita duplicar a mensagem do cliente)
+async function atualizarRespostaConversa(
+  supabase: SupabaseClient,
+  messageId: string,
+  resposta: string
+) {
+  await supabase
+    .from("whatsapp_conversas")
+    .update({ resposta })
+    .eq("message_id", messageId);
+}
+
 async function createLead(
   supabase: SupabaseClient,
   event: IncomingMessage,
@@ -729,41 +774,6 @@ async function notificarEquipeHandoff(
   }
 }
 
-// CORRIGIDO: agora salva tambem o message_id, usado para deduplicacao real
-async function salvarConversa(
-  supabase: SupabaseClient,
-  telefoneCliente: string,
-  mensagem: string,
-  resposta: string,
-  messageId: string
-) {
-  await supabase.from("whatsapp_conversas").insert({
-    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
-    telefone_cliente: telefoneCliente,
-    mensagem,
-    resposta,
-    message_id: messageId,
-  });
-}
-
-// Salva a mensagem do cliente mesmo quando a IA esta pausada
-// (sem isso, o painel nao mostrava nada durante o atendimento humano)
-// CORRIGIDO: agora salva tambem o message_id, usado para deduplicacao real
-async function salvarMensagemSemResposta(
-  supabase: SupabaseClient,
-  telefoneCliente: string,
-  mensagem: string,
-  messageId: string
-) {
-  await supabase.from("whatsapp_conversas").insert({
-    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
-    telefone_cliente: telefoneCliente,
-    mensagem,
-    resposta: null,
-    message_id: messageId,
-  });
-}
-
 async function processIncomingMessage(
   supabase: SupabaseClient,
   event: IncomingMessage,
@@ -781,6 +791,27 @@ async function processIncomingMessage(
     };
   }
 
+  // Reivindica a mensagem JA, antes de qualquer processamento demorado.
+  // Se outra requisicao paralela (reenvio da Meta) ja reivindicou essa mesma
+  // mensagem entre a checagem acima e agora, "claimed" vem false e paramos aqui
+  // -- isso e o que realmente elimina a duplicacao, nao so a checagem inicial.
+  const { claimed } = await claimMessage(
+    supabase,
+    event.phoneRaw,
+    event.message,
+    event.messageId
+  );
+
+  if (!claimed) {
+    return {
+      processed: false,
+      duplicate: true,
+      leadId: null as string | null,
+      dedupeMode: "message_id_race",
+      duplicateLeadsFound: 0,
+    };
+  }
+
   const { lead: existingLead, duplicatesFound } = await findExistingLead(
     supabase,
     event.phoneE164
@@ -794,15 +825,10 @@ async function processIncomingMessage(
     lead = await createLead(supabase, event, defaultStageId);
   }
 
-  // Se a IA ja foi pausada de vez para esse lead (handoff), nao responde mais,
-  // mas salva a mensagem do cliente para aparecer no painel
+  // Se a IA ja foi pausada de vez para esse lead (handoff), nao responde mais.
+  // A mensagem do cliente ja foi salva pelo claimMessage acima, entao so
+  // paramos por aqui.
   if (lead.ia_pausada) {
-    await salvarMensagemSemResposta(
-      supabase,
-      event.phoneRaw,
-      event.message,
-      event.messageId
-    );
     return {
       processed: true,
       duplicate: false,
@@ -812,15 +838,9 @@ async function processIncomingMessage(
     };
   }
 
-  // Se um humano respondeu manualmente pelo app ha menos de 1h, a IA aguarda,
-  // mas salva a mensagem do cliente para aparecer no painel
+  // Se um humano respondeu manualmente pelo app ha menos de 1h, a IA aguarda.
+  // A mensagem do cliente ja foi salva pelo claimMessage acima.
   if (humanoAtivoRecentemente(lead)) {
-    await salvarMensagemSemResposta(
-      supabase,
-      event.phoneRaw,
-      event.message,
-      event.messageId
-    );
     return {
       processed: true,
       duplicate: false,
@@ -861,13 +881,7 @@ async function processIncomingMessage(
       await aguardar(atrasoMs);
 
       await enviarMensagemWhatsApp(event.phoneRaw, respostaIA);
-      await salvarConversa(
-        supabase,
-        event.phoneRaw,
-        event.message,
-        respostaIA,
-        event.messageId
-      );
+      await atualizarRespostaConversa(supabase, event.messageId, respostaIA);
     }
   } catch (iaError) {
     console.error("ERRO AO GERAR/ENVIAR RESPOSTA DA IA:", iaError);
