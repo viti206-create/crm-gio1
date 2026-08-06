@@ -138,6 +138,9 @@ const MAX_HISTORICO_MENSAGENS = 10;
 const MARCADOR_HANDOFF = "[HANDOFF_HUMANO]";
 const MENSAGEM_HANDOFF =
   "Entendo! Vou chamar alguém da nossa equipe pra te ajudar melhor com isso. Só um momento 🙋‍♀️";
+// Formato esperado: [AGENDAMENTO_CONFIRMADO: 2026-08-10T14:30:00-03:00 | Nome do procedimento]
+const REGEX_AGENDAMENTO =
+  /\[AGENDAMENTO_CONFIRMADO:\s*([^\|]+?)\s*\|\s*([^\]]+?)\s*\]/;
 const PAUSA_APOS_HUMANO_MS = 60 * 60 * 1000; // 1 hora
 
 const anthropic = new Anthropic({
@@ -539,6 +542,59 @@ async function pausarIAparaLead(supabase: SupabaseClient, leadId: string) {
   await supabase.from("leads").update({ ia_pausada: true }).eq("id", leadId);
 }
 
+// Extrai o marcador [AGENDAMENTO_CONFIRMADO: ...] da resposta da IA, removendo-o
+// do texto que sera enviado ao cliente (ele nunca deve ver esse texto tecnico).
+function extrairAgendamento(respostaIA: string) {
+  const match = respostaIA.match(REGEX_AGENDAMENTO);
+
+  if (!match) {
+    return { textoLimpo: respostaIA, agendamento: null };
+  }
+
+  const dataHoraStr = match[1].trim();
+  const procedimento = match[2].trim();
+  const textoLimpo = respostaIA.replace(REGEX_AGENDAMENTO, "").trim();
+
+  const dataHora = new Date(dataHoraStr);
+
+  if (Number.isNaN(dataHora.getTime())) {
+    console.error(
+      "Marcador de agendamento com data invalida, ignorando:",
+      dataHoraStr
+    );
+    return { textoLimpo, agendamento: null };
+  }
+
+  return {
+    textoLimpo,
+    agendamento: {
+      scheduledAt: dataHora.toISOString(),
+      procedure: procedimento,
+    },
+  };
+}
+
+// Cria o registro na tabela appointments quando a IA confirma um agendamento.
+// Isso e o que faz o compromisso aparecer no feed ICS/Google Agenda.
+async function criarAgendamento(
+  supabase: SupabaseClient,
+  leadId: string,
+  scheduledAt: string,
+  procedure: string
+) {
+  const { error } = await supabase.from("appointments").insert({
+    lead_id: leadId,
+    scheduled_at: scheduledAt,
+    procedure,
+    status: "agendado",
+    created_by: DEFAULT_CREATED_BY,
+  });
+
+  if (error) {
+    console.error("Erro ao criar agendamento:", error);
+  }
+}
+
 // Marca que um humano acabou de intervir manualmente numa conversa
 async function marcarIntervencaoHumana(
   supabase: SupabaseClient,
@@ -604,14 +660,36 @@ function obterSaudacaoPeriodo(): string {
   return "Boa noite";
 }
 
+function obterDataHojeFormatada(): string {
+  const hoje = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "long",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  const isoHoje = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  return `${hoje} (${isoHoje})`;
+}
+
 function montarSystemPrompt(
   contextoClinica: string,
   ehPrimeiraMensagem: boolean,
   nomeConhecido: string | null
 ): string {
   const saudacao = obterSaudacaoPeriodo();
+  const dataHoje = obterDataHojeFormatada();
 
   return `Você é o assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Sempre que se apresentar ou for perguntado, informe que você atende pela GIO Boituva.
+
+Hoje é ${dataHoje}, horário de Brasília. Use essa informação para calcular corretamente qualquer data relativa que o cliente mencionar (ex: "amanhã", "sexta-feira que vem", "dia 15").
 
 Responda de forma breve e direta, como uma conversa real de WhatsApp — frases curtas, tom acolhedor, próximo e caloroso, podendo usar emojis com moderação.
 
@@ -636,7 +714,11 @@ REGRA SOBRE OFERECER AVALIAÇÃO/AGENDAMENTO:
 Não ofereça agendamento de avaliação em toda mensagem — isso soa insistente e incomoda o cliente. Só sugira agendar uma avaliação quando fizer sentido no contexto: quando o cliente já tirou as dúvidas principais e parece pronto para avançar, quando ele demonstrar interesse claro em algum procedimento, ou quando a pergunta dele exigir avaliação presencial para ser respondida com precisão.
 
 REGRA SOBRE AGENDAMENTO DE HORÁRIO:
-Se o cliente quiser marcar um horário, verifique se o horário pedido está dentro do funcionamento da clínica para AGENDAMENTOS: segunda a sexta, das 11h às 19h30 (último horário aceito é 19h30, pois a clínica encerra o expediente às 20h e precisa desse intervalo) — não atendemos fora desses dias/horários, exceto sábado das 9h às 13h conforme informado abaixo (nesse caso, o último horário aceito no sábado é 13h). Se o cliente pedir exatamente 20h ou depois, explique que o último horário do dia é 19h30 e pergunte se esse ou um horário mais cedo funciona para ele. Depois de o cliente indicar um horário válido, informe que o agendamento já está sendo considerado, mas que a recepção da clínica vai entrar em contato para confirmar os detalhes finais.
+Se o cliente quiser marcar um horário, verifique se o horário pedido está dentro do funcionamento da clínica para AGENDAMENTOS: segunda a sexta, das 11h às 19h30 (último horário aceito é 19h30, pois a clínica encerra o expediente às 20h e precisa desse intervalo) — não atendemos fora desses dias/horários, exceto sábado das 9h às 13h conforme informado abaixo (nesse caso, o último horário aceito no sábado é 13h). Se o cliente pedir exatamente 20h ou depois, explique que o último horário do dia é 19h30 e pergunte se esse ou um horário mais cedo funciona para ele.
+
+Quando o cliente confirmar um dia e horário válidos (dentro da faixa acima) E o procedimento de interesse já estiver claro na conversa, adicione ao FINAL da sua resposta o texto exato no formato: [AGENDAMENTO_CONFIRMADO: AAAA-MM-DDTHH:MM:00-03:00 | Nome do procedimento] — isso é um marcador interno, o cliente NUNCA deve ver esse texto, e você nunca deve mencioná-lo na conversa. Use sempre o ano correto com base na data de hoje, e o fuso -03:00 (horário de Brasília). Se o cliente não disse o ano, assuma o próximo dia/mês válido a partir de hoje. Depois de adicionar esse marcador, informe ao cliente de forma natural que o agendamento foi registrado e que a recepção da clínica vai entrar em contato para confirmar os detalhes finais.
+
+Se o cliente quiser agendar mas ainda não ficou claro qual procedimento ele quer, pergunte isso primeiro antes de confirmar o agendamento — não gere o marcador sem saber o procedimento.
 
 REGRA SOBRE TRANSFERIR PARA ATENDIMENTO HUMANO:
 Se você não souber responder algo com base nas informações da clínica abaixo, se o cliente pedir explicitamente para falar com uma pessoa/atendente, ou se a pergunta exigir avaliação/julgamento humano que você não pode dar com segurança, você deve ENCERRAR o atendimento automatizado. Nesse caso, NUNCA diga que vai "passar o contato" ou sugerir outro canal — o cliente já está no canal de atendimento correto. Ao invés disso, adicione o texto exato "${MARCADOR_HANDOFF}" no final da sua resposta (isso é um marcador interno, o cliente não vai ver esse texto).
@@ -891,6 +973,18 @@ async function processIncomingMessage(
           nomeConhecido,
           event.message
         );
+      } else {
+        const { textoLimpo, agendamento } = extrairAgendamento(respostaIA);
+        respostaIA = textoLimpo;
+
+        if (agendamento) {
+          await criarAgendamento(
+            supabase,
+            lead.id,
+            agendamento.scheduledAt,
+            agendamento.procedure
+          );
+        }
       }
 
       const atrasoMs = calcularAtrasoDigitacao(respostaIA);
