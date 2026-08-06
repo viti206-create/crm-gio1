@@ -42,8 +42,10 @@ export function useWhatsappAccess() {
       }
 
       const role = profile?.role ?? "";
-      // admin sempre tem acesso; "whatsapp" é o novo nível restrito
-      setHasWhatsappAccess(role === "admin" || role === "whatsapp");
+      // Todos os niveis (admin, agent, whatsapp) tem acesso ao WhatsApp
+      setHasWhatsappAccess(
+        role === "admin" || role === "agent" || role === "whatsapp"
+      );
       setLoadingWhatsappAccess(false);
     }
 
