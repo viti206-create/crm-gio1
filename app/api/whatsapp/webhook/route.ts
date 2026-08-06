@@ -655,6 +655,23 @@ function humanoAtivoRecentemente(lead: LeadRow) {
   return agora - ultimaIntervencao < PAUSA_APOS_HUMANO_MS;
 }
 
+// Verifica se a IA foi pausada globalmente pelo painel do CRM (afeta TODAS
+// as conversas, inclusive novas, ate alguem reativar manualmente).
+async function iaPausadaGlobalmente(supabase: SupabaseClient) {
+  const { data, error } = await supabase
+    .from("global_settings")
+    .select("ia_pausada_globalmente")
+    .eq("id", 1)
+    .single();
+
+  if (error) {
+    console.error("Erro ao checar pausa global da IA:", error);
+    return false; // em caso de erro, nao bloqueia o atendimento por seguranca
+  }
+
+  return Boolean(data?.ia_pausada_globalmente);
+}
+
 async function buscarContextoClinica(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from("clinica_conhecimento")
@@ -967,6 +984,18 @@ async function processIncomingMessage(
   // A mensagem do cliente ja foi salva pelo claimMessage acima, entao so
   // paramos por aqui.
   if (lead.ia_pausada) {
+    return {
+      processed: true,
+      duplicate: false,
+      leadId: lead.id,
+      dedupeMode: existingLead ? "phone_e164" : "created",
+      duplicateLeadsFound: duplicatesFound,
+    };
+  }
+
+  // Pausa global do painel do CRM: afeta TODAS as conversas, inclusive essa,
+  // mesmo que o lead individualmente nao esteja pausado.
+  if (await iaPausadaGlobalmente(supabase)) {
     return {
       processed: true,
       duplicate: false,
