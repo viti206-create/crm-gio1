@@ -614,13 +614,66 @@ function horarioDentroDoExpediente(dataHoraISO: string): boolean {
   return false; // domingo nunca e valido
 }
 
+// PROTECAO EXTRA: compara o dia da semana que o CLIENTE mencionou na mensagem
+// (ex: "sexta-feira", "quinta") com o dia da semana REAL da data que a IA
+// confirmou no marcador. Se o cliente mencionou um dia da semana especifico e
+// ele nao bate com a data escolhida, e sinal de que a IA calculou errado.
+function diaSemanaMencionadoBateComData(
+  mensagemCliente: string,
+  dataHoraISO: string
+): boolean {
+  const DIAS: Record<string, number> = {
+    domingo: 0,
+    segunda: 1,
+    terça: 2,
+    terca: 2,
+    quarta: 3,
+    quinta: 4,
+    sexta: 5,
+    sábado: 6,
+    sabado: 6,
+  };
+
+  const textoLower = mensagemCliente.toLowerCase();
+  let diaMencionado: number | null = null;
+
+  for (const [nome, indice] of Object.entries(DIAS)) {
+    if (textoLower.includes(nome)) {
+      diaMencionado = indice;
+      break;
+    }
+  }
+
+  // Cliente nao mencionou nenhum dia da semana por nome (so disse "amanha",
+  // "dia 15", etc.) -- nao ha o que cruzar, entao consideramos valido.
+  if (diaMencionado === null) return true;
+
+  const diaReal = new Date(dataHoraISO).toLocaleString("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "long",
+  });
+
+  const DIAS_EN: Record<string, number> = {
+    Sunday: 0,
+    Monday: 1,
+    Tuesday: 2,
+    Wednesday: 3,
+    Thursday: 4,
+    Friday: 5,
+    Saturday: 6,
+  };
+
+  return DIAS_EN[diaReal] === diaMencionado;
+}
+
 // Cria o registro na tabela appointments quando a IA confirma um agendamento.
 // Isso e o que faz o compromisso aparecer no feed ICS/Google Agenda.
 async function criarAgendamento(
   supabase: SupabaseClient,
   leadId: string,
   scheduledAt: string,
-  procedure: string
+  procedure: string,
+  notes: string | null = null
 ) {
   const { error } = await supabase.from("appointments").insert({
     lead_id: leadId,
@@ -628,6 +681,7 @@ async function criarAgendamento(
     procedure,
     status: "agendado",
     created_by: DEFAULT_CREATED_BY,
+    notes,
   });
 
   if (error) {
@@ -746,9 +800,11 @@ function montarSystemPrompt(
 
   return `Você é o assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Sempre que se apresentar ou for perguntado, informe que você atende pela GIO Boituva.
 
-Hoje é ${dataHoje}, horário de Brasília. Use essa informação para calcular corretamente qualquer data relativa que o cliente mencionar (ex: "amanhã", "sexta-feira que vem", "dia 15").
+Hoje é ${dataHoje}, horário de Brasília. Use essa informação para calcular corretamente datas relativas simples que o cliente mencionar (ex: "amanhã", "depois de amanhã").
 
-Responda de forma breve e direta, como uma conversa real de WhatsApp — frases curtas, tom acolhedor, próximo e caloroso, podendo usar emojis com moderação.
+REGRA IMPORTANTE SOBRE DIA DA SEMANA: NUNCA afirme ou mencione qual dia da semana corresponde a uma data (nunca diga "isso cai numa sexta-feira", "que é terça", etc.) — calcular isso de cabeça é fácil de errar. Ao confirmar um agendamento, mencione APENAS a data (dia/mês) e o horário, sem nomear o dia da semana. Se o cliente disser um dia da semana (ex: "quero sexta-feira"), apenas repita a data que ele mesmo informar ou pedir a data exata (dia/mês) para confirmar, sem você mesma calcular ou declarar qual dia da semana é.
+
+Responda de forma breve e direta, como uma conversa real de WhatsApp — frases curtas, tom acolhedor, educado e profissional, podendo usar emojis com moderação. Evite gírias e cumprimentos excessivamente informais como "Opa", "Hey", "E aí" — prefira aberturas mais educadas como "Olá", "Oi", "Bom dia/Boa tarde/Boa noite".
 
 REGRA DE TAMANHO (MUITO IMPORTANTE): seja extremamente objetiva. Use no máximo 2 a 4 frases curtas por resposta. Nunca escreva parágrafos longos. Se o cliente perguntar sobre um problema (ex: "tem tratamento pra mancha?"), cite NO MÁXIMO 1 ou 2 procedimentos relevantes, com uma frase curta cada — não liste 3, 4 ou mais opções de uma vez, e não explique tecnicamente como cada um funciona, a menos que o cliente peça mais detalhes especificamente. Termine com uma pergunta curta apenas se fizer sentido continuar o assunto, não em toda mensagem.
 
@@ -756,7 +812,7 @@ FORMATAÇÃO: se quiser destacar uma palavra, use APENAS um asterisco de cada la
 
 ${
   ehPrimeiraMensagem
-    ? `Esta é a PRIMEIRA mensagem dessa conversa. Cumprimente usando "${saudacao}!" seguido de um emoji apropriado ao período do dia, se apresente como assistente da GIO Boituva, e pergunte como pode ajudar.`
+    ? `Esta é a PRIMEIRA mensagem dessa conversa. Cumprimente usando "${saudacao}!" seguido de um emoji apropriado ao período do dia, se apresente como assistente da GIO Boituva 💜 (sempre inclua esse coração roxo logo após "GIO Boituva" na apresentação), e pergunte como pode ajudar.`
     : `Esta NÃO é a primeira mensagem — não repita a saudação inicial nem a apresentação completa de novo.`
 }
 
@@ -1047,23 +1103,39 @@ async function processIncomingMessage(
         respostaIA = textoLimpo;
 
         if (agendamento) {
-          if (horarioDentroDoExpediente(agendamento.scheduledAt)) {
-            await criarAgendamento(
-              supabase,
-              lead.id,
-              agendamento.scheduledAt,
-              agendamento.procedure
-            );
-          } else {
-            // A IA confirmou um horario fora do expediente (falha de
-            // instrucao do modelo) -- nao cria o agendamento, e substitui a
-            // resposta por uma correcao, evitando prometer algo invalido.
+          const horarioValido = horarioDentroDoExpediente(
+            agendamento.scheduledAt
+          );
+
+          if (!horarioValido) {
+            // Fora do expediente: isso continua bloqueando, pois nao tem como
+            // a recepcao "resolver" um horario que a clinica nem abre.
             console.error(
               "IA tentou agendar fora do expediente, bloqueado pelo codigo:",
               agendamento.scheduledAt
             );
             respostaIA =
               "Esse horário não está dentro do nosso expediente para agendamentos (segunda a sexta, 11h às 19h30, ou sábado das 9h às 13h). Consegue me indicar outro horário dentro desses períodos?";
+          } else {
+            // Dentro do expediente: cria normalmente. Se o cliente mencionou
+            // um dia da semana que nao bate com a data calculada, nao trava a
+            // conversa nem incomoda o cliente -- so deixa uma nota interna
+            // para a recepcao conferir na hora de confirmar por telefone.
+            const diaSemanaBate = diaSemanaMencionadoBateComData(
+              event.message,
+              agendamento.scheduledAt
+            );
+            const notas = diaSemanaBate
+              ? null
+              : "⚠️ Cliente mencionou um dia da semana que pode não bater com a data calculada pela IA — conferir ao confirmar.";
+
+            await criarAgendamento(
+              supabase,
+              lead.id,
+              agendamento.scheduledAt,
+              agendamento.procedure,
+              notas
+            );
           }
         }
       }
