@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function UpdatePasswordPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -16,6 +17,41 @@ export default function UpdatePasswordPage() {
 
   useEffect(() => {
     let mounted = true;
+
+    async function trocarCodePorSessao() {
+      const code = searchParams.get("code");
+
+      // Fluxo PKCE: o link de recuperacao manda ?code=... na URL, e precisa
+      // ser trocado explicitamente por uma sessao valida. Sem isso, a pagina
+      // fica esperando um evento que nunca chega (por isso travava em
+      // "Validando o link de recuperacao..." para sempre).
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+
+        if (!mounted) return;
+
+        if (error) {
+          console.error("exchangeCodeForSession error:", error);
+          setErrorText(
+            "Este link de recuperação é inválido ou já expirou. Solicite um novo."
+          );
+          return;
+        }
+
+        setReady(true);
+        return;
+      }
+
+      // Fallback: fluxo antigo (token direto / hash), mantido por compatibilidade
+      const { data } = await supabase.auth.getSession();
+      if (!mounted) return;
+
+      if (data.session) {
+        setReady(true);
+      }
+    }
+
+    trocarCodePorSessao();
 
     const {
       data: { subscription },
@@ -33,23 +69,11 @@ export default function UpdatePasswordPage() {
       }
     });
 
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted) return;
-
-      if (error) {
-        console.error("getSession error:", error);
-      }
-
-      if (data.session) {
-        setReady(true);
-      }
-    });
-
     return () => {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [searchParams]);
 
   const canSave = useMemo(() => {
     if (!ready || saving) return false;
@@ -163,7 +187,18 @@ export default function UpdatePasswordPage() {
               opacity: 0.9,
             }}
           >
-            Validando o link de recuperação...
+            {errorText ? (
+              <div
+                style={{
+                  color: "rgba(255,220,230,0.95)",
+                  fontWeight: 700,
+                }}
+              >
+                {errorText}
+              </div>
+            ) : (
+              "Validando o link de recuperação..."
+            )}
           </div>
         ) : (
           <div style={{ display: "grid", gap: 14 }}>
