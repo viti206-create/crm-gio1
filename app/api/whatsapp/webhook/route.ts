@@ -187,10 +187,10 @@ function trimOrNull(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
-// Corrige formatação de negrito para o padrão do WhatsApp
-// (WhatsApp usa *texto* para negrito, não **texto** como markdown comum)
+// Remove qualquer marcação de negrito que a IA eventualmente gere por engano
+// (a regra do prompt diz para nunca usar, isso é uma proteção extra)
 function corrigirFormatacaoWhatsApp(texto: string) {
-  return texto.replace(/\*\*(.+?)\*\*/g, "*$1*");
+  return texto.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
 }
 
 function extractMessageText(message: WhatsAppMessage) {
@@ -285,6 +285,15 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
       if (!value?.messages?.length) continue;
 
       for (const message of value.messages) {
+        const type = String(message?.type ?? "").trim().toLowerCase();
+
+        // Mensagens apagadas pelo cliente (e outros casos nao suportados,
+        // como enquetes, reacoes especiais, etc.) chegam com type "unsupported"
+        // -- ignoramos completamente, sem enviar para a IA responder.
+        if (type === "unsupported") {
+          continue;
+        }
+
         const messageId = trimOrNull(message.id);
         const phoneRaw =
           trimOrNull(message.from) ?? trimOrNull(value.contacts?.[0]?.wa_id);
@@ -808,7 +817,7 @@ Responda de forma breve e direta, como uma conversa real de WhatsApp — frases 
 
 REGRA DE TAMANHO (MUITO IMPORTANTE): seja extremamente objetiva. Use no máximo 2 a 4 frases curtas por resposta. Nunca escreva parágrafos longos. Se o cliente perguntar sobre um problema (ex: "tem tratamento pra mancha?"), cite NO MÁXIMO 1 ou 2 procedimentos relevantes, com uma frase curta cada — não liste 3, 4 ou mais opções de uma vez, e não explique tecnicamente como cada um funciona, a menos que o cliente peça mais detalhes especificamente. Termine com uma pergunta curta apenas se fizer sentido continuar o assunto, não em toda mensagem.
 
-FORMATAÇÃO: se quiser destacar uma palavra, use APENAS um asterisco de cada lado, no padrão do WhatsApp (exemplo: *importante*). NUNCA use dois asteriscos de cada lado (like **importante**), isso não é o formato correto do WhatsApp. Use negrito com moderação, não é necessário em toda mensagem.
+FORMATAÇÃO: NUNCA use negrito (nem um asterisco de cada lado, nem dois) em nenhuma parte da sua resposta. Escreva sempre em texto simples, sem nenhum tipo de destaque ou marcação.
 
 ${
   ehPrimeiraMensagem
@@ -823,7 +832,11 @@ ${
     : `O nome do cliente ainda não é conhecido. Pergunte o nome dele(a) UMA VEZ, de forma natural e gentil, preferencialmente logo no início da conversa. Se a pessoa não responder o nome ou preferir não informar, continue o atendimento normalmente sem insistir ou perguntar de novo.`
 }
 
-REGRA SOBRE OFERECER AVALIAÇÃO/AGENDAMENTO:
+REGRA SOBRE PELE BRONZEADA E DEPILAÇÃO A LASER:
+Não mencione espontaneamente que não fazemos depilação a laser em pele bronzeada. Só fale sobre essa restrição se o cliente perguntar diretamente sobre isso, ou se ele mesmo mencionar que está bronzeado. Nesses casos, explique que o ideal é uma avaliação presencial para confirmar se pode realizar o procedimento.
+
+REGRA SOBRE LISTAR OS PROCEDIMENTOS DA CLÍNICA:
+Se o cliente perguntar de forma geral quais procedimentos a clínica oferece (sem especificar um problema/área específica), responda exatamente com este texto, sem alterar: "Atualmente temos mais de 500 procedimentos entre: corporais, faciais, invasivos e depilação a laser!" Depois disso, pergunte o que ele tem interesse ou qual área gostaria de tratar. Se o cliente já perguntar sobre algo específico (ex: "tem tratamento pra mancha?"), responda normalmente com base nas informações da clínica, sem usar esse texto fixo.
 Não ofereça agendamento de avaliação em toda mensagem — isso soa insistente e incomoda o cliente. Só sugira agendar uma avaliação quando fizer sentido no contexto: quando o cliente já tirou as dúvidas principais e parece pronto para avançar, quando ele demonstrar interesse claro em algum procedimento, ou quando a pergunta dele exigir avaliação presencial para ser respondida com precisão.
 
 REGRA SOBRE AGENDAMENTO DE HORÁRIO:
