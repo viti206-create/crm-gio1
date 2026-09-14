@@ -311,7 +311,7 @@ export default function DashboardPage() {
 
   async function fetchData() {
     const { data: stagesData, error: stagesErr } = await supabase.from("stages").select("id,name,position,is_final").order("position", { ascending: true });
-    const { data: leadsData, error: leadsErr } = await supabase.from("leads").select("id,name,phone_raw,phone_e164,source,interest,stage_id,next_action_type,next_action_at");
+    const { data: leadsData, error: leadsErr } = await supabase.from("leads").select("id,name,phone_raw,phone_e164,source,interest,stage_id,next_action_type,next_action_at").is("deleted_at", null);
     if (stagesErr) console.error("stages error", stagesErr);
     if (leadsErr) console.error("leads error", leadsErr);
     if (stagesData) setStages(stagesData as any);

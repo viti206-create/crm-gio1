@@ -147,6 +147,7 @@ export default function EditLeadPage() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [stages, setStages] = useState<Stage[]>([]);
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
@@ -313,12 +314,56 @@ export default function EditLeadPage() {
     }
   }
 
+  async function handleDelete() {
+    if (!leadId || deleting) return;
+
+    const confirmed = window.confirm(
+      `Excluir este contato do CRM?\n\n${name || "Contato"}\n${phoneRaw || ""}\n\nEle será removido das listas e funis e o atendimento automático ficará pausado para esse número.`
+    );
+
+    if (!confirmed) return;
+
+    setDeleting(true);
+    setErr(null);
+    setSaveSuccess(null);
+
+    try {
+      const { data, error } = await supabase
+        .from("leads")
+        .update({
+          deleted_at: new Date().toISOString(),
+          ia_pausada: true,
+        })
+        .eq("id", leadId)
+        .select("id")
+        .single();
+
+      if (error) {
+        setErr(`Não foi possível excluir o contato: ${error.message}`);
+        return;
+      }
+
+      if (!data?.id) {
+        setErr("O Supabase não confirmou a exclusão do contato.");
+        return;
+      }
+
+      router.replace("/leads");
+      router.refresh();
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Erro inesperado ao excluir o contato.");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   const card: React.CSSProperties = { border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", borderRadius: 18, padding: 16, boxShadow: "0 24px 80px rgba(0,0,0,0.55)", maxWidth: 920 };
   const inputStyle: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, outline: "none", width: "100%", boxSizing: "border-box", minWidth: 0 };
   const labelStyle: React.CSSProperties = { fontSize: 12, opacity: 0.8, fontWeight: 900, letterSpacing: 0.2 };
   const btn: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, cursor: "pointer", fontWeight: 900 };
   const btnPrimary: React.CSSProperties = { ...btn, border: "1px solid rgba(180,120,255,0.30)", background: "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)" };
   const btnDisabled: React.CSSProperties = { ...btnPrimary, opacity: 0.55, cursor: "not-allowed" };
+  const btnDanger: React.CSSProperties = { ...btn, color: "#ff8a8a", border: "1px solid rgba(255,90,90,0.30)", background: "rgba(255,70,70,0.08)" };
 
   return (
     <div style={{ padding: 16, color: "white" }}>
@@ -328,6 +373,7 @@ export default function EditLeadPage() {
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
           <button onClick={() => router.replace("/leads")} style={btn}>Voltar</button>
+          <button onClick={handleDelete} style={deleting ? { ...btnDanger, opacity: 0.55, cursor: "not-allowed" } : btnDanger} disabled={deleting || saving || loading}>{deleting ? "Excluindo..." : "Excluir contato"}</button>
           <button onClick={handleSave} style={canSave ? btnPrimary : btnDisabled} disabled={!canSave}>{saving ? "Salvando..." : "Salvar"}</button>
         </div>
       </div>

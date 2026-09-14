@@ -120,7 +120,7 @@ export default function LeadsListPage() {
     setLoading(true);
     const [{ data: stagesData }, { data: leadsData }, { data: profilesData }] = await Promise.all([
       supabase.from("stages").select("id,name,position,is_final").order("position", { ascending: true }),
-      supabase.from("leads").select("id,name,phone_raw,phone_e164,source,interest,interests,stage_id,campaign,responsible_id,next_action_type,next_action_at,cpf,birth_date,sex,created_at").order("id", { ascending: false }),
+      supabase.from("leads").select("id,name,phone_raw,phone_e164,source,interest,interests,stage_id,campaign,responsible_id,next_action_type,next_action_at,cpf,birth_date,sex,created_at").is("deleted_at", null).order("id", { ascending: false }),
       supabase.from("profiles").select("id,name"),
     ]);
     setStages((stagesData as any) ?? []);

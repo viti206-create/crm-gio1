@@ -51,7 +51,7 @@ type SellerItem = {
   count: number;
 };
 
-type FilterMode = "monthly" | "yearly" | "custom";
+type FilterMode = "today" | "monthly" | "yearly" | "custom";
 type AgendaRange = "7d" | "30d" | "mes";
 
 function FilterToggle({
@@ -239,6 +239,7 @@ function periodLabel(
   customStart: string,
   customEnd: string
 ) {
+  if (mode === "today") return "Hoje";
   if (mode === "yearly") return `Ano ${year}`;
   if (mode === "custom") return `${formatDateBR(customStart)} a ${formatDateBR(customEnd)}`;
   return `${String(month + 1).padStart(2, "0")}/${year}`;
@@ -413,7 +414,8 @@ export default function HomePage() {
         .from("leads")
         .select(
           "id,name,phone_raw,phone_e164,source,interest,campaign,stage_id,next_action_type,next_action_at,created_at,sex,birth_date"
-        ),
+        )
+        .is("deleted_at", null),
       supabase
         .from("sales")
         .select(
@@ -486,6 +488,10 @@ export default function HomePage() {
   }, [stages]);
 
   const periodStart = useMemo(() => {
+    if (filterMode === "today") {
+      return new Date(todayRef.getFullYear(), todayRef.getMonth(), todayRef.getDate(), 0, 0, 0, 0);
+    }
+
     if (filterMode === "yearly") {
       return new Date(selectedYear, 0, 1, 0, 0, 0, 0);
     }
@@ -495,9 +501,13 @@ export default function HomePage() {
     }
 
     return new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
-  }, [filterMode, selectedYear, selectedMonth, customStart]);
+  }, [filterMode, selectedYear, selectedMonth, customStart, todayRef]);
 
   const periodEnd = useMemo(() => {
+    if (filterMode === "today") {
+      return new Date(todayRef.getFullYear(), todayRef.getMonth(), todayRef.getDate(), 23, 59, 59, 999);
+    }
+
     if (filterMode === "yearly") {
       return new Date(selectedYear, 11, 31, 23, 59, 59, 999);
     }
@@ -507,7 +517,7 @@ export default function HomePage() {
     }
 
     return new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59, 999);
-  }, [filterMode, selectedYear, selectedMonth, customEnd]);
+  }, [filterMode, selectedYear, selectedMonth, customEnd, todayRef]);
 
   const normalizedPeriod = useMemo(() => {
     if (periodStart.getTime() <= periodEnd.getTime()) {
@@ -847,13 +857,14 @@ export default function HomePage() {
           value={filterMode}
           onChange={(v) => setFilterMode(v as FilterMode)}
           options={[
+            { value: "today", label: "Hoje" },
             { value: "monthly", label: "Mensal" },
             { value: "yearly", label: "Anual" },
             { value: "custom", label: "Personalizado" },
           ]}
         />
 
-        {filterMode !== "custom" ? (
+        {filterMode === "monthly" || filterMode === "yearly" ? (
           <FilterToggle
             value={String(selectedYear)}
             onChange={(v) => setSelectedYear(Number(v))}
