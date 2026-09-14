@@ -116,6 +116,16 @@ type WhatsAppWebhookPayload = {
   }>;
 };
 
+type MetaReferral = {
+  sourceUrl: string | null;
+  sourceType: string | null;
+  sourceId: string | null;
+  headline: string | null;
+  body: string | null;
+  ctwaClid: string | null;
+  raw: WhatsAppMessage["referral"];
+};
+
 type IncomingMessage = {
   messageId: string;
   phoneRaw: string;
@@ -127,6 +137,7 @@ type IncomingMessage = {
   direction: "inbound";
   campaignName: string | null;
   campaignSourceId: string | null;
+  referral: MetaReferral | null;
 };
 
 const FALLBACK_INTEREST = "A definir";
@@ -324,6 +335,17 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
           // mensagens seguintes do mesmo contato).
           campaignName: trimOrNull(message.referral?.headline),
           campaignSourceId: trimOrNull(message.referral?.source_id),
+          referral: message.referral
+            ? {
+                sourceUrl: trimOrNull(message.referral.source_url),
+                sourceType: trimOrNull(message.referral.source_type),
+                sourceId: trimOrNull(message.referral.source_id),
+                headline: trimOrNull(message.referral.headline),
+                body: trimOrNull(message.referral.body),
+                ctwaClid: trimOrNull(message.referral.ctwa_clid),
+                raw: message.referral,
+              }
+            : null,
         });
       }
     }
@@ -462,6 +484,40 @@ async function atualizarRespostaConversa(
     .from("whatsapp_conversas")
     .update({ resposta })
     .eq("message_id", messageId);
+}
+
+async function saveLeadAttribution(
+  supabase: SupabaseClient,
+  leadId: string,
+  event: IncomingMessage
+) {
+  if (!event.referral) {
+    return;
+  }
+
+  const { error } = await supabase.from("lead_attributions").insert({
+    lead_id: leadId,
+    source: "meta_ads",
+    channel: "whatsapp",
+    meta_source_id: event.referral.sourceId,
+    meta_source_type: event.referral.sourceType,
+    source_url: event.referral.sourceUrl,
+    ad_headline: event.referral.headline,
+    ad_body: event.referral.body,
+    ctwa_clid: event.referral.ctwaClid,
+    referral_payload: event.referral.raw,
+    whatsapp_message_id: event.messageId,
+  });
+
+  if (error) {
+    // 23505 = a mesma mensagem ja registrou esta atribuicao.
+    // Isso evita duplicacao sem interromper o atendimento do WhatsApp.
+    if (error.code === "23505") {
+      return;
+    }
+
+    console.error("Erro ao salvar atribuicao de marketing do lead:", error);
+  }
 }
 
 async function createLead(
@@ -1046,6 +1102,8 @@ async function processIncomingMessage(
   } else {
     lead = await createLead(supabase, event, defaultStageId);
   }
+
+  await saveLeadAttribution(supabase, lead.id, event);
 
   // Se a IA ja foi pausada de vez para esse lead (handoff), nao responde mais.
   // A mensagem do cliente ja foi salva pelo claimMessage acima, entao so
