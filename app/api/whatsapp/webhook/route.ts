@@ -94,6 +94,59 @@ type MessageEcho = {
   from?: string;
   timestamp?: string;
   type?: string;
+  text?: {
+    body?: string;
+  };
+  image?: {
+    caption?: string;
+    mime_type?: string;
+  };
+  video?: {
+    caption?: string;
+    mime_type?: string;
+  };
+  audio?: {
+    mime_type?: string;
+  };
+  document?: {
+    caption?: string;
+    filename?: string;
+    mime_type?: string;
+  };
+  sticker?: {
+    mime_type?: string;
+  };
+  button?: {
+    text?: string;
+  };
+  interactive?: {
+    button_reply?: {
+      title?: string;
+    };
+    list_reply?: {
+      title?: string;
+      description?: string;
+    };
+  };
+  location?: {
+    latitude?: number;
+    longitude?: number;
+    name?: string;
+    address?: string;
+  };
+  contacts?: Array<{
+    name?: {
+      formatted_name?: string;
+    };
+  }>;
+};
+
+type HumanEcho = {
+  messageId: string;
+  phoneRaw: string;
+  phoneE164: string;
+  message: string;
+  timestamp: string | null;
 };
 
 type WhatsAppWebhookPayload = {
@@ -354,9 +407,11 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
   return events;
 }
 
-// Extrai números de telefone que receberam mensagem de um humano via app
-function extractHumanEchoPhones(body: WhatsAppWebhookPayload) {
-  const telefones: string[] = [];
+// Extrai as mensagens enviadas manualmente pela equipe no app do WhatsApp.
+// No modo coexistencia, a Meta entrega essas mensagens como smb_message_echoes.
+// Alem de marcar a intervencao humana, salvamos o conteudo no historico do CRM.
+function extractHumanEchoes(body: WhatsAppWebhookPayload) {
+  const echoesHumanos: HumanEcho[] = [];
 
   for (const entry of body.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -365,16 +420,52 @@ function extractHumanEchoPhones(body: WhatsAppWebhookPayload) {
       const echoes = change.value?.message_echoes ?? [];
 
       for (const echo of echoes) {
-        const destino = trimOrNull(echo.to);
-        const normalizado = normalizePhoneE164(destino);
-        if (normalizado) {
-          telefones.push(normalizado);
+        const messageId = trimOrNull(echo.id);
+        const phoneRaw = trimOrNull(echo.to);
+        const phoneE164 = normalizePhoneE164(phoneRaw);
+
+        if (!messageId || !phoneRaw || !phoneE164) {
+          continue;
         }
+
+        echoesHumanos.push({
+          messageId,
+          phoneRaw,
+          phoneE164,
+          message: extractMessageText(echo as WhatsAppMessage),
+          timestamp: toIsoTimestamp(echo.timestamp),
+        });
       }
     }
   }
 
-  return telefones;
+  return echoesHumanos;
+}
+
+async function saveHumanEcho(
+  supabase: SupabaseClient,
+  echo: HumanEcho
+) {
+  const { error } = await supabase.from("whatsapp_conversas").insert({
+    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    telefone_cliente: echo.phoneRaw,
+    mensagem: null,
+    resposta: echo.message,
+    message_id: echo.messageId,
+    ...(echo.timestamp ? { created_at: echo.timestamp } : {}),
+  });
+
+  if (error) {
+    // A Meta pode reenviar o mesmo webhook. A restricao UNIQUE(message_id)
+    // garante que a mesma resposta manual nao apareca duas vezes no CRM.
+    if (error.code === "23505") {
+      return;
+    }
+
+    throw new Error(
+      `Nao consegui salvar mensagem manual do WhatsApp: ${error.message}`
+    );
+  }
 }
 
 async function getDefaultStageId(supabase: SupabaseClient) {
@@ -1270,10 +1361,18 @@ export async function POST(req: NextRequest) {
   // Remover depois de confirmar o formato.
   console.log("PAYLOAD COMPLETO DO WEBHOOK:", JSON.stringify(body, null, 2));
 
-  // Processa avisos de mensagens enviadas manualmente por humano (via app)
-  const telefonesComIntervencaoHumana = extractHumanEchoPhones(body);
-  for (const telefone of telefonesComIntervencaoHumana) {
-    await marcarIntervencaoHumana(supabase, telefone);
+  // Processa mensagens enviadas manualmente pela equipe no app do WhatsApp.
+  // Elas passam a aparecer no historico do CRM e continuam pausando a IA por 1h.
+  const humanEchoes = extractHumanEchoes(body);
+  for (const echo of humanEchoes) {
+    try {
+      await saveHumanEcho(supabase, echo);
+      await marcarIntervencaoHumana(supabase, echo.phoneE164);
+    } catch (echoError) {
+      // Uma falha ao registrar o echo nao deve derrubar o webhook nem impedir
+      // o processamento de mensagens recebidas dos clientes.
+      console.error("ERRO AO PROCESSAR MENSAGEM MANUAL DO WHATSAPP:", echoError);
+    }
   }
 
   const events = extractIncomingMessages(body);
