@@ -162,7 +162,7 @@ export default function EditLeadPage() {
   const [stageId, setStageId] = useState("");
   const [campaign, setCampaign] = useState("");
   const [responsibleId, setResponsibleId] = useState("");
-  const [responsibleName, setResponsibleName] = useState("");
+  const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
 
   const sourceOptions = useMemo(() => [
     { value: "instagram", label: "Instagram" }, { value: "google", label: "Google" },
@@ -176,14 +176,12 @@ export default function EditLeadPage() {
   ], []);
 
   const stageOptions = useMemo(() => stages.map((s) => ({ value: s.id, label: s.name })), [stages]);
+  const responsibleOptions = useMemo(() => [
+    { value: "", label: "Não definido" },
+    ...profiles.map((p) => ({ value: p.id, label: p.name?.trim() || p.id })),
+  ], [profiles]);
 
   useEffect(() => { if (leadId) void bootstrap(); }, [leadId]);
-
-  useEffect(() => {
-    if (!responsibleId) { setResponsibleName("Não definido"); return; }
-    const found = profiles.find((p) => p.id === responsibleId);
-    setResponsibleName(found?.name?.trim() || responsibleId);
-  }, [profiles, responsibleId]);
 
   async function bootstrap() {
     setLoading(true); setErr(null);
@@ -238,23 +236,81 @@ export default function EditLeadPage() {
 
   async function handleSave() {
     if (!leadId || saving) return;
-    setSaving(true); setErr(null);
-    const phoneE164 = toE164BR(phoneRaw.trim());
-    if (!phoneE164) { setErr("Telefone inválido. Ex: (15) 9xxxx-xxxx"); setSaving(false); return; }
 
-    const { error } = await supabase.from("leads").update({
-      name: name.trim(), phone_raw: phoneRaw.trim(), phone_e164: phoneE164,
-      cpf: cpf.trim() ? cpf.trim() : null, birth_date: birthDate || null, sex: sex || null,
-      source: source.trim(),
-      interest: interests[0] ?? null,  // manter compatibilidade legada
-      interests: interests,             // novo campo array
-      stage_id: stageId,
-      campaign: campaign.trim() ? campaign.trim() : null,
-    }).eq("id", leadId);
+    setSaving(true);
+    setErr(null);
+    setSaveSuccess(null);
 
-    setSaving(false);
-    if (error) { setErr(error.message ?? "Erro ao salvar"); return; }
-    router.replace("/leads");
+    try {
+      const cleanName = name.trim();
+      const cleanPhoneRaw = phoneRaw.trim();
+      const phoneE164 = toE164BR(cleanPhoneRaw);
+
+      if (!cleanName) {
+        setErr("Nome é obrigatório.");
+        return;
+      }
+
+      if (!phoneE164) {
+        setErr("Telefone inválido. Ex: (15) 9xxxx-xxxx");
+        return;
+      }
+
+      if (!source.trim()) {
+        setErr("Origem é obrigatória.");
+        return;
+      }
+
+      if (interests.length === 0) {
+        setErr("Adicione pelo menos um interesse.");
+        return;
+      }
+
+      if (!stageId) {
+        setErr("Selecione a etapa atual do lead.");
+        return;
+      }
+
+      const payload = {
+        name: cleanName,
+        phone_raw: cleanPhoneRaw,
+        phone_e164: phoneE164,
+        cpf: cpf.trim() ? cpf.trim() : null,
+        birth_date: birthDate || null,
+        sex: sex || null,
+        source: source.trim(),
+        interest: interests[0] ?? null,
+        interests,
+        stage_id: stageId,
+        campaign: campaign.trim() ? campaign.trim() : null,
+        responsible_id: responsibleId || null,
+      };
+
+      const { data, error } = await supabase
+        .from("leads")
+        .update(payload)
+        .eq("id", leadId)
+        .select("id,name,phone_raw,phone_e164,source,interest,interests,stage_id,campaign,responsible_id,cpf,birth_date,sex")
+        .single();
+
+      if (error) {
+        setErr(`Não foi possível salvar o lead: ${error.message}`);
+        return;
+      }
+
+      if (!data?.id) {
+        setErr("O Supabase não confirmou a alteração do lead. Verifique as permissões/RLS da tabela leads.");
+        return;
+      }
+
+      setSaveSuccess("Alterações salvas com sucesso.");
+      router.replace("/leads");
+      router.refresh();
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Erro inesperado ao salvar o lead.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   const card: React.CSSProperties = { border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", borderRadius: 18, padding: 16, boxShadow: "0 24px 80px rgba(0,0,0,0.55)", maxWidth: 920 };
@@ -263,7 +319,6 @@ export default function EditLeadPage() {
   const btn: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, cursor: "pointer", fontWeight: 900 };
   const btnPrimary: React.CSSProperties = { ...btn, border: "1px solid rgba(180,120,255,0.30)", background: "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)" };
   const btnDisabled: React.CSSProperties = { ...btnPrimary, opacity: 0.55, cursor: "not-allowed" };
-  const smallLockedStyle: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, minHeight: 42, display: "flex", alignItems: "center", fontWeight: 900, width: "100%", boxSizing: "border-box", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
   return (
     <div style={{ padding: 16, color: "white" }}>
@@ -282,6 +337,7 @@ export default function EditLeadPage() {
       <div style={card}>
         {loading ? <div style={{ opacity: 0.8 }}>Carregando...</div> : null}
         {err ? <div style={{ color: "#ff6b6b", fontSize: 12, marginBottom: 10 }}>{err}</div> : null}
+        {saveSuccess ? <div style={{ color: "#7ee787", fontSize: 12, marginBottom: 10 }}>{saveSuccess}</div> : null}
 
         <div style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "grid", gap: 10 }}><div style={labelStyle}>Nome *</div><input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} /></div>
@@ -306,7 +362,7 @@ export default function EditLeadPage() {
           </div>
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0, 220px) minmax(0, 1fr)", alignItems: "end" }}>
-            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Responsável</div><div style={smallLockedStyle}>{responsibleName || "Não definido"}</div></div>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Responsável</div><Select value={responsibleId} onChange={setResponsibleId} options={responsibleOptions} placeholder="Não definido" /></div>
             <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Etapa atual *</div><Select value={stageId} onChange={setStageId} options={stageOptions} disabled={stages.length === 0} /></div>
           </div>
         </div>
