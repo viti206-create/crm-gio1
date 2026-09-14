@@ -51,7 +51,7 @@ type SellerItem = {
   count: number;
 };
 
-type FilterMode = "monthly" | "yearly";
+type FilterMode = "monthly" | "yearly" | "custom";
 type AgendaRange = "7d" | "30d" | "mes";
 
 function FilterToggle({
@@ -209,13 +209,31 @@ function parseInstallmentsTotal(label?: string | null) {
   return Number(m[1]);
 }
 
-function isInPeriod(date: Date, mode: FilterMode, year: number, month: number) {
-  if (mode === "yearly") return date.getFullYear() === year;
-  return date.getFullYear() === year && date.getMonth() === month;
+function parseLocalDate(value: string, endOfDay = false) {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+
+  return endOfDay
+    ? new Date(year, month - 1, day, 23, 59, 59, 999)
+    : new Date(year, month - 1, day, 0, 0, 0, 0);
 }
 
-function periodLabel(mode: FilterMode, year: number, month: number) {
+function formatDateBR(value: string) {
+  const date = parseLocalDate(value);
+  if (!date) return "—";
+
+  return date.toLocaleDateString("pt-BR");
+}
+
+function periodLabel(
+  mode: FilterMode,
+  year: number,
+  month: number,
+  customStart: string,
+  customEnd: string
+) {
   if (mode === "yearly") return `Ano ${year}`;
+  if (mode === "custom") return `${formatDateBR(customStart)} a ${formatDateBR(customEnd)}`;
   return `${String(month + 1).padStart(2, "0")}/${year}`;
 }
 
@@ -350,6 +368,13 @@ export default function HomePage() {
   const [filterMode, setFilterMode] = useState<FilterMode>("monthly");
   const [selectedYear, setSelectedYear] = useState(todayRef.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(todayRef.getMonth());
+  const [customStart, setCustomStart] = useState(() => {
+    const d = new Date(todayRef.getFullYear(), todayRef.getMonth(), 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const [customEnd, setCustomEnd] = useState(() => {
+    return `${todayRef.getFullYear()}-${String(todayRef.getMonth() + 1).padStart(2, "0")}-${String(todayRef.getDate()).padStart(2, "0")}`;
+  });
 
   const [stages, setStages] = useState<Stage[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -453,14 +478,49 @@ export default function HomePage() {
     return s;
   }, [stages]);
 
+  const periodStart = useMemo(() => {
+    if (filterMode === "yearly") {
+      return new Date(selectedYear, 0, 1, 0, 0, 0, 0);
+    }
+
+    if (filterMode === "custom") {
+      return parseLocalDate(customStart) ?? new Date(0);
+    }
+
+    return new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
+  }, [filterMode, selectedYear, selectedMonth, customStart]);
+
+  const periodEnd = useMemo(() => {
+    if (filterMode === "yearly") {
+      return new Date(selectedYear, 11, 31, 23, 59, 59, 999);
+    }
+
+    if (filterMode === "custom") {
+      return parseLocalDate(customEnd, true) ?? new Date(8640000000000000);
+    }
+
+    return new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59, 999);
+  }, [filterMode, selectedYear, selectedMonth, customEnd]);
+
+  const normalizedPeriod = useMemo(() => {
+    if (periodStart.getTime() <= periodEnd.getTime()) {
+      return { start: periodStart, end: periodEnd };
+    }
+
+    return { start: periodEnd, end: periodStart };
+  }, [periodStart, periodEnd]);
+
   const filteredLeads = useMemo(() => {
     return leads.filter((l) => {
       if (!l.created_at) return false;
       const d = new Date(l.created_at);
       if (Number.isNaN(d.getTime())) return false;
-      return isInPeriod(d, filterMode, selectedYear, selectedMonth);
+      return (
+        d.getTime() >= normalizedPeriod.start.getTime() &&
+        d.getTime() <= normalizedPeriod.end.getTime()
+      );
     });
-  }, [leads, filterMode, selectedYear, selectedMonth]);
+  }, [leads, normalizedPeriod]);
 
   const totalLeads = filteredLeads.length;
 
@@ -500,28 +560,18 @@ export default function HomePage() {
     return d;
   }, [todayEnd]);
 
-  const periodStart = useMemo(() => {
-    if (filterMode === "yearly") {
-      return new Date(selectedYear, 0, 1, 0, 0, 0, 0);
-    }
-    return new Date(selectedYear, selectedMonth, 1, 0, 0, 0, 0);
-  }, [filterMode, selectedYear, selectedMonth]);
-
-  const periodEnd = useMemo(() => {
-    if (filterMode === "yearly") {
-      return new Date(selectedYear, 11, 31, 23, 59, 59, 999);
-    }
-    return new Date(selectedYear, selectedMonth + 1, 0, 23, 59, 59, 999);
-  }, [filterMode, selectedYear, selectedMonth]);
-
   const leadsWithNext = useMemo(() => {
     return filteredLeads
       .filter((l) => !!l.next_action_at)
       .map((l) => ({ ...l, _next: new Date(l.next_action_at as string) }))
       .filter((l) => !isNaN((l as any)._next.getTime()))
-      .filter((l: any) => l._next.getTime() >= periodStart.getTime() && l._next.getTime() <= periodEnd.getTime())
+      .filter(
+        (l: any) =>
+          l._next.getTime() >= normalizedPeriod.start.getTime() &&
+          l._next.getTime() <= normalizedPeriod.end.getTime()
+      )
       .sort((a: any, b: any) => a._next.getTime() - b._next.getTime());
-  }, [filteredLeads, periodStart, periodEnd]);
+  }, [filteredLeads, normalizedPeriod]);
 
   const overdue = useMemo(
     () => leadsWithNext.filter((l: any) => l._next.getTime() < todayStart.getTime()),
@@ -624,7 +674,12 @@ export default function HomePage() {
       // Vendas recorrentes só entram aqui quando o pagamento foi registrado manualmente
       // via "Registrar pagamento" na aba Recorrências, gerando uma sale individual
       // com seu próprio closed_at no mês correto.
-      if (!isInPeriod(d, filterMode, selectedYear, selectedMonth)) continue;
+      if (
+        d.getTime() < normalizedPeriod.start.getTime() ||
+        d.getTime() > normalizedPeriod.end.getTime()
+      ) {
+        continue;
+      }
 
       const gross = Number(sale.value_gross ?? sale.value ?? 0);
 
@@ -641,7 +696,7 @@ export default function HomePage() {
         count: v.count,
       }))
       .sort((a, b) => b.amount - a.amount);
-  }, [sales, filterMode, selectedYear, selectedMonth]);
+  }, [sales, normalizedPeriod]);
 
   const clientsBySex = useMemo(() => {
     const order = ["Feminino", "Masculino", "Não informado"];
@@ -787,17 +842,20 @@ export default function HomePage() {
           options={[
             { value: "monthly", label: "Mensal" },
             { value: "yearly", label: "Anual" },
+            { value: "custom", label: "Personalizado" },
           ]}
         />
 
-        <FilterToggle
-          value={String(selectedYear)}
-          onChange={(v) => setSelectedYear(Number(v))}
-          options={allYears.map((year) => ({
-            value: String(year),
-            label: String(year),
-          }))}
-        />
+        {filterMode !== "custom" ? (
+          <FilterToggle
+            value={String(selectedYear)}
+            onChange={(v) => setSelectedYear(Number(v))}
+            options={allYears.map((year) => ({
+              value: String(year),
+              label: String(year),
+            }))}
+          />
+        ) : null}
 
         {filterMode === "monthly" ? (
           <FilterToggle
@@ -809,11 +867,62 @@ export default function HomePage() {
             }))}
           />
         ) : null}
+
+        {filterMode === "custom" ? (
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              alignItems: "end",
+              flexWrap: "wrap",
+              padding: 4,
+              borderRadius: 14,
+              border: "1px solid rgba(255,255,255,0.10)",
+              background: "rgba(255,255,255,0.04)",
+            }}
+          >
+            <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 900, opacity: 0.85 }}>
+              DE
+              <input
+                type="date"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+                style={{
+                  colorScheme: "dark",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "white",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  padding: "9px 10px",
+                  borderRadius: 10,
+                  fontWeight: 800,
+                }}
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 900, opacity: 0.85 }}>
+              ATÉ
+              <input
+                type="date"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+                style={{
+                  colorScheme: "dark",
+                  background: "rgba(255,255,255,0.06)",
+                  color: "white",
+                  border: "1px solid rgba(255,255,255,0.12)",
+                  padding: "9px 10px",
+                  borderRadius: 10,
+                  fontWeight: 800,
+                }}
+              />
+            </label>
+          </div>
+        ) : null}
       </div>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <span style={chipStyle("muted")}>
-          Período: {periodLabel(filterMode, selectedYear, selectedMonth)}
+          Período: {periodLabel(filterMode, selectedYear, selectedMonth, customStart, customEnd)}
         </span>
         <span style={chipStyle("muted")}>Leads: {totalLeads}</span>
         <span style={chipStyle("primary")}>Em progresso: {inProgress}</span>
@@ -827,7 +936,11 @@ export default function HomePage() {
           <div style={cardTitle}>Novos clientes</div>
           <div style={cardValue}>{newClientsInPeriod}</div>
           <div style={cardHint}>
-            {filterMode === "monthly" ? "Criados no mês escolhido" : "Criados no ano escolhido"}
+            {filterMode === "monthly"
+              ? "Criados no mês escolhido"
+              : filterMode === "yearly"
+                ? "Criados no ano escolhido"
+                : "Criados no período escolhido"}
           </div>
         </div>
 
@@ -853,7 +966,7 @@ export default function HomePage() {
       <div style={{ ...card, marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
           <div style={sectionTitle}>Vendas por vendedoras</div>
-          <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth)}</div>
+          <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth, customStart, customEnd)}</div>
         </div>
 
         {salesBySeller.length === 0 ? (
@@ -894,7 +1007,7 @@ export default function HomePage() {
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
             <div style={sectionTitle}>Clientes por sexo</div>
-            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth)}</div>
+            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth, customStart, customEnd)}</div>
           </div>
 
           {clientsBySex.length === 0 ? (
@@ -925,7 +1038,7 @@ export default function HomePage() {
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
             <div style={sectionTitle}>Clientes por idade</div>
-            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth)}</div>
+            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth, customStart, customEnd)}</div>
           </div>
 
           {clientsByAge.length === 0 ? (
@@ -1083,7 +1196,7 @@ export default function HomePage() {
         <div style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
             <div style={sectionTitle}>Funil de etapas</div>
-            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth)}</div>
+            <div style={soft}>{periodLabel(filterMode, selectedYear, selectedMonth, customStart, customEnd)}</div>
           </div>
 
           {stageFunnel.length === 0 ? (
