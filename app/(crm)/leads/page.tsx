@@ -88,6 +88,8 @@ export default function LeadsListPage() {
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [interestFilter, setInterestFilter] = useState<string>("all");
   const [campaignFilter, setCampaignFilter] = useState<string>("all");
+  const [contactDateFrom, setContactDateFrom] = useState<string>("");
+  const [contactDateTo, setContactDateTo] = useState<string>("");
 
   // Filtros aba responsáveis
   const [dateFrom, setDateFrom] = useState(firstDayOfMonth());
@@ -101,11 +103,15 @@ export default function LeadsListPage() {
     const camp = params.get("campaign");
     const inter = params.get("interest");
     const src = params.get("source");
+    const from = params.get("dateFrom");
+    const to = params.get("dateTo");
     if (camp) setCampaignFilter(camp);
     if (inter) setInterestFilter(inter);
     if (src) setSourceFilter(src);
-    if (camp || inter || src) {
-      // Limpar URL sem reload
+    if (from) setContactDateFrom(from);
+    if (to) setContactDateTo(to);
+    if (camp || inter || src || from || to) {
+      // Limpar URL sem reload depois de carregar os filtros vindos da Home
       window.history.replaceState({}, "", window.location.pathname);
     }
   }, []);
@@ -158,6 +164,21 @@ export default function LeadsListPage() {
         if (!li.includes(interestFilter.toLowerCase())) return false;
       }
       if (campaignFilter !== "all" && (l.campaign ?? "") !== campaignFilter) return false;
+      if (contactDateFrom || contactDateTo) {
+        if (!l.created_at) return false;
+        const createdAt = new Date(l.created_at);
+        if (Number.isNaN(createdAt.getTime())) return false;
+
+        if (contactDateFrom) {
+          const from = new Date(`${contactDateFrom}T00:00:00`);
+          if (createdAt < from) return false;
+        }
+
+        if (contactDateTo) {
+          const to = new Date(`${contactDateTo}T23:59:59.999`);
+          if (createdAt > to) return false;
+        }
+      }
       if (!query) return true;
       const age = calculateAge(l.birth_date);
       const hay = [l.name ?? "", l.phone_raw ?? "", l.phone_e164 ?? "", l.source ?? "",
@@ -167,7 +188,7 @@ export default function LeadsListPage() {
       ].join(" ").toLowerCase();
       return hay.includes(query);
     });
-  }, [leads, q, stageFilter, sourceFilter, interestFilter, campaignFilter, stages]);
+  }, [leads, q, stageFilter, sourceFilter, interestFilter, campaignFilter, contactDateFrom, contactDateTo, stages]);
 
   // Contagem por responsável filtrada por período
   const responsaveisCounts = useMemo(() => {
@@ -215,6 +236,11 @@ export default function LeadsListPage() {
             {loading ? <span style={chipStyle("primary")}>Carregando…</span> : <span style={chipStyle("muted")}>Total: {filtered.length}</span>}
             {interestFilter !== "all" && <span style={chipStyle("primary")}>Interesse: {interestFilter}</span>}
             {campaignFilter !== "all" && <span style={chipStyle("primary")}>Campanha: {campaignFilter}</span>}
+            {(contactDateFrom || contactDateTo) && (
+              <span style={chipStyle("primary")}>
+                Período: {contactDateFrom ? formatDateOnly(`${contactDateFrom}T00:00:00`) : "início"} a {contactDateTo ? formatDateOnly(`${contactDateTo}T00:00:00`) : "hoje"}
+              </span>
+            )}
           </div>
         </div>
         <Link href="/leads/new" style={btnPrimary}>+ Novo lead</Link>
@@ -239,7 +265,7 @@ export default function LeadsListPage() {
               options={[{ value: "all", label: "Todos os interesses" }, ...interestOptions.map((i) => ({ value: i, label: i }))]} />
             <SelectDark value={campaignFilter} onChange={setCampaignFilter} placeholder="Todas as campanhas" searchable={true} minWidth={220}
               options={[{ value: "all", label: "Todas as campanhas" }, ...campaignOptions.map((c) => ({ value: c, label: c }))]} />
-            <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); setCampaignFilter("all"); }} style={btn}>Limpar</button>
+            <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); setCampaignFilter("all"); setContactDateFrom(""); setContactDateTo(""); }} style={btn}>Limpar</button>
           </div>
 
           {loading ? (

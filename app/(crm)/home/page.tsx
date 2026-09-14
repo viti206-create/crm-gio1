@@ -225,6 +225,13 @@ function formatDateBR(value: string) {
   return date.toLocaleDateString("pt-BR");
 }
 
+function formatDateInput(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function periodLabel(
   mode: FilterMode,
   year: number,
@@ -1258,12 +1265,42 @@ export default function HomePage() {
       </div>
 
       <div style={funnelGrid}>
-        <MiniFunnelCard title="Funil por campanhas" items={campaignsFunnel}
-          onItemClick={(label) => router.push(`/leads?campaign=${encodeURIComponent(label)}`)} />
-        <MiniFunnelCard title="Funil por origem" items={sourceFunnel}
-          onItemClick={(label) => router.push(`/leads?source=${encodeURIComponent(label)}`)} />
-        <MiniFunnelCard title="Funil por interesses" items={interestFunnel}
-          onItemClick={(label) => router.push(`/leads?interest=${encodeURIComponent(label)}`)} />
+        <MiniFunnelCard
+          title="Funil por campanhas"
+          items={campaignsFunnel}
+          onItemClick={(label) => {
+            const params = new URLSearchParams({
+              campaign: label,
+              dateFrom: formatDateInput(normalizedPeriod.start),
+              dateTo: formatDateInput(normalizedPeriod.end),
+            });
+            router.push(`/leads?${params.toString()}`);
+          }}
+        />
+        <MiniFunnelCard
+          title="Funil por origem"
+          items={sourceFunnel}
+          onItemClick={(label) => {
+            const params = new URLSearchParams({
+              source: label,
+              dateFrom: formatDateInput(normalizedPeriod.start),
+              dateTo: formatDateInput(normalizedPeriod.end),
+            });
+            router.push(`/leads?${params.toString()}`);
+          }}
+        />
+        <MiniFunnelCard
+          title="Funil por interesses"
+          items={interestFunnel}
+          onItemClick={(label) => {
+            const params = new URLSearchParams({
+              interest: label,
+              dateFrom: formatDateInput(normalizedPeriod.start),
+              dateTo: formatDateInput(normalizedPeriod.end),
+            });
+            router.push(`/leads?${params.toString()}`);
+          }}
+        />
       </div>
     </div>
   );
