@@ -379,13 +379,25 @@ export default function DashboardPage() {
     if (targetStageId !== activeLeadNow.stage_id) {
       setSaving(activeLeadNow.id);
       setLeads((prev) => prev.map((l) => (l.id === activeLeadNow.id ? { ...l, stage_id: targetStageId } : l)));
-      const { error } = await supabase.from("leads").update({ stage_id: targetStageId }).eq("id", activeLeadNow.id);
+      const { data, error } = await supabase
+        .from("leads")
+        .update({ stage_id: targetStageId })
+        .eq("id", activeLeadNow.id)
+        .select("id,stage_id")
+        .maybeSingle();
+
       setSaving(null);
-      if (error) {
+
+      if (error || !data?.id || data.stage_id !== targetStageId) {
         setLeads((prev) => prev.map((l) => l.id === activeLeadNow.id ? { ...l, stage_id: activeLeadNow.stage_id } : l));
-        pushToast({ kind: "error", title: "Não consegui mover o lead", description: "Verifique policy/RLS." });
+        pushToast({
+          kind: "error",
+          title: "Não consegui mover o lead",
+          description: error?.message ?? "O Supabase não confirmou a alteração do stage_id.",
+        });
         return;
       }
+
       pushToast({ kind: "success", title: "Etapa atualizada", description: `Agora em: ${stageNameFromId(targetStageId)}` });
       if (selectedLeadId === activeLeadNow.id) loadActivities(activeLeadNow.id);
       return;

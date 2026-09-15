@@ -67,6 +67,96 @@ function Select({ value, onChange, placeholder = "Selecione…", options, disabl
   );
 }
 
+
+function CreatableSource({ value, onChange, suggestions }: {
+  value: string; onChange: (v: string) => void; suggestions: string[];
+}) {
+  const [input, setInput] = useState(value);
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => { setInput(value); }, [value]);
+
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) {
+        setOpen(false);
+        const clean = input.trim();
+        if (clean) onChange(clean);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [input, onChange]);
+
+  const filtered = useMemo(() => {
+    const current = input.trim().toLowerCase();
+    const uniq = new Map<string, string>();
+    for (const item of suggestions) {
+      const clean = String(item || "").trim();
+      if (!clean) continue;
+      uniq.set(clean.toLowerCase(), clean);
+    }
+    return Array.from(uniq.values())
+      .filter((item) => !current || item.toLowerCase().includes(current))
+      .slice(0, 10);
+  }, [suggestions, input]);
+
+  function choose(next: string) {
+    const clean = next.trim();
+    if (!clean) return;
+    setInput(clean);
+    onChange(clean);
+    setOpen(false);
+  }
+
+  const exactExists = suggestions.some(
+    (item) => item.trim().toLowerCase() === input.trim().toLowerCase()
+  );
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input
+        value={input}
+        onChange={(e) => {
+          setInput(e.target.value);
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            choose(input);
+          }
+          if (e.key === "Escape") setOpen(false);
+        }}
+        placeholder="Digite ou selecione uma origem"
+        style={{ background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, outline: "none", width: "100%", boxSizing: "border-box", minWidth: 0 }}
+      />
+
+      {open && (filtered.length > 0 || input.trim()) ? (
+        <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 70, borderRadius: 12, border: "1px solid rgba(255,255,255,0.12)", background: "rgba(10,10,14,0.98)", backdropFilter: "blur(12px)", boxShadow: "0 24px 80px rgba(0,0,0,0.65)", overflow: "hidden", maxHeight: 240, overflowY: "auto" }}>
+          {input.trim() && !exactExists ? (
+            <button type="button" onClick={() => choose(input)}
+              style={{ width: "100%", textAlign: "left", padding: "10px 12px", cursor: "pointer", background: "rgba(180,120,255,0.10)", border: "none", borderBottom: "1px solid rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.92)", fontWeight: 850, fontSize: 13 }}>
+              + Criar "{input.trim()}"
+            </button>
+          ) : null}
+
+          {filtered.map((item) => (
+            <button key={item} type="button" onClick={() => choose(item)}
+              style={{ width: "100%", textAlign: "left", padding: "10px 12px", cursor: "pointer", background: item.toLowerCase() === value.toLowerCase() ? "rgba(180,120,255,0.18)" : "transparent", border: "none", color: "rgba(255,255,255,0.92)", fontWeight: 850, fontSize: 13 }}>
+              {item}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function InterestTags({ values, onChange, suggestions }: {
   values: string[]; onChange: (v: string[]) => void; suggestions: string[];
 }) {
@@ -152,6 +242,7 @@ export default function EditLeadPage() {
   const [stages, setStages] = useState<Stage[]>([]);
   const [profiles, setProfiles] = useState<ProfileOption[]>([]);
   const [interestSuggestions, setInterestSuggestions] = useState<string[]>([]);
+  const [sourceSuggestions, setSourceSuggestions] = useState<string[]>([]);
 
   const [name, setName] = useState("");
   const [phoneRaw, setPhoneRaw] = useState("");
@@ -164,13 +255,6 @@ export default function EditLeadPage() {
   const [campaign, setCampaign] = useState("");
   const [responsibleId, setResponsibleId] = useState("");
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
-
-  const sourceOptions = useMemo(() => [
-    { value: "instagram", label: "Instagram" }, { value: "google", label: "Google" },
-    { value: "site", label: "Site" }, { value: "indicacao", label: "Indicação" },
-    { value: "trafego", label: "Tráfego" }, { value: "organico", label: "Orgânico" },
-    { value: "outros", label: "Outros" },
-  ], []);
 
   const sexOptions = useMemo(() => [
     { value: "feminino", label: "Feminino" }, { value: "masculino", label: "Masculino" },
@@ -186,11 +270,12 @@ export default function EditLeadPage() {
 
   async function bootstrap() {
     setLoading(true); setErr(null);
-    const [st, lead, prof, interestsRes] = await Promise.all([
+    const [st, lead, prof, interestsRes, sourcesRes] = await Promise.all([
       supabase.from("stages").select("id,name,position,is_final").order("position", { ascending: true }),
       supabase.from("leads").select("id,name,phone_raw,source,interest,interests,stage_id,campaign,responsible_id,cpf,birth_date,sex").eq("id", leadId).single(),
       supabase.from("profiles").select("id,name"),
       supabase.from("leads").select("interest,interests").not("interest", "is", null),
+      supabase.from("leads").select("source").not("source", "is", null),
     ]);
 
     if (st.error || lead.error) { setErr((st.error || lead.error)?.message ?? "Erro ao carregar"); setLoading(false); return; }
@@ -223,6 +308,16 @@ export default function EditLeadPage() {
     }
     const uniqueInterests = Array.from(new Map(allStrings.filter(Boolean).map(i => [i.trim().toLowerCase(), i.trim()])).values()).sort((a, b) => a.localeCompare(b));
     setInterestSuggestions(uniqueInterests);
+
+    const sourceStrings = ((sourcesRes.data ?? []) as Array<{ source: string | null }>)
+      .map((x) => String(x.source ?? "").trim())
+      .filter(Boolean);
+    const defaultSources = ["Instagram", "Google", "Site", "Indicação", "Tráfego", "Orgânico", "Outros"];
+    const uniqueSources = Array.from(
+      new Map([...defaultSources, ...sourceStrings].map((item) => [item.toLowerCase(), item])).values()
+    ).sort((a, b) => a.localeCompare(b));
+    setSourceSuggestions(uniqueSources);
+
     setLoading(false);
   }
 
@@ -396,7 +491,7 @@ export default function EditLeadPage() {
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
             <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Sexo</div><Select value={sex} onChange={setSex} options={sexOptions} placeholder="Selecione…" /></div>
-            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Origem *</div><Select value={source} onChange={setSource} options={sourceOptions} /></div>
+            <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Origem * <span style={{ fontWeight: 400, opacity: 0.6 }}>(pode criar novas)</span></div><CreatableSource value={source} onChange={setSource} suggestions={sourceSuggestions} /></div>
           </div>
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
