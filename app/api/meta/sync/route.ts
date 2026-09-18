@@ -1,10 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export const dynamic = "force-dynamic";
 
 const META_GRAPH_VERSION = "v26.0";
-const DEFAULT_BACKFILL_DAYS = 30;
+const SYNC_DAYS = 7;
 const META_PAGE_LIMIT = 500;
 
 type MetaInsightRow = {
@@ -59,14 +59,14 @@ function formatDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function getDefaultDateRange(): {
+function getSyncDateRange(): {
   since: string;
   until: string;
 } {
   const until = new Date();
 
   const since = new Date(until);
-  since.setUTCDate(since.getUTCDate() - (DEFAULT_BACKFILL_DAYS - 1));
+  since.setUTCDate(since.getUTCDate() - (SYNC_DAYS - 1));
 
   return {
     since: formatDate(since),
@@ -101,6 +101,18 @@ function isAllowedMetaPagingUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isAuthorizedCronRequest(request: NextRequest): boolean {
+  const cronSecret = process.env.CRON_SECRET;
+
+  if (!cronSecret) {
+    return false;
+  }
+
+  const authorization = request.headers.get("authorization");
+
+  return authorization === `Bearer ${cronSecret}`;
 }
 
 async function fetchMetaInsights(
@@ -150,11 +162,6 @@ async function fetchMetaInsights(
   while (nextUrl) {
     pageCount += 1;
 
-    /*
-     * Proteção contra loop inesperado de paginação.
-     * Para 30 dias de uma conta deste tamanho, nunca
-     * deveríamos chegar perto desse limite.
-     */
     if (pageCount > 100) {
       throw new Error(
         "A paginação da Meta excedeu o limite de segurança."
@@ -175,8 +182,7 @@ async function fetchMetaInsights(
       cache: "no-store",
     });
 
-    const data =
-      (await response.json()) as MetaInsightsResponse;
+    const data = (await response.json()) as MetaInsightsResponse;
 
     if (!response.ok) {
       console.error("Meta Ads sync insights error:", {
@@ -236,7 +242,7 @@ function prepareRowsForUpsert(
 
     const key = `${insightDate}:${adId}`;
 
-    const row: InsightUpsertRow = {
+    rowsByKey.set(key, {
       insight_date: insightDate,
       ad_id: adId,
       ad_name: insight.ad_name ?? null,
@@ -255,26 +261,32 @@ function prepareRowsForUpsert(
         parseNonNegativeNumber(insight.clicks)
       ),
       updated_at: now,
-    };
-
-    /*
-     * Normalmente a Meta já retorna somente uma linha
-     * por anúncio/dia com level=ad + time_increment=1.
-     *
-     * O Map também protege contra eventual repetição
-     * da mesma chave dentro da resposta.
-     */
-    rowsByKey.set(key, row);
+    });
   }
 
   return Array.from(rowsByKey.values());
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const accessToken =
-      process.env.META_ADS_ACCESS_TOKEN;
+    /*
+     * A rota somente pode ser executada por uma requisição
+     * que apresente o CRON_SECRET correto no Authorization.
+     *
+     * Isso impede que uma pessoa simplesmente abra
+     * /api/meta/sync no navegador e execute a sincronização.
+     */
+    if (!isAuthorizedCronRequest(request)) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "Unauthorized",
+        },
+        { status: 401 }
+      );
+    }
 
+    const accessToken = process.env.META_ADS_ACCESS_TOKEN;
     const configuredAdAccountId =
       process.env.META_AD_ACCOUNT_ID;
 
@@ -303,11 +315,8 @@ export async function GET() {
     const adAccountId =
       normalizeAdAccountId(configuredAdAccountId);
 
-    const { since, until } = getDefaultDateRange();
+    const { since, until } = getSyncDateRange();
 
-    /*
-     * 1. Busca os Insights diários da Meta.
-     */
     const insights = await fetchMetaInsights(
       accessToken,
       adAccountId,
@@ -315,17 +324,8 @@ export async function GET() {
       until
     );
 
-    /*
-     * 2. Normaliza os dados para nossa tabela.
-     */
     const rows = prepareRowsForUpsert(insights);
 
-    /*
-     * 3. Grava no Supabase usando Service Role.
-     *
-     * A restrição UNIQUE (insight_date, ad_id)
-     * permite atualizar os mesmos dias sem duplicar.
-     */
     if (rows.length > 0) {
       const supabase = createSupabaseServerClient();
 
@@ -377,7 +377,7 @@ export async function GET() {
       period: {
         since,
         until,
-        days: DEFAULT_BACKFILL_DAYS,
+        days: SYNC_DAYS,
       },
 
       result: {
