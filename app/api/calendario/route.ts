@@ -1,40 +1,54 @@
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 import { NextResponse } from "next/server";
 
-// ---------- helpers de data (mesma lógica usada na tela de Recorrências) ----------
+// ---------- helpers de data ----------
 
 function parseYMD(ymd: string) {
   const [y, m, d] = (ymd || "").split("-").map(Number);
+
   return new Date(Date.UTC(y, (m || 1) - 1, d || 1, 12));
 }
 
 function addMonths(dt: Date, months: number) {
   const x = new Date(dt.getTime());
+
   x.setUTCMonth(x.getUTCMonth() + months);
+
   return x;
 }
 
 function addDays(dt: Date, days: number) {
   const x = new Date(dt.getTime());
+
   x.setUTCDate(x.getUTCDate() + days);
+
   return x;
 }
 
 function formatBRL(v: number | null | undefined) {
   const n = Number(v ?? 0);
+
   if (!Number.isFinite(n)) return "—";
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  return n.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
 }
 
-// Formata data no padrão exigido pelo ICS para "evento de dia inteiro": YYYYMMDD
+// Formata data no padrão exigido pelo ICS
+// para evento de dia inteiro: YYYYMMDD
+
 function formatICSDate(d: Date) {
   const yyyy = d.getUTCFullYear();
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(d.getUTCDate()).padStart(2, "0");
+
   return `${yyyy}${mm}${dd}`;
 }
 
 // Escapa caracteres especiais exigidos pelo formato ICS
+
 function escapeICS(text: string) {
   return text
     .replace(/\\/g, "\\\\")
@@ -47,11 +61,11 @@ type IcsEvent = {
   uid: string;
   date: Date;
   title: string;
-  description: string;
 };
 
 function buildICS(events: IcsEvent[]) {
   const lines: string[] = [];
+
   lines.push("BEGIN:VCALENDAR");
   lines.push("VERSION:2.0");
   lines.push("PRODID:-//CRM Gio//Recorrencias//PT-BR");
@@ -70,17 +84,11 @@ function buildICS(events: IcsEvent[]) {
     lines.push(`DTSTART;VALUE=DATE:${dateStr}`);
     lines.push(`DTEND;VALUE=DATE:${nextDay}`);
     lines.push(`SUMMARY:${escapeICS(ev.title)}`);
-    lines.push(`DESCRIPTION:${escapeICS(ev.description)}`);
-    // Notificação padrão: avisa às 14h no horário de Brasília (UTC-3 = 17h UTC)
-    lines.push("BEGIN:VALARM");
-    lines.push("ACTION:DISPLAY");
-    lines.push("DESCRIPTION:Lembrete");
-    lines.push("TRIGGER:PT17H");
-    lines.push("END:VALARM");
     lines.push("END:VEVENT");
   }
 
   lines.push("END:VCALENDAR");
+
   return lines.join("\r\n");
 }
 
@@ -97,13 +105,16 @@ export async function GET() {
       installments_total,
       installments_done,
       price_per_installment,
-      leads ( name, phone_raw, phone_e164 )
+      leads ( name )
     `
     )
     .eq("status", "ativo");
 
   if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error.message },
+      { status: 500 }
+    );
   }
 
   const events: IcsEvent[] = [];
@@ -111,64 +122,33 @@ export async function GET() {
   for (const rec of rows || []) {
     const start = parseYMD(rec.start_date);
     const total = Number(rec.installments_total || 0);
-    const done = Number(rec.installments_done || 0);
-    const nextPayment = addMonths(start, done);
-    const finalPayment = addMonths(start, Math.max(total - 1, 0));
-    const cancelFrom = addDays(finalPayment, 1);
 
     const lead = (rec as any).leads;
+
     const nome = lead?.name || "Cliente sem nome";
-    const valor = formatBRL(rec.price_per_installment);
-    const telefone =
-      (lead?.phone_raw && lead.phone_raw.trim()) ||
-      (lead?.phone_e164 && lead.phone_e164.trim()) ||
-      "sem telefone";
 
-    const isCompleted = done >= total && total > 0;
+    const valor = formatBRL(
+      rec.price_per_installment
+    );
 
-    // Gera eventos para TODAS as parcelas (pagas e futuras) para visualização completa no calendário
+    /*
+     * Cada parcela gera somente UM evento,
+     * exatamente na data do vencimento.
+     *
+     * O calendário mostra somente:
+     *
+     * NOME — R$ 000,00
+     */
+
     for (let i = 0; i < total; i++) {
       const parcela = addMonths(start, i);
-      const pago = i < done;
 
-      const diaAntes = addDays(parcela, -1);
       events.push({
-        uid: `${rec.id}-aviso-${i}`,
-        date: diaAntes,
-        title: pago
-          ? `✅ Venceu: ${nome} (${valor})`
-          : `🔔 Vence amanhã: ${nome} (${valor})`,
-        description: `Parcela ${i + 1}/${total} de ${nome} (${telefone}). Valor: ${valor}.`,
-      });
-
-      const diaDepois = addDays(parcela, 1);
-      events.push({
-        uid: `${rec.id}-conferir-${i}`,
-        date: diaDepois,
-        title: pago
-          ? `✅ Conferido: ${nome} (${valor})`
-          : `⚠️ Conferir pagamento: ${nome} (${valor})`,
-        description: `Confirme no app do banco se o pagamento de ${nome} (${telefone}) caiu. Parcela ${i + 1}/${total}. Valor: ${valor}.`,
+        uid: `${rec.id}-vencimento-${i}`,
+        date: parcela,
+        title: `${nome} — ${valor}`,
       });
     }
-
-    if (isCompleted) continue;
-
-    // Evento 3: Último pagamento (data da última parcela, mesma exibida na tela)
-    events.push({
-      uid: `${rec.id}-ultimo-pagamento`,
-      date: finalPayment,
-      title: `🏁 Último pagamento: ${nome} (${valor})`,
-      description: `Hoje é a data do último pagamento (parcela ${total}/${total}) de ${nome} (${telefone}). Valor: ${valor}.`,
-    });
-
-    // Evento 4: Cancelar recorrência (data "de", início da janela de cancelamento já calculada na tela)
-    events.push({
-      uid: `${rec.id}-cancelar-recorrencia`,
-      date: cancelFrom,
-      title: `🛑 Cancelar recorrência: ${nome}`,
-      description: `A partir de hoje está liberado cancelar a recorrência de ${nome} (${telefone}), caso o cliente não tenha renovado.`,
-    });
   }
 
   const ics = buildICS(events);
@@ -177,7 +157,8 @@ export async function GET() {
     status: 200,
     headers: {
       "Content-Type": "text/calendar; charset=utf-8",
-      "Content-Disposition": 'inline; filename="crm-gio-recorrencias.ics"',
+      "Content-Disposition":
+        'inline; filename="crm-gio-recorrencias.ics"',
       "Cache-Control": "public, max-age=3600",
     },
   });
