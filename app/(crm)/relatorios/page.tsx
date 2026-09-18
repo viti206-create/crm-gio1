@@ -85,11 +85,17 @@ type ExpandedSaleMetric = {
 type MetaAdsRow = {
   meta_source_id: string | null;
   ad_headline: string | null;
+  investimento: number;
   leads: number;
+  cpl: number | null;
   negociaram: number;
+  custo_negociacao: number | null;
   agendaram: number;
+  custo_agendamento: number | null;
   compareceram: number;
+  custo_comparecimento: number | null;
   fecharam: number;
+  cac: number | null;
   perdidos: number;
   taxa_negociacao: number | string | null;
   taxa_agendamento: number | string | null;
@@ -458,11 +464,17 @@ export default function RelatoriosPage() {
     } else {
       setMetaRows(((data as any[]) ?? []).map((row) => ({
         ...row,
+        investimento: Number(row.investimento ?? 0),
         leads: Number(row.leads ?? 0),
+        cpl: row.cpl == null ? null : Number(row.cpl),
         negociaram: Number(row.negociaram ?? 0),
+        custo_negociacao: row.custo_negociacao == null ? null : Number(row.custo_negociacao),
         agendaram: Number(row.agendaram ?? 0),
+        custo_agendamento: row.custo_agendamento == null ? null : Number(row.custo_agendamento),
         compareceram: Number(row.compareceram ?? 0),
+        custo_comparecimento: row.custo_comparecimento == null ? null : Number(row.custo_comparecimento),
         fecharam: Number(row.fecharam ?? 0),
+        cac: row.cac == null ? null : Number(row.cac),
         perdidos: Number(row.perdidos ?? 0),
       })) as MetaAdsRow[]);
     }
@@ -475,8 +487,9 @@ export default function RelatoriosPage() {
   }, [isAdmin, metaSelectedPeriod.from, metaSelectedPeriod.to]);
 
   const metaSummary = useMemo(() => {
-    return metaRows.reduce(
+    const totals = metaRows.reduce(
       (acc, row) => ({
+        investimento: acc.investimento + row.investimento,
         leads: acc.leads + row.leads,
         negociaram: acc.negociaram + row.negociaram,
         agendaram: acc.agendaram + row.agendaram,
@@ -484,8 +497,17 @@ export default function RelatoriosPage() {
         fecharam: acc.fecharam + row.fecharam,
         perdidos: acc.perdidos + row.perdidos,
       }),
-      { leads: 0, negociaram: 0, agendaram: 0, compareceram: 0, fecharam: 0, perdidos: 0 }
+      { investimento: 0, leads: 0, negociaram: 0, agendaram: 0, compareceram: 0, fecharam: 0, perdidos: 0 }
     );
+
+    return {
+      ...totals,
+      cpl: totals.leads > 0 ? totals.investimento / totals.leads : null,
+      custoNegociacao: totals.negociaram > 0 ? totals.investimento / totals.negociaram : null,
+      custoAgendamento: totals.agendaram > 0 ? totals.investimento / totals.agendaram : null,
+      custoComparecimento: totals.compareceram > 0 ? totals.investimento / totals.compareceram : null,
+      cac: totals.fecharam > 0 ? totals.investimento / totals.fecharam : null,
+    };
   }, [metaRows]);
 
   const allYears = useMemo(() => {
@@ -1143,13 +1165,19 @@ export default function RelatoriosPage() {
 
           {metaError ? <div style={{ ...chipStyle("danger"), marginBottom: 12 }}>{metaError}</div> : null}
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(120px, 1fr))", gap: 10, marginBottom: 14, overflowX: "auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(150px, 1fr))", gap: 10, marginBottom: 14, overflowX: "auto" }}>
             {[
+              ["Investimento", formatBRL(metaSummary.investimento)],
               ["Leads", metaSummary.leads],
+              ["CPL", metaSummary.cpl == null ? "—" : formatBRL(metaSummary.cpl)],
               ["Negociaram", metaSummary.negociaram],
+              ["Custo / negociação", metaSummary.custoNegociacao == null ? "—" : formatBRL(metaSummary.custoNegociacao)],
               ["Agendaram", metaSummary.agendaram],
+              ["Custo / agendamento", metaSummary.custoAgendamento == null ? "—" : formatBRL(metaSummary.custoAgendamento)],
               ["Compareceram", metaSummary.compareceram],
+              ["Custo / comparecimento", metaSummary.custoComparecimento == null ? "—" : formatBRL(metaSummary.custoComparecimento)],
               ["Fecharam", metaSummary.fecharam],
+              ["CAC", metaSummary.cac == null ? "—" : formatBRL(metaSummary.cac)],
               ["Perdidos", metaSummary.perdidos],
             ].map(([label, value]) => (
               <div key={String(label)} style={miniCard}>
@@ -1165,29 +1193,41 @@ export default function RelatoriosPage() {
                 <tr>
                   <th style={th}>Anúncio</th>
                   <th style={th}>ID Meta</th>
+                  <th style={th}>Investimento</th>
                   <th style={th}>Leads</th>
+                  <th style={th}>CPL</th>
                   <th style={th}>Negociação</th>
+                  <th style={th}>Custo / negociação</th>
                   <th style={th}>Agendamento</th>
+                  <th style={th}>Custo / agendamento</th>
                   <th style={th}>Comparecimento</th>
+                  <th style={th}>Custo / comparecimento</th>
                   <th style={th}>Fechamento</th>
+                  <th style={th}>CAC</th>
                   <th style={th}>Perdidos</th>
                 </tr>
               </thead>
               <tbody>
                 {metaLoading ? (
-                  <tr><td style={td} colSpan={8}>Carregando Meta Ads...</td></tr>
+                  <tr><td style={td} colSpan={14}>Carregando Meta Ads...</td></tr>
                 ) : metaRows.length === 0 ? (
-                  <tr><td style={td} colSpan={8}>Nenhum lead atribuído ao Meta Ads neste período.</td></tr>
+                  <tr><td style={td} colSpan={14}>Nenhum lead atribuído ao Meta Ads neste período.</td></tr>
                 ) : (
                   metaRows.map((row) => (
                     <tr key={`${row.meta_source_id ?? "sem-id"}-${row.ad_headline ?? "sem-titulo"}`}>
                       <td style={td}><div style={{ fontWeight: 900 }}>{row.ad_headline || "Sem título"}</div></td>
                       <td style={td}>{row.meta_source_id || "—"}</td>
+                      <td style={td}>{formatBRL(row.investimento)}</td>
                       <td style={td}><b>{row.leads}</b></td>
+                      <td style={td}>{row.cpl == null ? "—" : formatBRL(row.cpl)}</td>
                       <td style={td}>{row.negociaram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_negociacao ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.custo_negociacao == null ? "—" : formatBRL(row.custo_negociacao)}</td>
                       <td style={td}>{row.agendaram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_agendamento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.custo_agendamento == null ? "—" : formatBRL(row.custo_agendamento)}</td>
                       <td style={td}>{row.compareceram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_comparecimento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.custo_comparecimento == null ? "—" : formatBRL(row.custo_comparecimento)}</td>
                       <td style={td}>{row.fecharam} <span style={{ opacity: 0.65 }}>({Number(row.taxa_fechamento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.cac == null ? "—" : formatBRL(row.cac)}</td>
                       <td style={td}>{row.perdidos}</td>
                     </tr>
                   ))
