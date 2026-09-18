@@ -82,6 +82,23 @@ type ExpandedSaleMetric = {
   isRecurring: boolean;
 };
 
+type MetaAdsRow = {
+  meta_source_id: string | null;
+  ad_headline: string | null;
+  leads: number;
+  negociaram: number;
+  agendaram: number;
+  compareceram: number;
+  fecharam: number;
+  perdidos: number;
+  taxa_negociacao: number | string | null;
+  taxa_agendamento: number | string | null;
+  taxa_comparecimento: number | string | null;
+  taxa_fechamento: number | string | null;
+};
+
+type MetaFilterMode = "today" | "monthly" | "yearly" | "custom";
+
 type FilterMode = "monthly" | "yearly";
 
 function FilterToggle({
@@ -303,6 +320,30 @@ function periodLabel(mode: FilterMode, year: number, month: number) {
   return `${String(month + 1).padStart(2, "0")}/${year}`;
 }
 
+function dateInputValue(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function metaPeriod(mode: MetaFilterMode, year: number, month: number, customFrom: string, customTo: string) {
+  const now = new Date();
+  if (mode === "today") {
+    const value = dateInputValue(now);
+    return { from: value, to: value, label: "Hoje" };
+  }
+  if (mode === "yearly") {
+    return { from: `${year}-01-01`, to: `${year}-12-31`, label: `Ano ${year}` };
+  }
+  if (mode === "custom") {
+    return { from: customFrom || null, to: customTo || null, label: customFrom && customTo ? `${customFrom.split("-").reverse().join("/")} a ${customTo.split("-").reverse().join("/")}` : "Personalizado" };
+  }
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  return { from: dateInputValue(first), to: dateInputValue(last), label: `${String(month + 1).padStart(2, "0")}/${year}` };
+}
+
 export default function RelatoriosPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
@@ -317,6 +358,15 @@ export default function RelatoriosPage() {
   const [recorrencias, setRecorrencias] = useState<RecRow[]>([]);
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
+
+  const [metaFilterMode, setMetaFilterMode] = useState<MetaFilterMode>("monthly");
+  const [metaYear, setMetaYear] = useState(todayRef.getFullYear());
+  const [metaMonth, setMetaMonth] = useState(todayRef.getMonth());
+  const [metaCustomFrom, setMetaCustomFrom] = useState(dateInputValue(new Date(todayRef.getFullYear(), todayRef.getMonth(), 1)));
+  const [metaCustomTo, setMetaCustomTo] = useState(dateInputValue(todayRef));
+  const [metaRows, setMetaRows] = useState<MetaAdsRow[]>([]);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -379,6 +429,64 @@ export default function RelatoriosPage() {
       fetchAll();
     }
   }, [isAdmin]);
+
+  const metaSelectedPeriod = useMemo(
+    () => metaPeriod(metaFilterMode, metaYear, metaMonth, metaCustomFrom, metaCustomTo),
+    [metaFilterMode, metaYear, metaMonth, metaCustomFrom, metaCustomTo]
+  );
+
+  async function fetchMetaAds() {
+    if (!isAdmin) return;
+    if (metaFilterMode === "custom" && metaCustomFrom && metaCustomTo && metaCustomFrom > metaCustomTo) {
+      setMetaError("A data inicial não pode ser maior que a data final.");
+      setMetaRows([]);
+      return;
+    }
+
+    setMetaLoading(true);
+    setMetaError(null);
+
+    const { data, error } = await supabase.rpc("meta_ads_funnel_report", {
+      p_date_from: metaSelectedPeriod.from,
+      p_date_to: metaSelectedPeriod.to,
+    });
+
+    if (error) {
+      console.error("meta ads report error:", JSON.stringify(error, null, 2));
+      setMetaError(`Meta Ads não carregou: ${error.message}`);
+      setMetaRows([]);
+    } else {
+      setMetaRows(((data as any[]) ?? []).map((row) => ({
+        ...row,
+        leads: Number(row.leads ?? 0),
+        negociaram: Number(row.negociaram ?? 0),
+        agendaram: Number(row.agendaram ?? 0),
+        compareceram: Number(row.compareceram ?? 0),
+        fecharam: Number(row.fecharam ?? 0),
+        perdidos: Number(row.perdidos ?? 0),
+      })) as MetaAdsRow[]);
+    }
+
+    setMetaLoading(false);
+  }
+
+  useEffect(() => {
+    if (isAdmin) fetchMetaAds();
+  }, [isAdmin, metaSelectedPeriod.from, metaSelectedPeriod.to]);
+
+  const metaSummary = useMemo(() => {
+    return metaRows.reduce(
+      (acc, row) => ({
+        leads: acc.leads + row.leads,
+        negociaram: acc.negociaram + row.negociaram,
+        agendaram: acc.agendaram + row.agendaram,
+        compareceram: acc.compareceram + row.compareceram,
+        fecharam: acc.fecharam + row.fecharam,
+        perdidos: acc.perdidos + row.perdidos,
+      }),
+      { leads: 0, negociaram: 0, agendaram: 0, compareceram: 0, fecharam: 0, perdidos: 0 }
+    );
+  }, [metaRows]);
 
   const allYears = useMemo(() => {
     const set = new Set<number>();
@@ -955,7 +1063,7 @@ export default function RelatoriosPage() {
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <button onClick={fetchAll} style={btn}>
+            <button onClick={() => { fetchAll(); fetchMetaAds(); }} style={btn}>
               Atualizar
             </button>
             <button onClick={() => router.push("/dashboard")} style={btn}>
@@ -981,6 +1089,113 @@ export default function RelatoriosPage() {
             </div>
           </div>
         )}
+
+        <div style={{ ...card, marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 950 }}>Meta Ads • Funil de Leads</div>
+              <div style={{ marginTop: 5, fontSize: 12, opacity: 0.72 }}>First Touch por lead. As conversões contam somente etapas registradas depois da primeira atribuição do anúncio.</div>
+            </div>
+            <span style={chipStyle("primary")}>Período: {metaSelectedPeriod.label}</span>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+            <FilterToggle
+              value={metaFilterMode}
+              onChange={(v) => setMetaFilterMode(v as MetaFilterMode)}
+              options={[
+                { value: "today", label: "Hoje" },
+                { value: "monthly", label: "Mensal" },
+                { value: "yearly", label: "Anual" },
+                { value: "custom", label: "Personalizado" },
+              ]}
+            />
+
+            {metaFilterMode === "monthly" || metaFilterMode === "yearly" ? (
+              <FilterToggle
+                value={String(metaYear)}
+                onChange={(v) => setMetaYear(Number(v))}
+                options={allYears.map((year) => ({ value: String(year), label: String(year) }))}
+              />
+            ) : null}
+
+            {metaFilterMode === "monthly" ? (
+              <FilterToggle
+                value={String(metaMonth)}
+                onChange={(v) => setMetaMonth(Number(v))}
+                options={monthOptions.map((label, idx) => ({ value: String(idx), label }))}
+              />
+            ) : null}
+
+            {metaFilterMode === "custom" ? (
+              <>
+                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 800 }}>
+                  De
+                  <input type="date" value={metaCustomFrom} onChange={(e) => setMetaCustomFrom(e.target.value)} style={{ ...btn, padding: "9px 10px", fontWeight: 700 }} />
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 800 }}>
+                  Até
+                  <input type="date" value={metaCustomTo} onChange={(e) => setMetaCustomTo(e.target.value)} style={{ ...btn, padding: "9px 10px", fontWeight: 700 }} />
+                </label>
+              </>
+            ) : null}
+          </div>
+
+          {metaError ? <div style={{ ...chipStyle("danger"), marginBottom: 12 }}>{metaError}</div> : null}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(120px, 1fr))", gap: 10, marginBottom: 14, overflowX: "auto" }}>
+            {[
+              ["Leads", metaSummary.leads],
+              ["Negociaram", metaSummary.negociaram],
+              ["Agendaram", metaSummary.agendaram],
+              ["Compareceram", metaSummary.compareceram],
+              ["Fecharam", metaSummary.fecharam],
+              ["Perdidos", metaSummary.perdidos],
+            ].map(([label, value]) => (
+              <div key={String(label)} style={miniCard}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>{label}</div>
+                <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Anúncio</th>
+                  <th style={th}>ID Meta</th>
+                  <th style={th}>Leads</th>
+                  <th style={th}>Negociação</th>
+                  <th style={th}>Agendamento</th>
+                  <th style={th}>Comparecimento</th>
+                  <th style={th}>Fechamento</th>
+                  <th style={th}>Perdidos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metaLoading ? (
+                  <tr><td style={td} colSpan={8}>Carregando Meta Ads...</td></tr>
+                ) : metaRows.length === 0 ? (
+                  <tr><td style={td} colSpan={8}>Nenhum lead atribuído ao Meta Ads neste período.</td></tr>
+                ) : (
+                  metaRows.map((row) => (
+                    <tr key={`${row.meta_source_id ?? "sem-id"}-${row.ad_headline ?? "sem-titulo"}`}>
+                      <td style={td}><div style={{ fontWeight: 900 }}>{row.ad_headline || "Sem título"}</div></td>
+                      <td style={td}>{row.meta_source_id || "—"}</td>
+                      <td style={td}><b>{row.leads}</b></td>
+                      <td style={td}>{row.negociaram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_negociacao ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.agendaram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_agendamento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.compareceram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_comparecimento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.fecharam} <span style={{ opacity: 0.65 }}>({Number(row.taxa_fechamento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.perdidos}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         <div
           style={{
