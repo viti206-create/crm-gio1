@@ -1373,34 +1373,34 @@ export default function FinanceiroPessoalLancamentosPage() {
 
           <div>
             <label style={labelStyle}>Categoria</label>
-            <input
-              list="financial-category-suggestions-personal"
+            <SelectDark
               value={categoryInput}
-              onChange={(e) => setCategoryInput(e.target.value)}
-              style={inputStyle}
-              placeholder="Digite ou selecione"
+              onChange={setCategoryInput}
+              searchable
+              options={[
+                { value: "", label: "Sem categoria" },
+                ...filteredCategoryNames.map((name) => ({
+                  value: name,
+                  label: name,
+                })),
+              ]}
             />
-            <datalist id="financial-category-suggestions-personal">
-              {filteredCategoryNames.map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
           </div>
 
           <div>
             <label style={labelStyle}>Conta</label>
-            <input
-              list="financial-account-suggestions-personal"
+            <SelectDark
               value={accountInput}
-              onChange={(e) => setAccountInput(e.target.value)}
-              style={inputStyle}
-              placeholder="Digite ou selecione"
+              onChange={setAccountInput}
+              searchable
+              options={[
+                { value: "", label: "Sem conta" },
+                ...accounts.map((a) => ({
+                  value: a.name,
+                  label: a.name,
+                })),
+              ]}
             />
-            <datalist id="financial-account-suggestions-personal">
-              {accounts.map((a) => (
-                <option key={a.id} value={a.name} />
-              ))}
-            </datalist>
           </div>
 
           <div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
+import SelectDark from "../../../_components/SelectDark";
 
 type Tx = {
   id: string;
@@ -663,6 +664,14 @@ export default function LancamentosClinicaPage() {
     boxSizing: "border-box" as const,
   };
 
+  const selectStyle: React.CSSProperties = {
+    ...inputStyle,
+    cursor: "pointer",
+    background: "#292532",
+    color: "white",
+    colorScheme: "dark",
+  };
+
   const labelStyle: React.CSSProperties = {
     fontSize: 12,
     opacity: 0.7,
@@ -856,10 +865,7 @@ export default function LancamentosClinicaPage() {
                 </label>
 
                 <select
-                  style={{
-                    ...inputStyle,
-                    cursor: "pointer",
-                  }}
+                  style={selectStyle}
                   value={newForm.status}
                   onChange={(e) =>
                     setNewForm({
@@ -910,34 +916,23 @@ export default function LancamentosClinicaPage() {
                     Categoria
                   </label>
 
-                  <select
-                    style={{
-                      ...inputStyle,
-                      cursor: "pointer",
-                    }}
+                  <SelectDark
                     value={newForm.category_id}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       setNewForm({
                         ...newForm,
-                        category_id: e.target.value,
+                        category_id: value,
                       })
                     }
-                  >
-                    <option value="">
-                      Sem categoria
-                    </option>
-
-                    {availableCategories.map(
-                      (category) => (
-                        <option
-                          key={category.id}
-                          value={category.id}
-                        >
-                          {category.name}
-                        </option>
-                      )
-                    )}
-                  </select>
+                    searchable
+                    options={[
+                      { value: "", label: "Sem categoria" },
+                      ...availableCategories.map((category) => ({
+                        value: category.id,
+                        label: category.name,
+                      })),
+                    ]}
+                  />
                 </div>
 
                 <div>
@@ -945,35 +940,25 @@ export default function LancamentosClinicaPage() {
                     Conta
                   </label>
 
-                  <select
-                    style={{
-                      ...inputStyle,
-                      cursor: "pointer",
-                    }}
+                  <SelectDark
                     value={newForm.account_id}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       setNewForm({
                         ...newForm,
-                        account_id: e.target.value,
+                        account_id: value,
                       })
                     }
-                  >
-                    <option value="">
-                      Sem conta
-                    </option>
-
-                    {accounts.map((account) => (
-                      <option
-                        key={account.id}
-                        value={account.id}
-                      >
-                        {account.name}
-                        {account.bank_name
-                          ? ` — ${account.bank_name}`
-                          : ""}
-                      </option>
-                    ))}
-                  </select>
+                    searchable
+                    options={[
+                      { value: "", label: "Sem conta" },
+                      ...accounts.map((account) => ({
+                        value: account.id,
+                        label: account.bank_name
+                          ? `${account.name} — ${account.bank_name}`
+                          : account.name,
+                      })),
+                    ]}
+                  />
                 </div>
               </div>
 
@@ -1157,10 +1142,7 @@ export default function LancamentosClinicaPage() {
                   </label>
 
                   <select
-                    style={{
-                      ...inputStyle,
-                      cursor: "pointer",
-                    }}
+                    style={selectStyle}
                     value={editForm.kind}
                     onChange={(e) => {
                       const kind = e.target.value;
@@ -1204,10 +1186,7 @@ export default function LancamentosClinicaPage() {
                   </label>
 
                   <select
-                    style={{
-                      ...inputStyle,
-                      cursor: "pointer",
-                    }}
+                    style={selectStyle}
                     value={editForm.status}
                     onChange={(e) =>
                       setEditForm({
