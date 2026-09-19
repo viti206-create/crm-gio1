@@ -451,6 +451,28 @@ export default function FinanceiroPessoalLancamentosPage() {
   }, [isAdmin]);
 
   useEffect(() => {
+    const shouldOpenNew = searchParams.get("novo") === "1";
+    const editId = searchParams.get("edit");
+
+    if (!shouldOpenNew || editId) return;
+
+    resetForm();
+    setShowFormModal(true);
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("novo");
+
+    const qs = params.toString();
+
+    router.replace(
+      qs
+        ? `/financeiro/pessoal/lancamentos?${qs}`
+        : "/financeiro/pessoal/lancamentos",
+      { scroll: false }
+    );
+  }, [searchParams, router]);
+
+  useEffect(() => {
     const editId = searchParams.get("edit");
     if (!editId || rows.length === 0) return;
 

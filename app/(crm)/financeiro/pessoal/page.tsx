@@ -267,14 +267,14 @@ export default function FinanceiroPessoalPage() {
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
-            onClick={() => router.push("/financeiro/pessoal/lancamentos")}
+            onClick={() => router.push("/financeiro/pessoal/lancamentos?novo=1")}
             style={btnActive}
           >
             + Novo lançamento
           </button>
           <button onClick={() => router.back()} style={btn}>Voltar</button>
           <button onClick={() => setView("calendar")} style={view === "calendar" ? btnActive : btn}>Calendário</button>
-          <button onClick={() => setView("list")} style={view === "list" ? btnActive : btn}>Lançamentos</button>
+          <button onClick={() => router.push("/financeiro/pessoal/lancamentos")} style={btn}>Lançamentos</button>
         </div>
       </div>
 
