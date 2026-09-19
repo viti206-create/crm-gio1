@@ -195,6 +195,12 @@ const btnPrimary: React.CSSProperties = {
     "linear-gradient(180deg, rgba(180,120,255,0.18) 0%, rgba(180,120,255,0.08) 100%)",
 };
 
+const btnActive: React.CSSProperties = {
+  ...btn,
+  border: "1px solid rgba(180,120,255,0.40)",
+  background: "rgba(180,120,255,0.20)",
+};
+
 const btnDanger: React.CSSProperties = {
   ...btn,
   border: "1px solid rgba(255,120,120,0.30)",
@@ -353,6 +359,7 @@ export default function FinanceiroPessoalLancamentosPage() {
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showFormModal, setShowFormModal] = useState(false);
 
   const [kind, setKind] = useState<"income" | "expense">("expense");
   const [status, setStatus] = useState<"pending" | "paid" | "received" | "late">("paid");
@@ -619,6 +626,7 @@ export default function FinanceiroPessoalLancamentosPage() {
         }
 
         resetForm();
+        setShowFormModal(false);
         clearEditQuery();
         await fetchAll();
         return;
@@ -668,6 +676,7 @@ export default function FinanceiroPessoalLancamentosPage() {
       if (error) throw error;
 
       resetForm();
+      setShowFormModal(false);
       clearEditQuery();
       await fetchAll();
     } catch (e: any) {
@@ -703,7 +712,7 @@ export default function FinanceiroPessoalLancamentosPage() {
     );
     setErrorMsg("");
     setViewMode("list");
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setShowFormModal(true);
   }
 
   async function handleDelete(id: string) {
@@ -1068,6 +1077,36 @@ export default function FinanceiroPessoalLancamentosPage() {
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            style={btnPrimary}
+            onClick={() => {
+              resetForm();
+              clearEditQuery();
+              setShowFormModal(true);
+            }}
+          >
+            + Novo lançamento
+          </button>
+
+          <button
+            type="button"
+            style={btn}
+            onClick={handleExportCsv}
+            disabled={!filteredRows.length}
+          >
+            Exportar CSV
+          </button>
+
+          <button
+            type="button"
+            style={btn}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={importingCsv}
+          >
+            {importingCsv ? "Importando..." : "Importar CSV"}
+          </button>
+
           <Link href="/financeiro/pessoal" style={btn}>
             Voltar
           </Link>
@@ -1138,325 +1177,345 @@ export default function FinanceiroPessoalLancamentosPage() {
         </div>
       </div>
 
-      <form
-        onSubmit={handleSave}
-        style={{
-          border: "1px solid rgba(255,255,255,0.10)",
-          background: "rgba(255,255,255,0.04)",
-          borderRadius: 18,
-          padding: 16,
-          boxShadow: "0 18px 60px rgba(0,0,0,0.35)",
-        }}
-      >
+      {showFormModal ? (
         <div
           style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 999,
+            background: "rgba(0,0,0,0.75)",
             display: "flex",
-            justifyContent: "space-between",
-            gap: 10,
-            flexWrap: "wrap",
             alignItems: "center",
-            marginBottom: 14,
+            justifyContent: "center",
+            padding: 16,
+            overflowY: "auto",
           }}
         >
-          <div style={{ fontSize: 18, fontWeight: 900 }}>
-            {editingId ? "Editar lançamento" : "Novo lançamento"}
-          </div>
+          <form
+            onSubmit={handleSave}
+            style={{
+              background: "#1a1625",
+              border: "1px solid rgba(255,255,255,0.12)",
+              borderRadius: 18,
+              padding: 24,
+              width: "100%",
+              maxWidth: 560,
+              maxHeight: "calc(100vh - 32px)",
+              overflowY: "auto",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.55)",
+            }}
+          >
+            <div style={{ fontWeight: 900, fontSize: 17, marginBottom: 4 }}>
+              {editingId ? "Editar lançamento" : "Novo lançamento"}
+            </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              type="button"
-              style={btn}
-              onClick={handleExportCsv}
-              disabled={!filteredRows.length}
-            >
-              Exportar CSV
-            </button>
+            <div style={{ fontSize: 12, opacity: 0.6, marginBottom: 20 }}>
+              Financeiro Pessoal
+            </div>
 
-            <button
-              type="button"
-              style={btnPrimary}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={importingCsv}
-            >
-              {importingCsv ? "Importando..." : "Importar CSV"}
-            </button>
+            <div style={{ display: "grid", gap: 14 }}>
+              <div>
+                <label style={labelStyle}>Tipo</label>
 
-            {editingId ? (
-              <button
-                type="button"
-                style={btn}
-                onClick={() => {
-                  resetForm();
-                  clearEditQuery();
-                }}
-              >
-                Cancelar edição
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        <div
-          style={{
-            marginBottom: 12,
-            fontSize: 12,
-            opacity: 0.72,
-            lineHeight: 1.5,
-          }}
-        >
-          CSV aceito com cabeçalhos como: <strong>tipo, status, descricao, valor, vencimento, pago_em, categoria, conta, pessoa, observacoes</strong>.
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-            gap: 12,
-          }}
-        >
-          <div>
-            <label style={labelStyle}>Tipo</label>
-            <SelectDark
-              value={kind}
-              onChange={(v) => setKind(v as "income" | "expense")}
-              searchable={false}
-              options={[
-                { value: "income", label: "Receita" },
-                { value: "expense", label: "Despesa" },
-              ]}
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Status</label>
-            <SelectDark
-              value={status}
-              onChange={(v) => setStatus(v as "pending" | "paid" | "received" | "late")}
-              searchable={false}
-              options={[
-                { value: "pending", label: "Pendente" },
-                { value: "paid", label: "Pago" },
-                { value: "received", label: "Recebido" },
-                { value: "late", label: "Atrasado" },
-              ]}
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Valor</label>
-
-            <div
-              style={{
-                display: "flex",
-                gap: 10,
-                alignItems: "center",
-                flexWrap: "wrap",
-              }}
-            >
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                style={{
-                  ...inputStyle,
-                  flex: 1,
-                  minWidth: 180,
-                }}
-                placeholder="0,00"
-              />
-
-              <label
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "8px 10px",
-                  borderRadius: 10,
-                  border: "1px solid rgba(255,255,255,0.10)",
-                  background: "rgba(255,255,255,0.03)",
-                  fontSize: 12,
-                  fontWeight: 800,
-                  whiteSpace: "nowrap",
-                  cursor: "pointer",
-                  height: 42,
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={isInstallment}
-                  onChange={(e) => setIsInstallment(e.target.checked)}
-                  style={{ margin: 0 }}
-                />
-                Parcelar
-              </label>
-
-              {isInstallment ? (
                 <div
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "0 8px",
-                    borderRadius: 10,
-                    border: "1px solid rgba(255,255,255,0.10)",
-                    background: "rgba(255,255,255,0.03)",
-                    height: 42,
+                    display: "grid",
+                    gridTemplateColumns: "1fr 1fr",
+                    gap: 8,
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: 12,
-                      opacity: 0.78,
-                      fontWeight: 800,
-                      whiteSpace: "nowrap",
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setKind("expense");
+                      if (status === "received") setStatus("paid");
                     }}
+                    style={
+                      kind === "expense"
+                        ? { ...btnActive, color: "#ff9b9b" }
+                        : btn
+                    }
                   >
-                    Parcelas
-                  </span>
+                    Despesa
+                  </button>
 
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setKind("income");
+                      if (status === "paid") setStatus("received");
+                    }}
+                    style={
+                      kind === "income"
+                        ? { ...btnActive, color: "#78ffb4" }
+                        : btn
+                    }
+                  >
+                    Receita
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Descrição *</label>
+                <input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  style={inputStyle}
+                  placeholder={
+                    kind === "expense"
+                      ? "Ex.: Aluguel / Mercado / Internet"
+                      : "Ex.: Salário / Recebimento"
+                  }
+                />
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <label style={labelStyle}>Valor (R$) *</label>
                   <input
                     type="number"
-                    min="2"
-                    max="24"
-                    value={installments}
-                    onChange={(e) => setInstallments(Number(e.target.value))}
+                    min="0"
+                    step="0.01"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    style={inputStyle}
+                    placeholder="0,00"
+                  />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Data *</label>
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Status *</label>
+                <SelectDark
+                  value={status}
+                  onChange={(v) =>
+                    setStatus(v as "pending" | "paid" | "received" | "late")
+                  }
+                  searchable={false}
+                  options={
+                    kind === "expense"
+                      ? [
+                          { value: "paid", label: "Pago" },
+                          { value: "pending", label: "Pendente" },
+                          { value: "late", label: "Atrasado" },
+                        ]
+                      : [
+                          { value: "received", label: "Recebido" },
+                          { value: "pending", label: "Pendente" },
+                          { value: "late", label: "Atrasado" },
+                        ]
+                  }
+                />
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
+                  gap: 10,
+                }}
+              >
+                <div>
+                  <label style={labelStyle}>Categoria</label>
+                  <SelectDark
+                    value={categoryInput}
+                    onChange={setCategoryInput}
+                    searchable
+                    options={[
+                      { value: "", label: "Sem categoria" },
+                      ...filteredCategoryNames.map((name) => ({
+                        value: name,
+                        label: name,
+                      })),
+                    ]}
+                  />
+                </div>
+
+                <div>
+                  <label style={labelStyle}>Conta</label>
+                  <SelectDark
+                    value={accountInput}
+                    onChange={setAccountInput}
+                    searchable
+                    options={[
+                      { value: "", label: "Sem conta" },
+                      ...accounts.map((a) => ({
+                        value: a.name,
+                        label: a.name,
+                      })),
+                    ]}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Cliente / favorecido</label>
+                <input
+                  value={counterpartyName}
+                  onChange={(e) => setCounterpartyName(e.target.value)}
+                  style={inputStyle}
+                  placeholder="Opcional"
+                />
+              </div>
+
+              <div>
+                <label style={labelStyle}>Observações</label>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  style={{
+                    ...inputStyle,
+                    minHeight: 90,
+                    resize: "vertical",
+                    fontFamily: "inherit",
+                  }}
+                  placeholder="Opcional"
+                />
+              </div>
+
+              {!editingId ? (
+                <div
+                  style={{
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(255,255,255,0.03)",
+                    borderRadius: 10,
+                    padding: 10,
+                  }}
+                >
+                  <label
                     style={{
-                      width: 64,
-                      background: "transparent",
-                      color: "white",
-                      border: "none",
-                      outline: "none",
-                      fontWeight: 900,
-                      fontSize: 14,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      fontSize: 13,
+                      fontWeight: 800,
+                      cursor: "pointer",
                     }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isInstallment}
+                      onChange={(e) => setIsInstallment(e.target.checked)}
+                    />
+                    Parcelar lançamento
+                  </label>
+
+                  {isInstallment ? (
+                    <div style={{ marginTop: 10 }}>
+                      <label style={labelStyle}>Quantidade de parcelas</label>
+                      <input
+                        type="number"
+                        min="2"
+                        max="24"
+                        value={installments}
+                        onChange={(e) => setInstallments(Number(e.target.value))}
+                        style={inputStyle}
+                      />
+
+                      {Number(amount) > 0 && installments > 1 ? (
+                        <div
+                          style={{
+                            marginTop: 7,
+                            fontSize: 12,
+                            opacity: 0.72,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {installments}x de{" "}
+                          {formatBRL(
+                            Number(amount || 0) / Number(installments || 1)
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {(status === "paid" || status === "received") ? (
+                <div>
+                  <label style={labelStyle}>
+                    {kind === "income" ? "Recebido em" : "Pago em"}
+                  </label>
+                  <input
+                    type="date"
+                    value={paidAt}
+                    onChange={(e) => setPaidAt(e.target.value)}
+                    style={inputStyle}
                   />
                 </div>
               ) : null}
             </div>
 
-            {isInstallment && Number(amount) > 0 && installments > 1 ? (
+            {errorMsg ? (
               <div
                 style={{
-                  marginTop: 6,
+                  marginTop: 12,
+                  color: "#ff9b9b",
                   fontSize: 12,
-                  opacity: 0.72,
                   fontWeight: 700,
                 }}
               >
-                {installments}x de{" "}
-                {formatBRL(Number(amount || 0) / Number(installments || 1))}
+                {errorMsg}
               </div>
             ) : null}
-          </div>
 
-          <div>
-            <label style={labelStyle}>Vencimento</label>
-            <input
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              style={inputStyle}
-            />
-          </div>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                justifyContent: "flex-end",
+                marginTop: 22,
+              }}
+            >
+              <button
+                type="button"
+                style={btn}
+                disabled={saving}
+                onClick={() => {
+                  resetForm();
+                  setShowFormModal(false);
+                  clearEditQuery();
+                }}
+              >
+                Cancelar
+              </button>
 
-          <div style={{ gridColumn: "span 2" }}>
-            <label style={labelStyle}>Descrição</label>
-            <input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              style={inputStyle}
-              placeholder="Ex.: Salário / Aluguel / Mercado / Internet"
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Categoria</label>
-            <SelectDark
-              value={categoryInput}
-              onChange={setCategoryInput}
-              searchable
-              options={[
-                { value: "", label: "Sem categoria" },
-                ...filteredCategoryNames.map((name) => ({
-                  value: name,
-                  label: name,
-                })),
-              ]}
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Conta</label>
-            <SelectDark
-              value={accountInput}
-              onChange={setAccountInput}
-              searchable
-              options={[
-                { value: "", label: "Sem conta" },
-                ...accounts.map((a) => ({
-                  value: a.name,
-                  label: a.name,
-                })),
-              ]}
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Pago / Recebido em</label>
-            <input
-              type="date"
-              value={paidAt}
-              onChange={(e) => setPaidAt(e.target.value)}
-              style={inputStyle}
-            />
-          </div>
-
-          <div>
-            <label style={labelStyle}>Cliente / Favorecido</label>
-            <input
-              value={counterpartyName}
-              onChange={(e) => setCounterpartyName(e.target.value)}
-              style={inputStyle}
-              placeholder="Opcional"
-            />
-          </div>
-
-          <div style={{ gridColumn: "span 3" }}>
-            <label style={labelStyle}>Observações</label>
-            <input
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              style={inputStyle}
-              placeholder="Opcional"
-            />
-          </div>
+              <button
+                type="submit"
+                disabled={saving}
+                style={{
+                  ...btnPrimary,
+                  opacity: saving ? 0.6 : 1,
+                }}
+              >
+                {saving
+                  ? "Salvando..."
+                  : editingId
+                  ? "Salvar alterações"
+                  : "Salvar lançamento"}
+              </button>
+            </div>
+          </form>
         </div>
-
-        {errorMsg ? (
-          <div
-            style={{
-              marginTop: 12,
-              color: "#ff9b9b",
-              fontSize: 12,
-              fontWeight: 700,
-            }}
-          >
-            {errorMsg}
-          </div>
-        ) : null}
-
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
-          <button type="submit" disabled={saving} style={btnPrimary}>
-            {saving
-              ? "Salvando..."
-              : editingId
-              ? "Salvar alterações"
-              : "Salvar lançamento"}
-          </button>
-        </div>
-      </form>
+      ) : null}
 
       <div
         style={{
