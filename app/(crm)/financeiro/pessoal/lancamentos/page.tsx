@@ -357,6 +357,10 @@ export default function FinanceiroPessoalLancamentosPage() {
   const [categories, setCategories] = useState<FinancialCategory[]>([]);
   const [errorMsg, setErrorMsg] = useState("");
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [referenceMonth, setReferenceMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
@@ -986,10 +990,39 @@ export default function FinanceiroPessoalLancamentosPage() {
       .map((c) => c.name);
   }, [categories, kind]);
 
+  const referenceMonthLabel = useMemo(() => {
+    return referenceMonth.toLocaleDateString("pt-BR", {
+      month: "long",
+      year: "numeric",
+    });
+  }, [referenceMonth]);
+
+  function changeReferenceMonth(offset: number) {
+    setReferenceMonth(
+      (current) =>
+        new Date(current.getFullYear(), current.getMonth() + offset, 1)
+    );
+  }
+
+  function goToCurrentMonth() {
+    const now = new Date();
+    setReferenceMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+  }
+
   const filteredRows = useMemo(() => {
     const q = filterText.trim().toLowerCase();
 
     return rows.filter((row) => {
+      const rowDate = row.due_date ? new Date(`${row.due_date}T12:00:00`) : null;
+
+      if (
+        !rowDate ||
+        rowDate.getFullYear() !== referenceMonth.getFullYear() ||
+        rowDate.getMonth() !== referenceMonth.getMonth()
+      ) {
+        return false;
+      }
+
       if (filterKind !== "all" && row.kind !== filterKind) return false;
       if (filterStatus !== "all" && row.status !== filterStatus) return false;
       if (filterCategory !== "all" && row.category_id !== filterCategory) return false;
@@ -1016,6 +1049,7 @@ export default function FinanceiroPessoalLancamentosPage() {
     });
   }, [
     rows,
+    referenceMonth,
     filterText,
     filterKind,
     filterStatus,
@@ -1132,6 +1166,52 @@ export default function FinanceiroPessoalLancamentosPage() {
           <Link href="/financeiro/pessoal" style={btn}>
             Voltar
           </Link>
+        </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 14,
+            fontWeight: 900,
+            textTransform: "capitalize",
+          }}
+        >
+          {referenceMonthLabel}
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            style={btn}
+            onClick={() => changeReferenceMonth(-1)}
+          >
+            Anterior
+          </button>
+
+          <button
+            type="button"
+            style={btn}
+            onClick={goToCurrentMonth}
+          >
+            Hoje
+          </button>
+
+          <button
+            type="button"
+            style={btn}
+            onClick={() => changeReferenceMonth(1)}
+          >
+            Próximo
+          </button>
         </div>
       </div>
 

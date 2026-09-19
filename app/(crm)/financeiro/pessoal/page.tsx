@@ -266,12 +266,6 @@ export default function FinanceiroPessoalPage() {
           <div style={{ fontSize: 12, opacity: 0.6, marginTop: 2, border: "1px solid rgba(255,255,255,0.12)", padding: "2px 10px", borderRadius: 999, display: "inline-block" }}>Scope: personal</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button
-            onClick={() => router.push("/financeiro/pessoal/lancamentos?novo=1")}
-            style={btnActive}
-          >
-            + Novo lançamento
-          </button>
           <button onClick={() => router.back()} style={btn}>Voltar</button>
           <button onClick={() => setView("calendar")} style={view === "calendar" ? btnActive : btn}>Calendário</button>
           <button onClick={() => router.push("/financeiro/pessoal/lancamentos")} style={btn}>Lançamentos</button>
