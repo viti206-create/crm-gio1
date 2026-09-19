@@ -364,6 +364,7 @@ export default function FinanceiroPessoalLancamentosPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showFormModal, setShowFormModal] = useState(false);
+  const [movingTx, setMovingTx] = useState<string | null>(null);
 
   const [kind, setKind] = useState<"income" | "expense">("expense");
   const [status, setStatus] = useState<"pending" | "paid" | "received" | "late">("paid");
@@ -765,6 +766,30 @@ export default function FinanceiroPessoalLancamentosPage() {
     }
   }
 
+  async function moveToClinica(row: FinancialTransaction) {
+    const ok = window.confirm(
+      `Transferir "${row.description}" para o Financeiro da Clínica?`
+    );
+
+    if (!ok) return;
+
+    setMovingTx(row.id);
+
+    const { error } = await supabase
+      .from("financial_transactions")
+      .update({ scope: "clinic" })
+      .eq("id", row.id);
+
+    setMovingTx(null);
+
+    if (error) {
+      alert("Erro: " + error.message);
+      return;
+    }
+
+    setRows((current) => current.filter((item) => item.id !== row.id));
+  }
+
   async function handleQuickStatus(row: FinancialTransaction) {
     const nextStatus = row.kind === "income" ? "received" : "paid";
 
@@ -1127,9 +1152,9 @@ export default function FinanceiroPessoalLancamentosPage() {
       >
         <div style={{ display: "grid", gap: 8 }}>
           <div style={{ fontSize: 22, fontWeight: 900, letterSpacing: 0.2 }}>
-            Lançamentos • Pessoal
+            Lançamentos — Pessoal
           </div>
-          <div style={chipStyle("primary")}>Scope: personal</div>
+          
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -1163,32 +1188,6 @@ export default function FinanceiroPessoalLancamentosPage() {
             {importingCsv ? "Importando..." : "Importar CSV"}
           </button>
 
-          <Link href="/financeiro/pessoal" style={btn}>
-            Voltar
-          </Link>
-        </div>
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 14,
-            fontWeight: 900,
-            textTransform: "capitalize",
-          }}
-        >
-          {referenceMonthLabel}
-        </div>
-
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
             type="button"
             style={btn}
@@ -1197,11 +1196,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             Anterior
           </button>
 
-          <button
-            type="button"
-            style={btn}
-            onClick={goToCurrentMonth}
-          >
+          <button type="button" style={btn} onClick={goToCurrentMonth}>
             Hoje
           </button>
 
@@ -1212,13 +1207,17 @@ export default function FinanceiroPessoalLancamentosPage() {
           >
             Próximo
           </button>
+
+          <Link href="/financeiro/pessoal" style={btn}>
+            Voltar
+          </Link>
         </div>
       </div>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
           gap: 12,
         }}
       >
@@ -1264,19 +1263,6 @@ export default function FinanceiroPessoalLancamentosPage() {
           </div>
         </div>
 
-        <div
-          style={{
-            border: "1px solid rgba(255,255,255,0.10)",
-            background: "rgba(255,255,255,0.04)",
-            borderRadius: 18,
-            padding: 14,
-          }}
-        >
-          <div style={{ fontSize: 12, opacity: 0.72 }}>Pendentes / Atrasados</div>
-          <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-            {summary.pending} / {summary.late}
-          </div>
-        </div>
       </div>
 
       {showFormModal ? (
@@ -1621,11 +1607,6 @@ export default function FinanceiroPessoalLancamentosPage() {
 
       <div
         style={{
-          border: "1px solid rgba(255,255,255,0.10)",
-          background: "rgba(255,255,255,0.04)",
-          borderRadius: 18,
-          padding: 16,
-          boxShadow: "0 18px 60px rgba(0,0,0,0.35)",
           display: "grid",
           gap: 14,
         }}
@@ -1753,158 +1734,145 @@ export default function FinanceiroPessoalLancamentosPage() {
             finishLabel="Finalizar"
           />
         ) : loading ? (
-          <div>Carregando...</div>
+          <div style={{ opacity: 0.7 }}>Carregando...</div>
         ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Descrição</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Tipo</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Status</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Valor</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Vencimento</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Categoria</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Conta</th>
-                  <th style={{ textAlign: "left", paddingBottom: 10 }}>Ações</th>
-                </tr>
-              </thead>
+          <div style={{ display: "grid", gap: 8 }}>
+            {filteredRows.length === 0 ? (
+              <div style={{ opacity: 0.7 }}>Nenhum lançamento encontrado.</div>
+            ) : (
+              filteredRows.map((row) => (
+                <div
+                  key={row.id}
+                  style={{
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    borderRadius: 12,
+                    padding: "12px 14px",
+                    background: "rgba(255,255,255,0.03)",
+                    display: "grid",
+                    gap: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: 3, minWidth: 0 }}>
+                      <div style={{ fontWeight: 900 }}>{row.description}</div>
 
-              <tbody>
-                {filteredRows.map((row) => {
-                  const categoryName =
-                    categories.find((c) => c.id === row.category_id)?.name ?? "—";
-                  const accountName =
-                    accounts.find((a) => a.id === row.account_id)?.name ?? "—";
-
-                  const chipKind =
-                    row.status === "late"
-                      ? "danger"
-                      : row.status === "pending"
-                      ? "warn"
-                      : "primary";
-
-                  return (
-                    <tr key={row.id}>
-                      <td
+                      <div
                         style={{
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.06)",
+                          fontSize: 12,
+                          opacity: 0.7,
+                          display: "flex",
+                          gap: 8,
+                          flexWrap: "wrap",
                         }}
                       >
-                        <div style={{ fontWeight: 900 }}>{row.description}</div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>
-                          {row.counterparty_name || row.notes || "—"}
-                        </div>
-                      </td>
+                        <span>{formatDateBR(row.due_date)}</span>
 
-                      <td
-                        style={{
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.06)",
-                        }}
-                      >
-                        {kindLabel(row.kind)}
-                      </td>
+                        {row.counterparty_name ? (
+                          <span>• {row.counterparty_name}</span>
+                        ) : null}
 
-                      <td
-                        style={{
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.06)",
-                        }}
-                      >
-                        <span style={chipStyle(chipKind)}>
+                        <span style={chipStyle(
+                          row.status === "late"
+                            ? "danger"
+                            : row.status === "pending"
+                            ? "warn"
+                            : "primary"
+                        )}>
                           {statusLabel(row.status)}
                         </span>
-                      </td>
 
-                      <td
+                        <span
+                          style={{
+                            padding: "1px 6px",
+                            borderRadius: 999,
+                            background:
+                              row.kind === "income"
+                                ? "rgba(120,255,180,0.1)"
+                                : "rgba(255,120,120,0.1)",
+                            fontSize: 11,
+                            color:
+                              row.kind === "income" ? "#78ffb4" : "#ff8080",
+                          }}
+                        >
+                          {kindLabel(row.kind)}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div
                         style={{
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.06)",
                           fontWeight: 900,
+                          fontSize: 15,
+                          color:
+                            row.kind === "income" ? "#78ffb4" : "#ff8080",
+                          whiteSpace: "nowrap",
                         }}
                       >
+                        {row.kind === "expense" ? "-" : ""}
                         {formatBRL(row.amount)}
-                      </td>
+                      </div>
 
-                      <td
+                      <button
+                        type="button"
+                        style={btn}
+                        onClick={() => handleEdit(row)}
+                      >
+                        Editar
+                      </button>
+
+                      {row.status === "pending" || row.status === "late" ? (
+                        <button
+                          type="button"
+                          style={btnPrimary}
+                          onClick={() => handleQuickStatus(row)}
+                        >
+                          {row.kind === "income" ? "Receber" : "Pagar"}
+                        </button>
+                      ) : null}
+
+                      <button
+                        type="button"
+                        onClick={() => moveToClinica(row)}
+                        disabled={movingTx === row.id}
                         style={{
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.06)",
+                          ...btn,
+                          border: "1px solid rgba(255,200,80,0.3)",
+                          background: "rgba(255,200,80,0.10)",
+                          color: "#ffc850",
+                          opacity: movingTx === row.id ? 0.5 : 1,
                         }}
                       >
-                        <div>{formatDateBR(row.due_date)}</div>
-                        <div style={{ fontSize: 12, opacity: 0.7 }}>
-                          {row.paid_at ? `Baixa: ${formatDateBR(row.paid_at)}` : "—"}
-                        </div>
-                      </td>
+                        {movingTx === row.id ? "..." : "Transferir"}
+                      </button>
 
-                      <td
-                        style={{
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.06)",
-                        }}
+                      <button
+                        type="button"
+                        style={btnDanger}
+                        onClick={() => handleDelete(row.id)}
                       >
-                        {categoryName}
-                      </td>
-
-                      <td
-                        style={{
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.06)",
-                        }}
-                      >
-                        {accountName}
-                      </td>
-
-                      <td
-                        style={{
-                          padding: "10px 0",
-                          borderTop: "1px solid rgba(255,255,255,0.06)",
-                        }}
-                      >
-                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                          <button
-                            type="button"
-                            style={btn}
-                            onClick={() => handleEdit(row)}
-                          >
-                            Editar
-                          </button>
-
-                          {row.status === "pending" || row.status === "late" ? (
-                            <button
-                              type="button"
-                              style={btnPrimary}
-                              onClick={() => handleQuickStatus(row)}
-                            >
-                              {row.kind === "income" ? "Receber" : "Pagar"}
-                            </button>
-                          ) : null}
-
-                          <button
-                            type="button"
-                            style={btnDanger}
-                            onClick={() => handleDelete(row.id)}
-                          >
-                            Excluir
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {!filteredRows.length ? (
-                  <tr>
-                    <td colSpan={8} style={{ paddingTop: 12, opacity: 0.7 }}>
-                      Nenhum lançamento encontrado.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+                        Excluir
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         )}
       </div>
