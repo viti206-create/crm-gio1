@@ -215,6 +215,23 @@ export default function WhatsAppPainelPage() {
     });
   }
 
+  function chaveData(horario: string) {
+    return new Date(horario).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+  }
+
+  function formatarSeparadorData(horario: string) {
+    const data = new Date(horario);
+    const hoje = new Date();
+    const chaveMensagem = chaveData(horario);
+    const chaveHoje = hoje.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const ontem = new Date(hoje);
+    ontem.setDate(ontem.getDate() - 1);
+    const chaveOntem = ontem.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    if (chaveMensagem === chaveHoje) return "HOJE";
+    if (chaveMensagem === chaveOntem) return "ONTEM";
+    return data.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric", timeZone: "America/Sao_Paulo" }).toUpperCase();
+  }
+
   return (
     <div
       ref={containerRef}
@@ -435,9 +452,18 @@ export default function WhatsAppPainelPage() {
                     padding: "16px 24px",
                   }}
                 >
-                  {bolhas.map((bolha, indice) => (
-                    <div
-                      key={indice}
+                  {bolhas.map((bolha, indice) => {
+                    const mostrarData = indice === 0 || chaveData(bolha.horario) !== chaveData(bolhas[indice - 1].horario);
+                    return (
+                      <div key={indice}>
+                        {mostrarData && (
+                          <div style={{ display: "flex", justifyContent: "center", margin: indice === 0 ? "4px 0 14px" : "18px 0 14px" }}>
+                            <div style={{ background: "#ffffff", color: "#54656f", fontSize: 11, fontWeight: 600, padding: "6px 12px", borderRadius: 8, boxShadow: "0 1px 1px rgba(0,0,0,0.08)" }}>
+                              {formatarSeparadorData(bolha.horario)}
+                            </div>
+                          </div>
+                        )}
+                        <div
                       style={{
                         display: "flex",
                         justifyContent:
@@ -476,7 +502,9 @@ export default function WhatsAppPainelPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {mostrarBotaoDescer && (
