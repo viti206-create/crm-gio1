@@ -25,6 +25,7 @@ export default function WhatsAppPainelPage() {
   const mensagensContainerRef = useRef<HTMLDivElement>(null);
   const [alturaDisponivel, setAlturaDisponivel] = useState<number | null>(null);
   const [conversas, setConversas] = useState<Conversa[]>([]);
+  const [buscaConversas, setBuscaConversas] = useState("");
   const [telefoneSelecionado, setTelefoneSelecionado] = useState<string | null>(
     null
   );
@@ -282,6 +283,23 @@ export default function WhatsAppPainelPage() {
     return null;
   }
 
+  const termoBusca = buscaConversas.trim().toLocaleLowerCase("pt-BR");
+
+  const conversasFiltradas = termoBusca
+    ? conversas.filter((conversa) => {
+        const nome = conversa.nome.toLocaleLowerCase("pt-BR");
+        const telefone = conversa.telefone.replace(/\D/g, "");
+        const telefoneBuscado = termoBusca.replace(/\D/g, "");
+        const mensagem = conversa.ultimaMensagem.toLocaleLowerCase("pt-BR");
+
+        return (
+          nome.includes(termoBusca) ||
+          mensagem.includes(termoBusca) ||
+          (telefoneBuscado.length > 0 && telefone.includes(telefoneBuscado))
+        );
+      })
+    : conversas;
+
   return (
     <div
       ref={containerRef}
@@ -360,8 +378,77 @@ export default function WhatsAppPainelPage() {
           >
             Conversas
           </div>
+          <div
+            style={{
+              padding: "10px 12px",
+              background: "#ffffff",
+              borderBottom: "1px solid #f0f0f0",
+              flexShrink: 0,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                background: "#f0f2f5",
+                borderRadius: 8,
+                padding: "0 10px",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  color: "#667781",
+                  fontSize: 15,
+                  flexShrink: 0,
+                }}
+              >
+                ⌕
+              </span>
+
+              <input
+                value={buscaConversas}
+                onChange={(evento) => setBuscaConversas(evento.target.value)}
+                placeholder="Buscar nome, telefone ou mensagem"
+                aria-label="Buscar conversas"
+                style={{
+                  width: "100%",
+                  border: "none",
+                  outline: "none",
+                  background: "transparent",
+                  color: "#111b21",
+                  fontSize: 13,
+                  padding: "9px 0",
+                  minWidth: 0,
+                }}
+              />
+
+              {buscaConversas && (
+                <button
+                  type="button"
+                  onClick={() => setBuscaConversas("")}
+                  aria-label="Limpar busca"
+                  title="Limpar busca"
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "#667781",
+                    cursor: "pointer",
+                    fontSize: 16,
+                    lineHeight: 1,
+                    padding: 2,
+                    flexShrink: 0,
+                  }}
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
+
           <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
-            {conversas.map((conversa) => {
+            {conversasFiltradas.map((conversa) => {
               const selecionada = telefoneSelecionado === conversa.telefone;
               const rotuloResposta = rotuloOrigemResposta(
                 conversa.ultimaOrigemResposta
@@ -517,6 +604,19 @@ export default function WhatsAppPainelPage() {
             {conversas.length === 0 && (
               <div style={{ padding: 16, color: "#667781" }}>
                 Nenhuma conversa ainda.
+              </div>
+            )}
+
+            {conversas.length > 0 && conversasFiltradas.length === 0 && (
+              <div
+                style={{
+                  padding: "24px 16px",
+                  color: "#667781",
+                  fontSize: 13,
+                  textAlign: "center",
+                }}
+              >
+                Nenhuma conversa encontrada para “{buscaConversas.trim()}”.
               </div>
             )}
           </div>
