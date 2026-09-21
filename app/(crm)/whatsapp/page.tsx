@@ -13,6 +13,9 @@ type Conversa = {
   naoLidas: number;
   ultimaOrigemResposta: "ai" | "crm_human" | "whatsapp_human" | null;
   leadId: string | null;
+  etapa: string | null;
+  origem: string | null;
+  interesses: string[];
 };
 
 type Bolha = {
@@ -647,13 +650,58 @@ export default function WhatsAppPainelPage() {
                   flexShrink: 0,
                 }}
               >
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 700, color: "#ffffff" }}>
                     {nomeSelecionado}
                   </div>
-                  <div style={{ fontSize: 12, opacity: 0.85, color: "#ffffff" }}>
-                    {telefoneSelecionado}
-                  </div>
+
+                  {(() => {
+                    const conversaSelecionada = conversas.find(
+                      (conversa) => conversa.telefone === telefoneSelecionado
+                    );
+
+                    const detalhes = [
+                      conversaSelecionada?.etapa,
+                      conversaSelecionada?.interesses?.length
+                        ? conversaSelecionada.interesses.join(", ")
+                        : null,
+                      conversaSelecionada?.origem,
+                    ].filter(Boolean);
+
+                    return (
+                      <>
+                        {detalhes.length > 0 && (
+                          <div
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 600,
+                              opacity: 0.95,
+                              color: "#ffffff",
+                              marginTop: 2,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              maxWidth: 620,
+                            }}
+                            title={detalhes.join(" • ")}
+                          >
+                            {detalhes.join(" • ")}
+                          </div>
+                        )}
+
+                        <div
+                          style={{
+                            fontSize: 12,
+                            opacity: 0.78,
+                            color: "#ffffff",
+                            marginTop: detalhes.length > 0 ? 2 : 0,
+                          }}
+                        >
+                          {telefoneSelecionado}
+                        </div>
+                      </>
+                    );
+                  })()}
                 </div>
                 <div
                   style={{

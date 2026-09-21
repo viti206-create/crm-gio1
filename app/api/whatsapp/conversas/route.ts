@@ -97,7 +97,7 @@ export async function GET() {
 
   const { data: leads, error: leadsError } = await supabase
     .from("leads")
-    .select("id, name, phone_raw, ia_pausada, ultima_intervencao_humana")
+    .select("id, name, phone_raw, ia_pausada, ultima_intervencao_humana, source, interest, interests, stage_id, stages(name)")
     .or(condicao);
 
   if (leadsError) {
@@ -129,6 +129,16 @@ export async function GET() {
       naoLidas: resumo.naoLidas,
       ultimaOrigemResposta: resumo.ultimaOrigemResposta,
       leadId: lead?.id ?? null,
+      etapa: Array.isArray(lead?.stages)
+        ? lead.stages[0]?.name ?? null
+        : null,
+      origem: lead?.source ?? null,
+      interesses:
+        Array.isArray(lead?.interests) && lead.interests.length > 0
+          ? lead.interests
+          : lead?.interest
+            ? [lead.interest]
+            : [],
     };
   });
 
