@@ -12,6 +12,7 @@ type Conversa = {
   aguardandoDesde: string | null;
   naoLidas: number;
   ultimaOrigemResposta: "ai" | "crm_human" | "whatsapp_human" | null;
+  leadId: string | null;
 };
 
 type Bolha = {
@@ -654,21 +655,58 @@ export default function WhatsAppPainelPage() {
                     {telefoneSelecionado}
                   </div>
                 </div>
-                <button
-                  onClick={alternarPausaIA}
+                <div
                   style={{
-                    background: iaPausada ? "#ffb020" : "rgba(255,255,255,0.2)",
-                    color: "#ffffff",
-                    border: "none",
-                    borderRadius: 20,
-                    padding: "8px 16px",
-                    cursor: "pointer",
-                    fontWeight: 600,
-                    fontSize: 13,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    flexWrap: "wrap",
+                    justifyContent: "flex-end",
                   }}
                 >
-                  {iaPausada ? "🙋 Humano no controle" : "🤖 IA ativa"}
-                </button>
+                  {(() => {
+                    const conversaSelecionada = conversas.find(
+                      (conversa) => conversa.telefone === telefoneSelecionado
+                    );
+
+                    return conversaSelecionada?.leadId ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          window.location.href = `/leads/${conversaSelecionada.leadId}`;
+                        }}
+                        style={{
+                          background: "rgba(255,255,255,0.2)",
+                          color: "#ffffff",
+                          border: "1px solid rgba(255,255,255,0.28)",
+                          borderRadius: 20,
+                          padding: "8px 16px",
+                          cursor: "pointer",
+                          fontWeight: 600,
+                          fontSize: 13,
+                        }}
+                      >
+                        Ver cadastro
+                      </button>
+                    ) : null;
+                  })()}
+
+                  <button
+                    onClick={alternarPausaIA}
+                    style={{
+                      background: iaPausada ? "#ffb020" : "rgba(255,255,255,0.2)",
+                      color: "#ffffff",
+                      border: "none",
+                      borderRadius: 20,
+                      padding: "8px 16px",
+                      cursor: "pointer",
+                      fontWeight: 600,
+                      fontSize: 13,
+                    }}
+                  >
+                    {iaPausada ? "🙋 Humano no controle" : "🤖 IA ativa"}
+                  </button>
+                </div>
               </div>
 
               <div
