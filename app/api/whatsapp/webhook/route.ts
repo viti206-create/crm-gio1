@@ -446,13 +446,17 @@ async function saveHumanEcho(
   supabase: SupabaseClient,
   echo: HumanEcho
 ) {
+  const responseAt = echo.timestamp ?? new Date().toISOString();
+
   const { error } = await supabase.from("whatsapp_conversas").insert({
     numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
     telefone_cliente: echo.phoneRaw,
     mensagem: null,
     resposta: echo.message,
     message_id: echo.messageId,
-    ...(echo.timestamp ? { created_at: echo.timestamp } : {}),
+    created_at: responseAt,
+    response_at: responseAt,
+    response_origin: "whatsapp_human",
   });
 
   if (error) {
@@ -573,7 +577,11 @@ async function atualizarRespostaConversa(
 ) {
   await supabase
     .from("whatsapp_conversas")
-    .update({ resposta })
+    .update({
+      resposta,
+      response_at: new Date().toISOString(),
+      response_origin: "ai",
+    })
     .eq("message_id", messageId);
 }
 

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
+
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 
 export async function POST(
@@ -14,20 +16,44 @@ export async function POST(
   }
 
   const supabase = createSupabaseServerClient();
+  const textoLimpo = String(texto).trim();
 
-  await sendWhatsAppMessage(telefone, texto);
+  await sendWhatsAppMessage(telefone, textoLimpo);
 
-  await supabase.from("whatsapp_conversas").insert({
-    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
-    telefone_cliente: telefone,
-    mensagem: null,
-    resposta: texto,
-  });
+  const responseAt = new Date().toISOString();
 
-  await supabase
+  const { error: insertError } = await supabase
+    .from("whatsapp_conversas")
+    .insert({
+      numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+      telefone_cliente: telefone,
+      mensagem: null,
+      resposta: textoLimpo,
+      created_at: responseAt,
+      response_at: responseAt,
+      response_origin: "crm_human",
+    });
+
+  if (insertError) {
+    console.error("Erro ao registrar mensagem enviada pelo CRM:", insertError);
+
+    return NextResponse.json(
+      {
+        error:
+          "A mensagem foi enviada pelo WhatsApp, mas não foi registrada no histórico do CRM.",
+      },
+      { status: 500 }
+    );
+  }
+
+  const { error: leadError } = await supabase
     .from("leads")
-    .update({ ultima_intervencao_humana: new Date().toISOString() })
+    .update({ ultima_intervencao_humana: responseAt })
     .eq("phone_raw", telefone);
+
+  if (leadError) {
+    console.error("Erro ao registrar intervenção humana no lead:", leadError);
+  }
 
   return NextResponse.json({ ok: true });
 }
