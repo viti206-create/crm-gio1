@@ -8,6 +8,10 @@ type Conversa = {
   ultimaMensagem: string;
   ultimoHorario: string;
   iaPausada: boolean;
+  aguardandoResposta: boolean;
+  aguardandoDesde: string | null;
+  naoLidas: number;
+  ultimaOrigemResposta: "ai" | "crm_human" | "whatsapp_human" | null;
 };
 
 type Bolha = {
@@ -31,6 +35,7 @@ export default function WhatsAppPainelPage() {
   const [enviando, setEnviando] = useState(false);
   const [mostrarBotaoDescer, setMostrarBotaoDescer] = useState(false);
   const quantidadeAnteriorRef = useRef(0);
+  const [agora, setAgora] = useState(() => Date.now());
 
   // Pausa global da IA (afeta todas as conversas, inclusive novas)
   const [iaPausadaGlobal, setIaPausadaGlobal] = useState(false);
@@ -55,6 +60,10 @@ export default function WhatsAppPainelPage() {
       setBolhas(dados.bolhas ?? []);
       setNomeSelecionado(dados.nome ?? telefone);
       setIaPausada(Boolean(dados.iaPausada));
+
+      if (dados.marcouComoLida) {
+        await carregarConversas();
+      }
     } catch (erro) {
       console.error("Erro ao carregar mensagens:", erro);
     }
@@ -91,8 +100,14 @@ export default function WhatsAppPainelPage() {
   useEffect(() => {
     carregarConversas();
     carregarPausaGlobal();
-    const intervalo = setInterval(carregarConversas, 5000);
-    return () => clearInterval(intervalo);
+
+    const intervaloConversas = setInterval(carregarConversas, 5000);
+    const intervaloRelogio = setInterval(() => setAgora(Date.now()), 30000);
+
+    return () => {
+      clearInterval(intervaloConversas);
+      clearInterval(intervaloRelogio);
+    };
   }, []);
 
   useEffect(() => {
@@ -232,6 +247,41 @@ export default function WhatsAppPainelPage() {
     return data.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric", timeZone: "America/Sao_Paulo" }).toUpperCase();
   }
 
+  function formatarTempoEspera(desde: string | null) {
+    if (!desde) return "";
+
+    const inicio = new Date(desde).getTime();
+    if (!Number.isFinite(inicio)) return "";
+
+    const totalSegundos = Math.max(0, Math.floor((agora - inicio) / 1000));
+
+    if (totalSegundos < 60) return "agora";
+
+    const minutos = Math.floor(totalSegundos / 60);
+    if (minutos < 60) return `${minutos} min`;
+
+    const horas = Math.floor(minutos / 60);
+    const minutosRestantes = minutos % 60;
+    if (horas < 24) {
+      return minutosRestantes > 0
+        ? `${horas}h ${minutosRestantes}min`
+        : `${horas}h`;
+    }
+
+    const dias = Math.floor(horas / 24);
+    const horasRestantes = horas % 24;
+    return horasRestantes > 0 ? `${dias}d ${horasRestantes}h` : `${dias}d`;
+  }
+
+  function rotuloOrigemResposta(
+    origem: Conversa["ultimaOrigemResposta"]
+  ) {
+    if (origem === "ai") return "IA respondeu";
+    if (origem === "crm_human") return "Equipe respondeu pelo CRM";
+    if (origem === "whatsapp_human") return "Equipe respondeu pelo WhatsApp";
+    return null;
+  }
+
   return (
     <div
       ref={containerRef}
@@ -311,69 +361,159 @@ export default function WhatsAppPainelPage() {
             Conversas
           </div>
           <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
-            {conversas.map((conversa) => (
-              <div
-                key={conversa.telefone}
-                onClick={() => setTelefoneSelecionado(conversa.telefone)}
-                style={{
-                  padding: "12px 16px",
-                  cursor: "pointer",
-                  borderBottom: "1px solid #f0f0f0",
-                  background:
-                    telefoneSelecionado === conversa.telefone
-                      ? "#f0f2f5"
-                      : "transparent",
-                }}
-              >
+            {conversas.map((conversa) => {
+              const selecionada = telefoneSelecionado === conversa.telefone;
+              const rotuloResposta = rotuloOrigemResposta(
+                conversa.ultimaOrigemResposta
+              );
+
+              return (
                 <div
-                  style={{ display: "flex", justifyContent: "space-between" }}
-                >
-                  <span style={{ fontWeight: 600, color: "#111b21" }}>
-                    {conversa.nome}
-                  </span>
-                  <span style={{ fontSize: 12, color: "#667781" }}>
-                    {formatarHorario(conversa.ultimoHorario)}
-                  </span>
-                </div>
-                <div
+                  key={conversa.telefone}
+                  onClick={() => setTelefoneSelecionado(conversa.telefone)}
                   style={{
-                    fontSize: 13,
-                    color: "#667781",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
+                    padding: "12px 16px",
+                    cursor: "pointer",
+                    borderBottom: "1px solid #f0f0f0",
+                    background: selecionada
+                      ? "#f0f2f5"
+                      : conversa.naoLidas > 0
+                        ? "#f7fffb"
+                        : "transparent",
                   }}
                 >
-                  {conversa.iaPausada && (
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
                     <span
                       style={{
-                        background: "#ffb020",
-                        color: "#ffffff",
-                        fontSize: 10,
-                        padding: "1px 6px",
-                        borderRadius: 8,
-                        fontWeight: 700,
+                        fontWeight: conversa.naoLidas > 0 ? 700 : 600,
+                        color: "#111b21",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {conversa.nome}
+                    </span>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
                         flexShrink: 0,
                       }}
                     >
-                      HUMANO
-                    </span>
-                  )}
-                  <span
+                      <span
+                        style={{
+                          fontSize: 12,
+                          color: conversa.naoLidas > 0 ? "#00a884" : "#667781",
+                          fontWeight: conversa.naoLidas > 0 ? 700 : 400,
+                        }}
+                      >
+                        {formatarHorario(conversa.ultimoHorario)}
+                      </span>
+
+                      {conversa.naoLidas > 0 && (
+                        <span
+                          style={{
+                            minWidth: 20,
+                            height: 20,
+                            padding: "0 6px",
+                            borderRadius: 10,
+                            background: "#25d366",
+                            color: "#ffffff",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: 11,
+                            fontWeight: 700,
+                          }}
+                        >
+                          {conversa.naoLidas > 99 ? "99+" : conversa.naoLidas}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
                     style={{
+                      fontSize: 13,
+                      color: conversa.naoLidas > 0 ? "#111b21" : "#667781",
+                      fontWeight: conversa.naoLidas > 0 ? 600 : 400,
+                      whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      marginTop: 2,
                     }}
                   >
-                    {conversa.ultimaMensagem}
-                  </span>
+                    {conversa.iaPausada && (
+                      <span
+                        style={{
+                          background: "#ffb020",
+                          color: "#ffffff",
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          borderRadius: 8,
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        HUMANO
+                      </span>
+                    )}
+
+                    <span
+                      style={{
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {conversa.ultimaMensagem}
+                    </span>
+                  </div>
+
+                  {conversa.aguardandoResposta ? (
+                    <div
+                      style={{
+                        marginTop: 5,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: "#c62828",
+                      }}
+                    >
+                      Aguardando resposta
+                      {conversa.aguardandoDesde
+                        ? ` • ${formatarTempoEspera(conversa.aguardandoDesde)}`
+                        : ""}
+                    </div>
+                  ) : (
+                    rotuloResposta && (
+                      <div
+                        style={{
+                          marginTop: 5,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          color: "#008069",
+                        }}
+                      >
+                        {rotuloResposta}
+                      </div>
+                    )
+                  )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
             {conversas.length === 0 && (
               <div style={{ padding: 16, color: "#667781" }}>
                 Nenhuma conversa ainda.

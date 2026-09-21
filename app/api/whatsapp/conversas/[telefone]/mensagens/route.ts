@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export async function GET(
@@ -6,11 +7,12 @@ export async function GET(
   { params }: { params: Promise<{ telefone: string }> }
 ) {
   const { telefone } = await params;
+
   const supabase = createSupabaseServerClient();
 
   const { data, error } = await supabase
     .from("whatsapp_conversas")
-    .select("mensagem, resposta, created_at")
+    .select("mensagem, resposta, created_at, response_at")
     .eq("telefone_cliente", telefone)
     .order("created_at", { ascending: true });
 
@@ -32,13 +34,32 @@ export async function GET(
         horario: linha.created_at,
       });
     }
+
     if (linha.resposta) {
       bolhas.push({
         tipo: "enviada",
         texto: linha.resposta,
-        horario: linha.created_at,
+        horario: linha.response_at ?? linha.created_at,
       });
     }
+  }
+
+  bolhas.sort(
+    (a, b) => new Date(a.horario).getTime() - new Date(b.horario).getTime()
+  );
+
+  const agora = new Date().toISOString();
+
+  const { data: marcadas, error: readError } = await supabase
+    .from("whatsapp_conversas")
+    .update({ read_at: agora })
+    .eq("telefone_cliente", telefone)
+    .not("mensagem", "is", null)
+    .is("read_at", null)
+    .select("id");
+
+  if (readError) {
+    console.error("Erro ao marcar mensagens como lidas:", readError);
   }
 
   const { data: lead } = await supabase
@@ -51,5 +72,6 @@ export async function GET(
     bolhas,
     nome: lead?.name ?? telefone,
     iaPausada: lead?.ia_pausada ?? false,
+    marcouComoLida: !readError && (marcadas?.length ?? 0) > 0,
   });
 }
