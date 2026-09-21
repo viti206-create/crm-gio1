@@ -32,6 +32,7 @@ export async function POST(
       created_at: responseAt,
       response_at: responseAt,
       response_origin: "crm_human",
+      conversation_status: "aguardando_cliente",
     });
 
   if (insertError) {

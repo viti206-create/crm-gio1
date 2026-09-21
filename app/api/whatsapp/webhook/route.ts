@@ -457,6 +457,7 @@ async function saveHumanEcho(
     created_at: responseAt,
     response_at: responseAt,
     response_origin: "whatsapp_human",
+    conversation_status: "aguardando_cliente",
   });
 
   if (error) {
@@ -555,6 +556,7 @@ async function claimMessage(
     mensagem,
     resposta: null,
     message_id: messageId,
+    conversation_status: "em_atendimento",
   });
 
   if (error) {
@@ -581,6 +583,7 @@ async function atualizarRespostaConversa(
       resposta,
       response_at: new Date().toISOString(),
       response_origin: "ai",
+      conversation_status: "aguardando_cliente",
     })
     .eq("message_id", messageId);
 }

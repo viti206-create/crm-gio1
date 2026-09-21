@@ -16,6 +16,7 @@ type Conversa = {
   etapa: string | null;
   origem: string | null;
   interesses: string[];
+  statusConversa: "em_atendimento" | "aguardando_cliente" | "finalizada";
 };
 
 type Bolha = {
@@ -210,6 +211,42 @@ export default function WhatsAppPainelPage() {
     }
   }
 
+  async function alterarStatusConversa(
+    novoStatus: Conversa["statusConversa"]
+  ) {
+    if (!telefoneSelecionado) return;
+
+    const estadoAnterior = conversas;
+    setConversas((atuais) =>
+      atuais.map((conversa) =>
+        conversa.telefone === telefoneSelecionado
+          ? { ...conversa, statusConversa: novoStatus }
+          : conversa
+      )
+    );
+
+    try {
+      const resposta = await fetch("/api/whatsapp/conversas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          telefone: telefoneSelecionado,
+          status: novoStatus,
+        }),
+      });
+
+      if (!resposta.ok) {
+        const dados = await resposta.json().catch(() => null);
+        throw new Error(dados?.error ?? "Erro ao alterar status da conversa");
+      }
+
+      await carregarConversas();
+    } catch (erro) {
+      console.error("Erro ao alterar status da conversa:", erro);
+      setConversas(estadoAnterior);
+    }
+  }
+
   async function alternarPausaIA() {
     if (!telefoneSelecionado) return;
     const novoValor = !iaPausada;
@@ -303,6 +340,10 @@ export default function WhatsAppPainelPage() {
         );
       })
     : conversas;
+
+  const conversaSelecionada = conversas.find(
+    (conversa) => conversa.telefone === telefoneSelecionado
+  );
 
   return (
     <div
@@ -712,6 +753,40 @@ export default function WhatsAppPainelPage() {
                     justifyContent: "flex-end",
                   }}
                 >
+                  {conversaSelecionada && (
+                    <select
+                      value={conversaSelecionada.statusConversa}
+                      onChange={(evento) =>
+                        alterarStatusConversa(
+                          evento.target.value as Conversa["statusConversa"]
+                        )
+                      }
+                      aria-label="Status da conversa"
+                      title="Status da conversa"
+                      style={{
+                        background: "rgba(255,255,255,0.2)",
+                        color: "#ffffff",
+                        border: "1px solid rgba(255,255,255,0.28)",
+                        borderRadius: 20,
+                        padding: "8px 12px",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        fontSize: 13,
+                        outline: "none",
+                      }}
+                    >
+                      <option value="em_atendimento" style={{ color: "#111b21" }}>
+                        Em atendimento
+                      </option>
+                      <option value="aguardando_cliente" style={{ color: "#111b21" }}>
+                        Aguardando cliente
+                      </option>
+                      <option value="finalizada" style={{ color: "#111b21" }}>
+                        Finalizada
+                      </option>
+                    </select>
+                  )}
+
                   {(() => {
                     const conversaSelecionada = conversas.find(
                       (conversa) => conversa.telefone === telefoneSelecionado
