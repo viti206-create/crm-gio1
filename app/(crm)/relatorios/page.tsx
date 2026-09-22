@@ -4,12 +4,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminAccess } from "../_hooks/useAdminAccess";
-
-type LeadRow = {
-  id: string;
-  sex: string | null;
-  birth_date: string | null;
-};
+import WhatsAppRelatorio from "./WhatsAppRelatorio";
 
 type RecorrenciaJoin = {
   id: string;
@@ -240,45 +235,6 @@ function formatPaymentMethod(v: string | null | undefined) {
   return v || "—";
 }
 
-function normalizeSexLabel(v: string | null | undefined) {
-  const key = String(v ?? "").trim().toLowerCase();
-
-  if (key === "feminino") return "Feminino";
-  if (key === "masculino") return "Masculino";
-  return "Não informado";
-}
-
-function calculateAge(birthDate: string | null | undefined) {
-  if (!birthDate) return null;
-
-  const birth = new Date(birthDate);
-  if (Number.isNaN(birth.getTime())) return null;
-
-  const today = new Date();
-
-  let age = today.getFullYear() - birth.getFullYear();
-  const monthDiff = today.getMonth() - birth.getMonth();
-
-  if (
-    monthDiff < 0 ||
-    (monthDiff === 0 && today.getDate() < birth.getDate())
-  ) {
-    age -= 1;
-  }
-
-  return age >= 0 ? age : null;
-}
-
-function ageRange(age: number | null) {
-  if (age === null) return "Não informado";
-  if (age <= 17) return "Até 17";
-  if (age <= 24) return "18-24";
-  if (age <= 34) return "25-34";
-  if (age <= 44) return "35-44";
-  if (age <= 54) return "45-54";
-  return "55+";
-}
-
 function chipStyle(
   kind: "primary" | "muted" | "warn" | "danger" = "muted"
 ): React.CSSProperties {
@@ -353,6 +309,7 @@ function metaPeriod(mode: MetaFilterMode, year: number, month: number, customFro
 export default function RelatoriosPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
+  const [abaAtiva, setAbaAtiva] = useState<"meta" | "comercial" | "whatsapp">("meta");
 
   const todayRef = useMemo(() => new Date(), []);
   const [filterMode, setFilterMode] = useState<FilterMode>("monthly");
@@ -362,7 +319,6 @@ export default function RelatoriosPage() {
   const [loading, setLoading] = useState(true);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [recorrencias, setRecorrencias] = useState<RecRow[]>([]);
-  const [leads, setLeads] = useState<LeadRow[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
 
   const [metaFilterMode, setMetaFilterMode] = useState<MetaFilterMode>("monthly");
@@ -387,7 +343,6 @@ export default function RelatoriosPage() {
     const [
       { data: salesData, error: salesErr },
       { data: recData, error: recErr },
-      { data: leadsData, error: leadsErr },
     ] = await Promise.all([
       supabase
         .from("sales")
@@ -401,9 +356,6 @@ export default function RelatoriosPage() {
           "id,lead_id,status,start_date,installments_total,installments_done,price_per_installment"
         )
         .order("start_date", { ascending: false }),
-      supabase
-        .from("leads")
-        .select("id,sex,birth_date"),
     ]);
 
     const nextErrors: string[] = [];
@@ -418,14 +370,8 @@ export default function RelatoriosPage() {
       nextErrors.push("Recorrências não carregaram.");
     }
 
-    if (leadsErr) {
-      console.error("leads error:", JSON.stringify(leadsErr, null, 2));
-      nextErrors.push("Leads não carregaram.");
-    }
-
     setSales((salesData as any) ?? []);
     setRecorrencias((recData as any) ?? []);
-    setLeads((leadsData as any) ?? []);
     setErrors(nextErrors);
     setLoading(false);
   }
@@ -698,23 +644,6 @@ export default function RelatoriosPage() {
     };
   }, [forecastMonthly, forecastMonthlyAll, filterMode, selectedYear, selectedMonth]);
 
-  const salesSummary = useMemo(() => {
-    const gross = expandedMetrics.reduce((sum, row) => sum + row.effectiveGross, 0);
-    const net = expandedMetrics.reduce((sum, row) => sum + row.effectiveNet, 0);
-    const recorrentes = expandedMetrics.filter((row) => row.isRecurring).length;
-    const avulsas = expandedMetrics.length - recorrentes;
-    const feesAvg = gross > 0 ? Number((((gross - net) / gross) * 100).toFixed(2)) : 0;
-
-    return {
-      count: expandedMetrics.length,
-      gross,
-      net,
-      recorrentes,
-      avulsas,
-      feesAvg,
-    };
-  }, [expandedMetrics]);
-
   const recorrenciasSummary = useMemo(() => {
     let ativas = 0;
     let pausadas = 0;
@@ -862,61 +791,6 @@ export default function RelatoriosPage() {
     return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
   }, [expandedMetrics]);
 
-  const leadsById = useMemo(() => {
-    const map = new Map<string, LeadRow>();
-    for (const lead of leads) {
-      map.set(lead.id, lead);
-    }
-    return map;
-  }, [leads]);
-
-  const uniqueLeadsInPeriod = useMemo(() => {
-    const ids = new Set<string>();
-
-    for (const row of expandedMetrics) {
-      if (row.lead_id) ids.add(row.lead_id);
-    }
-
-    return Array.from(ids)
-      .map((id) => leadsById.get(id))
-      .filter((lead): lead is LeadRow => !!lead);
-  }, [expandedMetrics, leadsById]);
-
-  const clientsBySex = useMemo(() => {
-    const order = ["Feminino", "Masculino", "Não informado"];
-    const map = new Map<string, number>();
-
-    for (const lead of uniqueLeadsInPeriod) {
-      const label = normalizeSexLabel(lead.sex);
-      map.set(label, (map.get(label) ?? 0) + 1);
-    }
-
-    return order
-      .filter((label) => map.has(label))
-      .map((label) => ({
-        label,
-        count: map.get(label) ?? 0,
-      }));
-  }, [uniqueLeadsInPeriod]);
-
-  const clientsByAge = useMemo(() => {
-    const order = ["Até 17", "18-24", "25-34", "35-44", "45-54", "55+", "Não informado"];
-    const map = new Map<string, number>();
-
-    for (const lead of uniqueLeadsInPeriod) {
-      const age = calculateAge(lead.birth_date);
-      const label = ageRange(age);
-      map.set(label, (map.get(label) ?? 0) + 1);
-    }
-
-    return order
-      .filter((label) => map.has(label))
-      .map((label) => ({
-        label,
-        count: map.get(label) ?? 0,
-      }));
-  }, [uniqueLeadsInPeriod]);
-
   const page: React.CSSProperties = {
     padding: 16,
     color: "white",
@@ -998,6 +872,16 @@ export default function RelatoriosPage() {
               Relatórios
             </div>
 
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"6px 0 10px"}}>
+              {([ ["meta","Meta Ads"], ["comercial","Análise comercial"], ["whatsapp","WhatsApp"] ] as const).map(([id,label]) => (
+                <button key={id} type="button" onClick={() => setAbaAtiva(id)}
+                  style={{...btn,background:abaAtiva===id?"rgba(180,120,255,0.26)":"rgba(255,255,255,0.05)",borderColor:abaAtiva===id?"rgba(180,120,255,0.6)":"rgba(255,255,255,0.12)"}}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {abaAtiva === "comercial" && (
+              <div style={{display:"grid",gap:9}}>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <FilterToggle
                 value={filterMode}
@@ -1028,60 +912,9 @@ export default function RelatoriosPage() {
                 />
               ) : null}
             </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
-              <span
-                style={{
-                  ...chipStyle("muted"),
-                  padding: "2px 8px",
-                  fontSize: 11,
-                }}
-              >
-                Período: {periodLabel(filterMode, selectedYear, selectedMonth)}
-              </span>
-
-              <span
-                style={{
-                  ...chipStyle("primary"),
-                  padding: "2px 8px",
-                  fontSize: 11,
-                }}
-              >
-                Vendas líquidas: {formatBRL(salesSummary.net)}
-              </span>
-
-              <span
-                style={{
-                  ...chipStyle("warn"),
-                  padding: "2px 8px",
-                  fontSize: 11,
-                }}
-              >
-                Recorrência ativa/mês: {formatBRL(recorrenciasSummary.mensalPrevistoAtivo)}
-              </span>
-
-              <span
-                style={{
-                  ...chipStyle("muted"),
-                  padding: "2px 8px",
-                  fontSize: 11,
-                }}
-              >
-                Próx. 3 meses: {formatBRL(forecastSummary.expectedNext3)}
-              </span>
-
-              {!!errors.length && (
-                <span
-                  style={{
-                    ...chipStyle("danger"),
-                    padding: "2px 8px",
-                    fontSize: 11,
-                  }}
-                >
-                  {errors.length} aviso(s)
-                </span>
-              )}
-            </div>
+                <span style={{...chipStyle("muted"),width:"fit-content"}}>Período: {periodLabel(filterMode,selectedYear,selectedMonth)}</span>
+              </div>
+            )}
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -1111,7 +944,7 @@ export default function RelatoriosPage() {
             </div>
           </div>
         )}
-
+        {abaAtiva === "meta" && (
         <div style={{ ...card, marginBottom: 14 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 14 }}>
             <div>
@@ -1236,125 +1069,24 @@ export default function RelatoriosPage() {
             </table>
           </div>
         </div>
-
-        <div
-          style={{
-            display: "grid",
-            gap: 14,
-            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-            marginBottom: 14,
-          }}
-        >
-          <div style={miniCard}>
-            <div style={{ fontSize: 12, opacity: 0.72 }}>Vendas brutas</div>
-            <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-              {formatBRL(salesSummary.gross)}
+        )}
+        {abaAtiva === "comercial" && (
+          <>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))",gap:12,marginBottom:14}}>
+              <div style={miniCard}><div style={{fontSize:12,opacity:0.75}}>Previsão do período (recorrências)</div>
+                <div style={{fontSize:25,fontWeight:900,marginTop:6}}>{formatBRL(forecastSummary.expectedThis)}</div>
+                <div style={{fontSize:12,opacity:0.75}}>Próximo mês: {formatBRL(forecastSummary.expectedNext)}</div></div>
+              <div style={miniCard}><div style={{fontSize:12,opacity:0.75}}>Próximos três meses</div>
+                <div style={{fontSize:25,fontWeight:900,marginTop:6}}>{formatBRL(forecastSummary.expectedNext3)}</div></div>
             </div>
-            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-              {salesSummary.count} lançamento(s)
-            </div>
-          </div>
-
-          <div style={miniCard}>
-            <div style={{ fontSize: 12, opacity: 0.72 }}>Vendas líquidas</div>
-            <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-              {formatBRL(salesSummary.net)}
-            </div>
-            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-              Taxa média: {salesSummary.feesAvg.toFixed(2)}%
-            </div>
-          </div>
-
-          <div style={miniCard}>
-            <div style={{ fontSize: 12, opacity: 0.72 }}>Recorrências ativas</div>
-            <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-              {recorrenciasSummary.ativas}
-            </div>
-            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-              Total recorrências: {recorrenciasSummary.total}
-            </div>
-          </div>
-
-          <div style={miniCard}>
-            <div style={{ fontSize: 12, opacity: 0.72 }}>
-              {filterMode === "monthly" ? "Forecast deste mês" : "Forecast do ano"}
-            </div>
-            <div style={{ fontSize: 26, fontWeight: 950, marginTop: 6 }}>
-              {formatBRL(forecastSummary.expectedThis)}
-            </div>
-            <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-              Próximo: {formatBRL(forecastSummary.expectedNext)}
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gap: 14,
-            gridTemplateColumns: "1fr 1fr",
-            marginBottom: 14,
-          }}
-        >
-          <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>Resumo de vendas</div>
-
-            <div style={{ display: "grid", gap: 12 }}>
-              <div style={miniCard}>
-                <div style={{ fontSize: 12, opacity: 0.72 }}>Vendas avulsas</div>
-                <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
-                  {salesSummary.avulsas}
-                </div>
+            <details style={{...card,marginBottom:14}}>
+              <summary style={{cursor:"pointer",fontWeight:900}}>Situação das recorrências ({recorrenciasSummary.total})</summary>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginTop:14}}>
+                {([ ["Ativas",recorrenciasSummary.ativas],["Pausadas",recorrenciasSummary.pausadas],["Canceladas",recorrenciasSummary.canceladas],["Encerradas",recorrenciasSummary.encerradas] ] as const).map(([label,valor]) =>
+                  <div key={label} style={miniCard}><div style={{fontSize:12,opacity:0.75}}>{label}</div><div style={{fontSize:24,fontWeight:900}}>{valor}</div></div>
+                )}
               </div>
-
-              <div style={miniCard}>
-                <div style={{ fontSize: 12, opacity: 0.72 }}>Vendas recorrentes</div>
-                <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
-                  {salesSummary.recorrentes}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>Resumo de recorrências</div>
-
-            <div style={{ display: "grid", gap: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div style={miniCard}>
-                  <div style={{ fontSize: 12, opacity: 0.72 }}>Ativas</div>
-                  <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
-                    {recorrenciasSummary.ativas}
-                  </div>
-                </div>
-
-                <div style={miniCard}>
-                  <div style={{ fontSize: 12, opacity: 0.72 }}>Pausadas</div>
-                  <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
-                    {recorrenciasSummary.pausadas}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div style={miniCard}>
-                  <div style={{ fontSize: 12, opacity: 0.72 }}>Canceladas</div>
-                  <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
-                    {recorrenciasSummary.canceladas}
-                  </div>
-                </div>
-
-                <div style={miniCard}>
-                  <div style={{ fontSize: 12, opacity: 0.72 }}>Encerradas</div>
-                  <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>
-                    {recorrenciasSummary.encerradas}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
+            </details>
         <div
           style={{
             display: "grid",
@@ -1519,13 +1251,13 @@ export default function RelatoriosPage() {
               <tbody>
               {loading ? (
                 <tr>
-                <td style={td} colSpan={3}>
+                <td style={td} colSpan={6}>
                   Carregando...
                 </td>
                 </tr>
-              ) : forecastMonthly.length === 0 ? (
+              ) : monthlySales.length === 0 ? (
                 <tr>
-                <td style={td} colSpan={3}>
+                <td style={td} colSpan={6}>
                   Nenhum dado encontrado.
                 </td>
                 </tr>
@@ -1546,105 +1278,9 @@ export default function RelatoriosPage() {
             </div>
           </div>
         </div>
-
-        <div
-          style={{
-            display: "grid",
-            gap: 14,
-            gridTemplateColumns: "1fr 1fr",
-            marginBottom: 14,
-          }}
-        >
-          <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>
-              Clientes por sexo
-            </div>
-
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-                <thead>
-                  <tr>
-                    <th style={th}>Sexo</th>
-                    <th style={th}>Qtd.</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td style={td} colSpan={2}>
-                        Carregando...
-                      </td>
-                    </tr>
-                  ) : clientsBySex.length === 0 ? (
-                    <tr>
-                      <td style={td} colSpan={2}>
-                        Nenhum dado encontrado.
-                      </td>
-                    </tr>
-                  ) : (
-                    clientsBySex.map((row) => (
-                      <tr key={row.label}>
-                        <td style={td}>{row.label}</td>
-                        <td style={td}>{row.count}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div style={card}>
-            <div style={{ fontWeight: 950, marginBottom: 10 }}>
-              Clientes por idade
-            </div>
-
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-                <thead>
-                  <tr>
-                    <th style={th}>Faixa etária</th>
-                    <th style={th}>Qtd.</th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {loading ? (
-                    <tr>
-                      <td style={td} colSpan={2}>
-                        Carregando...
-                      </td>
-                    </tr>
-                  ) : clientsByAge.length === 0 ? (
-                    <tr>
-                      <td style={td} colSpan={2}>
-                        Nenhum dado encontrado.
-                      </td>
-                    </tr>
-                  ) : (
-                    clientsByAge.map((row) => (
-                      <tr key={row.label}>
-                        <td style={td}>{row.label}</td>
-                        <td style={td}>{row.count}</td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gap: 14,
-            gridTemplateColumns: "1fr 1fr",
-          }}
-        >
-                        
-        </div>
+          </>
+        )}
+        {abaAtiva === "whatsapp" && <WhatsAppRelatorio />}
       </div>
     </div>
   );
