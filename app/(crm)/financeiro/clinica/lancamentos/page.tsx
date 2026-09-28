@@ -42,6 +42,10 @@ type Tx = {
 
   account_id: string | null;
 
+  installment_number: number | null;
+
+  installment_total: number | null;
+
 };
 
 
@@ -100,7 +104,7 @@ type EditForm = {
 
   status: "pending" | "paid" | "received" | "late";
 
-  category_id: string;
+  category_name: string;
 
   account_id: string;
 
@@ -124,13 +128,17 @@ type NewForm = {
 
   status: "pending" | "paid" | "received" | "late";
 
-  category_id: string;
+  category_name: string;
 
   account_id: string;
 
   counterparty_name: string;
 
   notes: string;
+
+  is_installment: boolean;
+
+  installments: number;
 
 };
 
@@ -240,6 +248,54 @@ function todayYMD() {
 
 
 
+function addMonthsToYMD(value: string, monthsToAdd: number) {
+
+  const [year, month, day] = value.split("-").map(Number);
+
+  if (!year || !month || !day) return value;
+
+  const targetMonthIndex = month - 1 + monthsToAdd;
+  const targetYear = year + Math.floor(targetMonthIndex / 12);
+  const normalizedMonthIndex =
+    ((targetMonthIndex % 12) + 12) % 12;
+
+  const lastDay = new Date(
+    targetYear,
+    normalizedMonthIndex + 1,
+    0
+  ).getDate();
+
+  const safeDay = Math.min(day, lastDay);
+
+  return `${targetYear}-${String(normalizedMonthIndex + 1).padStart(
+    2,
+    "0"
+  )}-${String(safeDay).padStart(2, "0")}`;
+
+}
+
+
+
+function formatInstallmentLabel(
+  current: number | null | undefined,
+  total: number | null | undefined
+) {
+
+  const currentNumber = Number(current ?? 0);
+  const totalNumber = Number(total ?? 0);
+
+  if (currentNumber <= 0 || totalNumber <= 0) return null;
+
+  const width = Math.max(2, String(totalNumber).length);
+
+  return `${String(currentNumber).padStart(width, "0")}/${String(
+    totalNumber
+  ).padStart(width, "0")}`;
+
+}
+
+
+
 function emptyNewForm(): NewForm {
 
   return {
@@ -254,13 +310,17 @@ function emptyNewForm(): NewForm {
 
     status: "pending",
 
-    category_id: "",
+    category_name: "",
 
     account_id: "",
 
     counterparty_name: "",
 
     notes: "",
+
+    is_installment: false,
+
+    installments: 2,
 
   };
 
@@ -568,7 +628,7 @@ export default function LancamentosClinicaPage() {
 
         status: nextStatus,
 
-        category_id: "",
+        category_name: "",
 
       };
 
@@ -578,233 +638,223 @@ export default function LancamentosClinicaPage() {
 
 
 
+  async function resolveCategoryIdByName(
+    rawName: string,
+    currentKind: "income" | "expense"
+  ) {
+
+    const name = rawName.trim();
+
+    if (!name) return null;
+
+    const normalized = name.toLocaleLowerCase("pt-BR");
+
+    const existing = categories.find(
+      (category) =>
+        category.name.trim().toLocaleLowerCase("pt-BR") === normalized
+    );
+
+    if (existing) return existing.id;
+
+    const { data, error } = await supabase
+      .from("financial_categories")
+      .insert({
+        scope: "clinic",
+        name,
+        type: currentKind,
+        is_active: true,
+        sort_order: 0,
+      })
+      .select(
+        "id, scope, name, type, parent_id, color, sort_order, is_active"
+      )
+      .single();
+
+    if (error) {
+      throw new Error(
+        "Não foi possível criar a categoria: " + error.message
+      );
+    }
+
+    const created = data as FinancialCategory;
+
+    setCategories((current) =>
+      [...current, created].sort((a, b) =>
+        a.name.localeCompare(b.name, "pt-BR")
+      )
+    );
+
+    return created.id;
+
+  }
+
+
+
   async function saveNew() {
 
     const description = newForm.description.trim();
 
-
-
     if (!description) {
-
       alert("Informe a descrição do lançamento.");
-
       return;
-
     }
-
-
 
     const amount = parseMoneyInput(newForm.amount);
 
-
-
     if (!Number.isFinite(amount) || amount <= 0) {
-
       alert("Informe um valor válido maior que zero.");
-
       return;
-
     }
-
-
 
     if (!newForm.due_date) {
-
       alert("Informe a data do lançamento.");
-
       return;
-
     }
 
-
-
     if (
-
       newForm.kind === "income" &&
-
       newForm.status === "paid"
-
     ) {
-
       alert(
-
         'Para uma receita concluída, utilize o status "Recebido".'
-
       );
-
       return;
-
     }
-
-
 
     if (
-
       newForm.kind === "expense" &&
-
       newForm.status === "received"
-
     ) {
-
       alert(
-
         'Para uma despesa concluída, utilize o status "Pago".'
-
       );
-
       return;
-
     }
 
+    const installmentTotal = newForm.is_installment
+      ? Math.floor(Number(newForm.installments))
+      : 1;
 
+    if (
+      newForm.is_installment &&
+      (!Number.isFinite(installmentTotal) ||
+        installmentTotal < 2 ||
+        installmentTotal > 120)
+    ) {
+      alert("Informe entre 2 e 120 boletos/parcelas.");
+      return;
+    }
 
     setNewSaving(true);
 
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
 
+      if (userError || !user) {
+        throw new Error(
+          "Não foi possível identificar o usuário autenticado."
+        );
+      }
 
-    const {
-
-      data: { user },
-
-      error: userError,
-
-    } = await supabase.auth.getUser();
-
-
-
-    if (userError || !user) {
-
-      setNewSaving(false);
-
-
-
-      alert(
-
-        "Não foi possível identificar o usuário autenticado."
-
+      const categoryId = await resolveCategoryIdByName(
+        newForm.category_name,
+        newForm.kind
       );
 
+      const rows = Array.from(
+        { length: installmentTotal },
+        (_, index) => {
+          const dueDate = addMonthsToYMD(
+            newForm.due_date,
+            index
+          );
 
+          const isFirst = index === 0;
 
-      return;
+          const rowStatus =
+            isFirst || !newForm.is_installment
+              ? newForm.status
+              : "pending";
 
+          const isCompleted =
+            rowStatus === "paid" ||
+            rowStatus === "received";
+
+          return {
+            scope: "clinic",
+            kind: newForm.kind,
+            status: rowStatus,
+            description,
+            amount,
+            gross_amount: null,
+            net_amount: null,
+            fee_amount: null,
+            fee_percent: null,
+            due_date: dueDate,
+            paid_at: isCompleted ? dueDate : null,
+            competency_date: dueDate,
+            account_id: newForm.account_id || null,
+            category_id: categoryId,
+            card_id: null,
+            counterparty_name:
+              newForm.counterparty_name.trim() || null,
+            reference_code: null,
+            source_type: "manual",
+            source_id: null,
+            installment_number: newForm.is_installment
+              ? index + 1
+              : null,
+            installment_total: newForm.is_installment
+              ? installmentTotal
+              : null,
+            is_future: newForm.is_installment
+              ? index > 0
+              : false,
+            created_by: user.id,
+            import_source: null,
+            import_file_name: null,
+            import_batch_id: null,
+            external_import_key: null,
+            import_note: null,
+            notes: newForm.notes.trim() || null,
+          };
+        }
+      );
+
+      const { error } = await supabase
+        .from("financial_transactions")
+        .insert(rows);
+
+      if (error) {
+        throw new Error(
+          "Erro ao criar lançamento: " + error.message
+        );
+      }
+
+      const selectedDate = new Date(
+        newForm.due_date + "T12:00:00"
+      );
+
+      setCurrentYear(selectedDate.getFullYear());
+      setCurrentMonth(selectedDate.getMonth());
+
+      setShowNew(false);
+      setNewForm(emptyNewForm());
+
+      await fetchAll();
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Erro ao criar lançamento.";
+
+      alert(message);
+    } finally {
+      setNewSaving(false);
     }
-
-
-
-    const isCompleted =
-
-      newForm.status === "paid" ||
-
-      newForm.status === "received";
-
-
-
-    const { error } = await supabase
-
-      .from("financial_transactions")
-
-      .insert({
-
-        scope: "clinic",
-
-        kind: newForm.kind,
-
-        status: newForm.status,
-
-        description,
-
-        amount,
-
-        gross_amount: null,
-
-        net_amount: null,
-
-        fee_amount: null,
-
-        fee_percent: null,
-
-        due_date: newForm.due_date,
-
-        paid_at: isCompleted ? newForm.due_date : null,
-
-        competency_date: newForm.due_date,
-
-        account_id: newForm.account_id || null,
-
-        category_id: newForm.category_id || null,
-
-        card_id: null,
-
-        counterparty_name:
-
-          newForm.counterparty_name.trim() || null,
-
-        reference_code: null,
-
-        source_type: "manual",
-
-        source_id: null,
-
-        installment_number: null,
-
-        installment_total: null,
-
-        is_future: false,
-
-        created_by: user.id,
-
-        import_source: null,
-
-        import_file_name: null,
-
-        import_batch_id: null,
-
-        external_import_key: null,
-
-        import_note: null,
-
-        notes: newForm.notes.trim() || null,
-
-      });
-
-
-
-    setNewSaving(false);
-
-
-
-    if (error) {
-
-      alert("Erro ao criar lançamento: " + error.message);
-
-      return;
-
-    }
-
-
-
-    const selectedDate = new Date(
-
-      newForm.due_date + "T12:00:00"
-
-    );
-
-
-
-    setCurrentYear(selectedDate.getFullYear());
-
-    setCurrentMonth(selectedDate.getMonth());
-
-
-
-    setShowNew(false);
-
-    setNewForm(emptyNewForm());
-
-
-
-    await fetchAll();
 
   }
 
@@ -840,7 +890,10 @@ export default function LancamentosClinicaPage() {
 
           : "pending",
 
-      category_id: tx.category_id ?? "",
+      category_name:
+        categories.find(
+          (category) => category.id === tx.category_id
+        )?.name ?? "",
 
       account_id: tx.account_id ?? "",
 
@@ -932,6 +985,31 @@ export default function LancamentosClinicaPage() {
 
 
 
+    let categoryId: string | null = null;
+
+    try {
+
+      categoryId = await resolveCategoryIdByName(
+        editForm.category_name,
+        editForm.kind
+      );
+
+    } catch (error) {
+
+      setEditSaving(false);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Erro ao salvar categoria."
+      );
+
+      return;
+
+    }
+
+
+
     const { error } = await supabase
 
       .from("financial_transactions")
@@ -954,7 +1032,7 @@ export default function LancamentosClinicaPage() {
 
         kind: editForm.kind,
 
-        category_id: editForm.category_id || null,
+        category_id: categoryId,
 
         account_id: editForm.account_id || null,
 
@@ -1778,7 +1856,9 @@ export default function LancamentosClinicaPage() {
 
                   <label style={labelStyle}>
 
-                    Valor (R$) *
+                    {newForm.is_installment
+                      ? "Valor de cada boleto (R$) *"
+                      : "Valor (R$) *"}
 
                   </label>
 
@@ -1941,6 +2021,89 @@ export default function LancamentosClinicaPage() {
 
 
               <div
+                style={{
+                  border: "1px solid rgba(180,120,255,0.22)",
+                  background: "rgba(180,120,255,0.07)",
+                  borderRadius: 12,
+                  padding: 12,
+                  display: "grid",
+                  gap: 10,
+                }}
+              >
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 9,
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={newForm.is_installment}
+                    onChange={(e) =>
+                      setNewForm({
+                        ...newForm,
+                        is_installment: e.target.checked,
+                      })
+                    }
+                  />
+                  Gerar boletos / parcelas mensais
+                </label>
+
+                {newForm.is_installment && (
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        "minmax(0, 180px) minmax(0, 1fr)",
+                      gap: 10,
+                      alignItems: "end",
+                    }}
+                  >
+                    <div>
+                      <label style={labelStyle}>
+                        Número de boletos
+                      </label>
+                      <input
+                        type="number"
+                        min={2}
+                        max={120}
+                        step={1}
+                        style={inputStyle}
+                        value={newForm.installments}
+                        onChange={(e) =>
+                          setNewForm({
+                            ...newForm,
+                            installments: Math.max(
+                              2,
+                              Number(e.target.value || 2)
+                            ),
+                          })
+                        }
+                      />
+                    </div>
+
+                    <div
+                      style={{
+                        fontSize: 12,
+                        opacity: 0.78,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      O valor informado será o valor de cada boleto.
+                      A data escolhida será o vencimento do primeiro;
+                      os demais serão gerados mês a mês.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+
+
+              <div
 
                 style={{
 
@@ -1959,46 +2122,41 @@ export default function LancamentosClinicaPage() {
                 <div>
 
                   <label style={labelStyle}>
-
                     Categoria
-
                   </label>
 
-
-
-                  <SelectDark
-
-                    value={newForm.category_id}
-
-                    onChange={(value) =>
-
+                  <input
+                    type="text"
+                    list="clinic-new-categories"
+                    style={inputStyle}
+                    placeholder="Digite ou escolha uma categoria"
+                    value={newForm.category_name}
+                    onChange={(e) =>
                       setNewForm({
-
                         ...newForm,
-
-                        category_id: value,
-
+                        category_name: e.target.value,
                       })
-
                     }
-
-                    searchable
-
-                    options={[
-
-                      { value: "", label: "Sem categoria" },
-
-                      ...availableCategories.map((category) => ({
-
-                        value: category.id,
-
-                        label: category.name,
-
-                      })),
-
-                    ]}
-
                   />
+
+                  <datalist id="clinic-new-categories">
+                    {availableCategories.map((category) => (
+                      <option
+                        key={category.id}
+                        value={category.name}
+                      />
+                    ))}
+                  </datalist>
+
+                  <div
+                    style={{
+                      fontSize: 11,
+                      opacity: 0.6,
+                      marginTop: 5,
+                    }}
+                  >
+                    Se a categoria não existir, ela será criada ao salvar.
+                  </div>
 
                 </div>
 
@@ -2239,6 +2397,24 @@ export default function LancamentosClinicaPage() {
               }}
             >
               Consulte e altere todos os dados do lançamento
+              {formatInstallmentLabel(
+                editTx.installment_number,
+                editTx.installment_total
+              ) && (
+                <span
+                  style={{
+                    marginLeft: 8,
+                    color: "#d7b7ff",
+                    fontWeight: 900,
+                  }}
+                >
+                  • Boleto{" "}
+                  {formatInstallmentLabel(
+                    editTx.installment_number,
+                    editTx.installment_total
+                  )}
+                </span>
+              )}
             </div>
 
             <div style={{ display: "grid", gap: 14 }}>
@@ -2261,7 +2437,7 @@ export default function LancamentosClinicaPage() {
                         ...editForm,
                         kind,
                         status,
-                        category_id: "",
+                        category_name: "",
                       });
                     }}
                     style={
@@ -2283,7 +2459,7 @@ export default function LancamentosClinicaPage() {
                         ...editForm,
                         kind,
                         status,
-                        category_id: "",
+                        category_name: "",
                       });
                     }}
                     style={
@@ -2379,20 +2555,36 @@ export default function LancamentosClinicaPage() {
               >
                 <div>
                   <label style={labelStyle}>Categoria</label>
-                  <SelectDark
-                    value={editForm.category_id}
-                    onChange={(value) =>
-                      setEditForm({ ...editForm, category_id: value })
+                  <input
+                    type="text"
+                    list="clinic-edit-categories"
+                    style={inputStyle}
+                    placeholder="Digite ou escolha uma categoria"
+                    value={editForm.category_name}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        category_name: e.target.value,
+                      })
                     }
-                    searchable
-                    options={[
-                      { value: "", label: "Sem categoria" },
-                      ...availableEditCategories.map((category) => ({
-                        value: category.id,
-                        label: category.name,
-                      })),
-                    ]}
                   />
+                  <datalist id="clinic-edit-categories">
+                    {availableEditCategories.map((category) => (
+                      <option
+                        key={category.id}
+                        value={category.name}
+                      />
+                    ))}
+                  </datalist>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      opacity: 0.6,
+                      marginTop: 5,
+                    }}
+                  >
+                    Se a categoria não existir, ela será criada ao salvar.
+                  </div>
                 </div>
 
                 <div>
@@ -3143,6 +3335,31 @@ export default function LancamentosClinicaPage() {
 
                       </span>
 
+                    )}
+
+
+
+                    {formatInstallmentLabel(
+                      tx.installment_number,
+                      tx.installment_total
+                    ) && (
+                      <span
+                        style={{
+                          padding: "1px 7px",
+                          borderRadius: 999,
+                          background: "rgba(180,120,255,0.14)",
+                          border: "1px solid rgba(180,120,255,0.28)",
+                          color: "#d7b7ff",
+                          fontSize: 11,
+                          fontWeight: 900,
+                        }}
+                      >
+                        Boleto{" "}
+                        {formatInstallmentLabel(
+                          tx.installment_number,
+                          tx.installment_total
+                        )}
+                      </span>
                     )}
 
 
