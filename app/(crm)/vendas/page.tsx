@@ -12,6 +12,7 @@ type LeadRow = {
   name: string;
   phone_raw: string | null;
   phone_e164?: string | null;
+  source: string | null;
 };
 
 type SaleRow = {
@@ -763,7 +764,7 @@ export default function VendasPage() {
   async function fetchLeads() {
     const { data, error } = await supabase
       .from("leads")
-      .select("id,name,phone_raw,phone_e164")
+      .select("id,name,phone_raw,phone_e164,source")
       .order("name", { ascending: true });
 
     if (error) {
@@ -1024,6 +1025,19 @@ export default function VendasPage() {
       filteredRows: [...avulsas, ...recorrentes],
     };
   }, [rows, filterQ, filterType, filterPayment]);
+
+  function handleLeadChange(nextLeadId: string) {
+    setLeadId(nextLeadId);
+
+    if (!nextLeadId) {
+      setSource("");
+      return;
+    }
+
+    const selectedLead = leads.find((lead) => lead.id === nextLeadId);
+
+    setSource(selectedLead?.source?.trim() || "");
+  }
 
   function resetForm() {
     setEditingId(null);
@@ -1334,7 +1348,7 @@ export default function VendasPage() {
             <label style={labelStyle}>Cliente</label>
             <SelectDark
               value={leadId}
-              onChange={setLeadId}
+              onChange={handleLeadChange}
               placeholder="Selecione"
               searchable
               options={[
