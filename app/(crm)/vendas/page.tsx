@@ -733,6 +733,9 @@ export default function VendasPage() {
   const [filterQ, setFilterQ] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [filterPayment, setFilterPayment] = useState("all");
+  const [filterDateMode, setFilterDateMode] = useState<"today" | "month" | "custom">("month");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -865,10 +868,6 @@ export default function VendasPage() {
     }
   }, [isAdmin]);
 
-  const total = useMemo(() => {
-    return rows.reduce((sum, r) => sum + Number(r.value ?? 0), 0);
-  }, [rows]);
-
   const paymentKindOptions = useMemo(
     () => getPaymentKindsForProvider(paymentProvider),
     [paymentProvider]
@@ -981,12 +980,50 @@ export default function VendasPage() {
     saleType,
   ]);
 
+  function saleDateYMD(value: string | null | undefined) {
+    if (!value) return "";
+
+    const raw = String(value);
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+    const date = new Date(raw);
+    if (Number.isNaN(date.getTime())) return raw.slice(0, 10);
+
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  function isSaleInDateFilter(value: string | null | undefined) {
+    const ymd = saleDateYMD(value);
+    if (!ymd) return false;
+
+    const today = todayInputValue();
+
+    if (filterDateMode === "today") {
+      return ymd === today;
+    }
+
+    if (filterDateMode === "month") {
+      return ymd.slice(0, 7) === today.slice(0, 7);
+    }
+
+    if (filterDateFrom && ymd < filterDateFrom) return false;
+    if (filterDateTo && ymd > filterDateTo) return false;
+
+    return true;
+  }
+
   const { flatRows, recGroups, filteredRows } = useMemo(() => {
     const q = filterQ.trim().toLowerCase();
 
     const filtered = rows.filter((r) => {
       if (filterType !== "all" && (r.sale_type ?? "") !== filterType) return false;
       if (filterPayment !== "all" && (r.payment_method ?? "") !== filterPayment) return false;
+      if (!isSaleInDateFilter(r.closed_at)) return false;
 
       if (!q) return true;
 
@@ -1024,7 +1061,19 @@ export default function VendasPage() {
       recGroups: groupMap,
       filteredRows: [...avulsas, ...recorrentes],
     };
-  }, [rows, filterQ, filterType, filterPayment]);
+  }, [
+    rows,
+    filterQ,
+    filterType,
+    filterPayment,
+    filterDateMode,
+    filterDateFrom,
+    filterDateTo,
+  ]);
+
+  const total = useMemo(() => {
+    return filteredRows.reduce((sum, r) => sum + Number(r.value ?? 0), 0);
+  }, [filteredRows]);
 
   function handleLeadChange(nextLeadId: string) {
     setLeadId(nextLeadId);
@@ -1671,7 +1720,7 @@ export default function VendasPage() {
             gridTemplateColumns:
               "minmax(240px, 1.5fr) minmax(160px, 1fr) minmax(180px, 1fr) auto",
             gap: 10,
-            marginBottom: 14,
+            marginBottom: 10,
             alignItems: "stretch",
           }}
         >
@@ -1723,11 +1772,68 @@ export default function VendasPage() {
               setFilterQ("");
               setFilterType("all");
               setFilterPayment("all");
+              setFilterDateMode("month");
+              setFilterDateFrom("");
+              setFilterDateTo("");
             }}
             style={btn}
           >
             Limpar
           </button>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            marginBottom: 14,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setFilterDateMode("today")}
+            style={filterDateMode === "today" ? btnPrimary : btn}
+          >
+            HOJE
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFilterDateMode("month")}
+            style={filterDateMode === "month" ? btnPrimary : btn}
+          >
+            MÊS
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setFilterDateMode("custom")}
+            style={filterDateMode === "custom" ? btnPrimary : btn}
+          >
+            Personalizado
+          </button>
+
+          {filterDateMode === "custom" ? (
+            <>
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                style={{ ...inputStyle, width: 170 }}
+                aria-label="Data inicial"
+              />
+              <span style={{ opacity: 0.6, fontSize: 12 }}>até</span>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                style={{ ...inputStyle, width: 170 }}
+                aria-label="Data final"
+              />
+            </>
+          ) : null}
         </div>
 
         {loading ? (
