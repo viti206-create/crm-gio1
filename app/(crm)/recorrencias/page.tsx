@@ -260,7 +260,7 @@ export default function RecorrenciasPage() {
 
       .from("recorrencias")
 
-      .select("id,lead_id,status,start_date,installments_total,installments_done,price_per_installment,leads(id,name,phone_raw,phone_e164)")
+      .select("id,lead_id,status,start_date,installments_total,installments_done,price_per_installment,payer_name,leads(id,name,phone_raw,phone_e164)")
 
       .order("start_date", { ascending: false });
 

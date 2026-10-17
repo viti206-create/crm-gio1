@@ -736,6 +736,10 @@ export default function VendasPage() {
   const [filterDateMode, setFilterDateMode] = useState<"today" | "month" | "custom">("month");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterMonthRef, setFilterMonthRef] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
 
   useEffect(() => {
     if (!loadingRole && !isAdmin) {
@@ -1008,7 +1012,10 @@ export default function VendasPage() {
     }
 
     if (filterDateMode === "month") {
-      return ymd.slice(0, 7) === today.slice(0, 7);
+      const monthKey = `${filterMonthRef.getFullYear()}-${String(
+        filterMonthRef.getMonth() + 1
+      ).padStart(2, "0")}`;
+      return ymd.slice(0, 7) === monthKey;
     }
 
     if (filterDateFrom && ymd < filterDateFrom) return false;
@@ -1067,9 +1074,27 @@ export default function VendasPage() {
     filterType,
     filterPayment,
     filterDateMode,
+    filterMonthRef,
     filterDateFrom,
     filterDateTo,
   ]);
+
+  const filterMonthLabel = filterMonthRef.toLocaleDateString("pt-BR", {
+    month: "long",
+    year: "numeric",
+  });
+
+  function changeFilterMonth(offset: number) {
+    setFilterMonthRef(
+      (current) =>
+        new Date(
+          current.getFullYear(),
+          current.getMonth() + offset,
+          1
+        )
+    );
+    setFilterDateMode("month");
+  }
 
   const total = useMemo(() => {
     return filteredRows.reduce((sum, r) => sum + Number(r.value ?? 0), 0);
@@ -1775,6 +1800,10 @@ export default function VendasPage() {
               setFilterDateMode("month");
               setFilterDateFrom("");
               setFilterDateTo("");
+              const now = new Date();
+              setFilterMonthRef(
+                new Date(now.getFullYear(), now.getMonth(), 1)
+              );
             }}
             style={btn}
           >
@@ -1801,11 +1830,42 @@ export default function VendasPage() {
 
           <button
             type="button"
+            onClick={() => changeFilterMonth(-1)}
+            style={btn}
+          >
+            Anterior
+          </button>
+
+          <button
+            type="button"
             onClick={() => setFilterDateMode("month")}
             style={filterDateMode === "month" ? btnPrimary : btn}
           >
             MÊS
           </button>
+
+          <button
+            type="button"
+            onClick={() => changeFilterMonth(1)}
+            style={btn}
+          >
+            Próximo
+          </button>
+
+          {filterDateMode === "month" ? (
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 900,
+                textTransform: "capitalize",
+                padding: "8px 4px",
+                minWidth: 150,
+                textAlign: "center",
+              }}
+            >
+              {filterMonthLabel}
+            </div>
+          ) : null}
 
           <button
             type="button"
