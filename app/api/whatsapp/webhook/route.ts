@@ -22,10 +22,6 @@ type StageRow = {
   id: string;
 };
 
-type ActivityRow = {
-  id: string;
-};
-
 type ConversaRow = {
   mensagem: string | null;
   resposta: string | null;
@@ -82,6 +78,14 @@ type WhatsAppMessage = {
       formatted_name?: string;
     };
   }>;
+  referral?: {
+    source_url?: string;
+    source_type?: string;
+    source_id?: string;
+    headline?: string;
+    body?: string;
+    ctwa_clid?: string;
+  };
 };
 
 type MessageEcho = {
@@ -90,6 +94,59 @@ type MessageEcho = {
   from?: string;
   timestamp?: string;
   type?: string;
+  text?: {
+    body?: string;
+  };
+  image?: {
+    caption?: string;
+    mime_type?: string;
+  };
+  video?: {
+    caption?: string;
+    mime_type?: string;
+  };
+  audio?: {
+    mime_type?: string;
+  };
+  document?: {
+    caption?: string;
+    filename?: string;
+    mime_type?: string;
+  };
+  sticker?: {
+    mime_type?: string;
+  };
+  button?: {
+    text?: string;
+  };
+  interactive?: {
+    button_reply?: {
+      title?: string;
+    };
+    list_reply?: {
+      title?: string;
+      description?: string;
+    };
+  };
+  location?: {
+    latitude?: number;
+    longitude?: number;
+    name?: string;
+    address?: string;
+  };
+  contacts?: Array<{
+    name?: {
+      formatted_name?: string;
+    };
+  }>;
+};
+
+type HumanEcho = {
+  messageId: string;
+  phoneRaw: string;
+  phoneE164: string;
+  message: string;
+  timestamp: string | null;
 };
 
 type WhatsAppWebhookPayload = {
@@ -112,6 +169,16 @@ type WhatsAppWebhookPayload = {
   }>;
 };
 
+type MetaReferral = {
+  sourceUrl: string | null;
+  sourceType: string | null;
+  sourceId: string | null;
+  headline: string | null;
+  body: string | null;
+  ctwaClid: string | null;
+  raw: WhatsAppMessage["referral"];
+};
+
 type IncomingMessage = {
   messageId: string;
   phoneRaw: string;
@@ -121,6 +188,9 @@ type IncomingMessage = {
   timestamp: string | null;
   channel: "whatsapp";
   direction: "inbound";
+  campaignName: string | null;
+  campaignSourceId: string | null;
+  referral: MetaReferral | null;
 };
 
 const FALLBACK_INTEREST = "A definir";
@@ -132,6 +202,9 @@ const MAX_HISTORICO_MENSAGENS = 10;
 const MARCADOR_HANDOFF = "[HANDOFF_HUMANO]";
 const MENSAGEM_HANDOFF =
   "Entendo! Vou chamar alguém da nossa equipe pra te ajudar melhor com isso. Só um momento 🙋‍♀️";
+// Formato esperado: [AGENDAMENTO_CONFIRMADO: 2026-08-10T14:30:00-03:00 | Nome do procedimento]
+const REGEX_AGENDAMENTO =
+  /\[AGENDAMENTO_CONFIRMADO:\s*([^\|]+?)\s*\|\s*([^\]]+?)\s*\]/;
 const PAUSA_APOS_HUMANO_MS = 60 * 60 * 1000; // 1 hora
 
 const anthropic = new Anthropic({
@@ -178,10 +251,10 @@ function trimOrNull(value: string | null | undefined) {
   return trimmed ? trimmed : null;
 }
 
-// NOVA FUNÇÃO: corrige formatação de negrito para o padrão do WhatsApp
-// (WhatsApp usa *texto* para negrito, não **texto** como markdown comum)
+// Remove qualquer marcação de negrito que a IA eventualmente gere por engano
+// (a regra do prompt diz para nunca usar, isso é uma proteção extra)
 function corrigirFormatacaoWhatsApp(texto: string) {
-  return texto.replace(/\*\*(.+?)\*\*/g, "*$1*");
+  return texto.replace(/\*\*(.+?)\*\*/g, "$1").replace(/\*(.+?)\*/g, "$1");
 }
 
 function extractMessageText(message: WhatsAppMessage) {
@@ -276,6 +349,15 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
       if (!value?.messages?.length) continue;
 
       for (const message of value.messages) {
+        const type = String(message?.type ?? "").trim().toLowerCase();
+
+        // Mensagens apagadas pelo cliente (e outros casos nao suportados,
+        // como enquetes, reacoes especiais, etc.) chegam com type "unsupported"
+        // -- ignoramos completamente, sem enviar para a IA responder.
+        if (type === "unsupported") {
+          continue;
+        }
+
         const messageId = trimOrNull(message.id);
         const phoneRaw =
           trimOrNull(message.from) ?? trimOrNull(value.contacts?.[0]?.wa_id);
@@ -301,6 +383,22 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
           timestamp: toIsoTimestamp(message.timestamp),
           channel: DEFAULT_CHANNEL,
           direction: DEFAULT_DIRECTION,
+          // Se a mensagem veio de um anuncio Click-to-WhatsApp, a Meta manda
+          // esses dados junto na PRIMEIRA mensagem da conversa (nao vem em
+          // mensagens seguintes do mesmo contato).
+          campaignName: trimOrNull(message.referral?.headline),
+          campaignSourceId: trimOrNull(message.referral?.source_id),
+          referral: message.referral
+            ? {
+                sourceUrl: trimOrNull(message.referral.source_url),
+                sourceType: trimOrNull(message.referral.source_type),
+                sourceId: trimOrNull(message.referral.source_id),
+                headline: trimOrNull(message.referral.headline),
+                body: trimOrNull(message.referral.body),
+                ctwaClid: trimOrNull(message.referral.ctwa_clid),
+                raw: message.referral,
+              }
+            : null,
         });
       }
     }
@@ -309,9 +407,11 @@ function extractIncomingMessages(body: WhatsAppWebhookPayload) {
   return events;
 }
 
-// NOVA FUNÇÃO: extrai números de telefone que receberam mensagem de um humano via app
-function extractHumanEchoPhones(body: WhatsAppWebhookPayload) {
-  const telefones: string[] = [];
+// Extrai as mensagens enviadas manualmente pela equipe no app do WhatsApp.
+// No modo coexistencia, a Meta entrega essas mensagens como smb_message_echoes.
+// Alem de marcar a intervencao humana, salvamos o conteudo no historico do CRM.
+function extractHumanEchoes(body: WhatsAppWebhookPayload) {
+  const echoesHumanos: HumanEcho[] = [];
 
   for (const entry of body.entry ?? []) {
     for (const change of entry.changes ?? []) {
@@ -320,16 +420,57 @@ function extractHumanEchoPhones(body: WhatsAppWebhookPayload) {
       const echoes = change.value?.message_echoes ?? [];
 
       for (const echo of echoes) {
-        const destino = trimOrNull(echo.to);
-        const normalizado = normalizePhoneE164(destino);
-        if (normalizado) {
-          telefones.push(normalizado);
+        const messageId = trimOrNull(echo.id);
+        const phoneRaw = trimOrNull(echo.to);
+        const phoneE164 = normalizePhoneE164(phoneRaw);
+
+        if (!messageId || !phoneRaw || !phoneE164) {
+          continue;
         }
+
+        echoesHumanos.push({
+          messageId,
+          phoneRaw,
+          phoneE164,
+          message: extractMessageText(echo as WhatsAppMessage),
+          timestamp: toIsoTimestamp(echo.timestamp),
+        });
       }
     }
   }
 
-  return telefones;
+  return echoesHumanos;
+}
+
+async function saveHumanEcho(
+  supabase: SupabaseClient,
+  echo: HumanEcho
+) {
+  const responseAt = echo.timestamp ?? new Date().toISOString();
+
+  const { error } = await supabase.from("whatsapp_conversas").insert({
+    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    telefone_cliente: echo.phoneRaw,
+    mensagem: null,
+    resposta: echo.message,
+    message_id: echo.messageId,
+    created_at: responseAt,
+    response_at: responseAt,
+    response_origin: "whatsapp_human",
+    conversation_status: "aguardando_cliente",
+  });
+
+  if (error) {
+    // A Meta pode reenviar o mesmo webhook. A restricao UNIQUE(message_id)
+    // garante que a mesma resposta manual nao apareca duas vezes no CRM.
+    if (error.code === "23505") {
+      return;
+    }
+
+    throw new Error(
+      `Nao consegui salvar mensagem manual do WhatsApp: ${error.message}`
+    );
+  }
 }
 
 async function getDefaultStageId(supabase: SupabaseClient) {
@@ -375,22 +516,110 @@ async function findExistingLead(supabase: SupabaseClient, phoneE164: string) {
   };
 }
 
+// CORRIGIDO: verifica duplicidade direto na tabela whatsapp_conversas,
+// que e a que realmente e preenchida (a tabela "activities" nunca era populada
+// com type "contact_whatsapp", entao a checagem antiga nunca encontrava nada
+// e mensagens duplicadas do WhatsApp/Dualhook eram sempre processadas de novo).
 async function hasProcessedMessage(
   supabase: SupabaseClient,
   messageId: string
 ) {
   const { data, error } = await supabase
-    .from("activities")
+    .from("whatsapp_conversas")
     .select("id")
-    .eq("type", "contact_whatsapp")
-    .contains("payload", { message_id: messageId })
+    .eq("message_id", messageId)
     .limit(1);
 
   if (error) {
     throw new Error(`Nao consegui validar idempotencia: ${error.message}`);
   }
 
-  return ((data ?? []) as ActivityRow[]).length > 0;
+  return (data ?? []).length > 0;
+}
+
+// NOVO: "reivindica" a mensagem no banco IMEDIATAMENTE, antes de qualquer
+// processamento demorado (IA, atraso de digitacao, envio). Isso fecha a janela
+// de corrida: se dois webhooks para a MESMA mensagem chegarem quase juntos
+// (comum quando a Meta reenvia por demora na resposta), o segundo vai bater
+// na restricao UNIQUE(message_id) do banco e sabemos que e duplicata --
+// mesmo que os dois tenham passado pela checagem "hasProcessedMessage" antes
+// de qualquer um terminar de salvar.
+async function claimMessage(
+  supabase: SupabaseClient,
+  telefoneCliente: string,
+  mensagem: string,
+  messageId: string
+) {
+  const { error } = await supabase.from("whatsapp_conversas").insert({
+    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    telefone_cliente: telefoneCliente,
+    mensagem,
+    resposta: null,
+    message_id: messageId,
+    conversation_status: "em_atendimento",
+  });
+
+  if (error) {
+    // codigo 23505 = violacao de restricao UNIQUE no Postgres/Supabase
+    if (error.code === "23505") {
+      return { claimed: false };
+    }
+    throw new Error(`Nao consegui reivindicar mensagem: ${error.message}`);
+  }
+
+  return { claimed: true };
+}
+
+// NOVO: atualiza a resposta da IA na mesma linha ja reivindicada,
+// em vez de inserir uma linha nova (evita duplicar a mensagem do cliente)
+async function atualizarRespostaConversa(
+  supabase: SupabaseClient,
+  messageId: string,
+  resposta: string
+) {
+  await supabase
+    .from("whatsapp_conversas")
+    .update({
+      resposta,
+      response_at: new Date().toISOString(),
+      response_origin: "ai",
+      conversation_status: "aguardando_cliente",
+    })
+    .eq("message_id", messageId);
+}
+
+async function saveLeadAttribution(
+  supabase: SupabaseClient,
+  leadId: string,
+  event: IncomingMessage
+) {
+  if (!event.referral) {
+    return;
+  }
+
+  const { error } = await supabase.from("lead_attributions").insert({
+    lead_id: leadId,
+    source: "meta_ads",
+    channel: "whatsapp",
+    meta_source_id: event.referral.sourceId,
+    meta_source_type: event.referral.sourceType,
+    source_url: event.referral.sourceUrl,
+    ad_headline: event.referral.headline,
+    ad_body: event.referral.body,
+    ctwa_clid: event.referral.ctwaClid,
+    referral_payload: event.referral.raw,
+    whatsapp_message_id: event.messageId,
+  });
+
+  if (error) {
+    // 23505 = a mesma mensagem ja registrou esta atribuicao.
+    // Isso evita duplicacao sem interromper o atendimento do WhatsApp.
+    if (error.code === "23505") {
+      return;
+    }
+
+    console.error("Erro ao salvar atribuicao de marketing do lead:", error);
+  }
 }
 
 async function createLead(
@@ -406,6 +635,7 @@ async function createLead(
     interest: FALLBACK_INTEREST,
     stage_id: defaultStageId,
     created_by: DEFAULT_CREATED_BY,
+    campaign: event.campaignName ?? event.campaignSourceId ?? null,
   };
 
   const { data, error } = await supabase
@@ -479,7 +709,154 @@ async function pausarIAparaLead(supabase: SupabaseClient, leadId: string) {
   await supabase.from("leads").update({ ia_pausada: true }).eq("id", leadId);
 }
 
-// NOVA FUNÇÃO: marca que um humano acabou de intervir manualmente numa conversa
+// Extrai o marcador [AGENDAMENTO_CONFIRMADO: ...] da resposta da IA, removendo-o
+// do texto que sera enviado ao cliente (ele nunca deve ver esse texto tecnico).
+function extrairAgendamento(respostaIA: string) {
+  const match = respostaIA.match(REGEX_AGENDAMENTO);
+
+  if (!match) {
+    return { textoLimpo: respostaIA, agendamento: null };
+  }
+
+  const dataHoraStr = match[1].trim();
+  const procedimento = match[2].trim();
+  const textoLimpo = respostaIA.replace(REGEX_AGENDAMENTO, "").trim();
+
+  const dataHora = new Date(dataHoraStr);
+
+  if (Number.isNaN(dataHora.getTime())) {
+    console.error(
+      "Marcador de agendamento com data invalida, ignorando:",
+      dataHoraStr
+    );
+    return { textoLimpo, agendamento: null };
+  }
+
+  return {
+    textoLimpo,
+    agendamento: {
+      scheduledAt: dataHora.toISOString(),
+      procedure: procedimento,
+    },
+  };
+}
+
+// PROTECAO INDEPENDENTE DA IA: valida o horario no CODIGO, nao so confiando
+// que a IA seguiu a regra do prompt corretamente (modelos de linguagem podem
+// falhar em regras numericas/condicionais, mesmo bem escritas no prompt).
+// Retorna true se o horario esta dentro do expediente permitido para agendamento.
+function horarioDentroDoExpediente(dataHoraISO: string): boolean {
+  const dataHoraBrasilia = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "short",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(new Date(dataHoraISO));
+
+  const partes: Record<string, string> = {};
+  for (const parte of dataHoraBrasilia) {
+    partes[parte.type] = parte.value;
+  }
+
+  const diaSemana = partes.weekday; // "Mon", "Tue", ..., "Sat", "Sun"
+  const hora = Number(partes.hour);
+  const minuto = Number(partes.minute);
+  const minutosDoDia = hora * 60 + minuto;
+
+  const SEGUNDA_A_SEXTA = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const INICIO_SEMANA = 11 * 60; // 11:00
+  const FIM_SEMANA = 19 * 60 + 30; // 19:30
+  const INICIO_SABADO = 9 * 60; // 09:00
+  const FIM_SABADO = 13 * 60; // 13:00
+
+  if (SEGUNDA_A_SEXTA.includes(diaSemana)) {
+    return minutosDoDia >= INICIO_SEMANA && minutosDoDia <= FIM_SEMANA;
+  }
+
+  if (diaSemana === "Sat") {
+    return minutosDoDia >= INICIO_SABADO && minutosDoDia <= FIM_SABADO;
+  }
+
+  return false; // domingo nunca e valido
+}
+
+// PROTECAO EXTRA: compara o dia da semana que o CLIENTE mencionou na mensagem
+// (ex: "sexta-feira", "quinta") com o dia da semana REAL da data que a IA
+// confirmou no marcador. Se o cliente mencionou um dia da semana especifico e
+// ele nao bate com a data escolhida, e sinal de que a IA calculou errado.
+function diaSemanaMencionadoBateComData(
+  mensagemCliente: string,
+  dataHoraISO: string
+): boolean {
+  const DIAS: Record<string, number> = {
+    domingo: 0,
+    segunda: 1,
+    terça: 2,
+    terca: 2,
+    quarta: 3,
+    quinta: 4,
+    sexta: 5,
+    sábado: 6,
+    sabado: 6,
+  };
+
+  const textoLower = mensagemCliente.toLowerCase();
+  let diaMencionado: number | null = null;
+
+  for (const [nome, indice] of Object.entries(DIAS)) {
+    if (textoLower.includes(nome)) {
+      diaMencionado = indice;
+      break;
+    }
+  }
+
+  // Cliente nao mencionou nenhum dia da semana por nome (so disse "amanha",
+  // "dia 15", etc.) -- nao ha o que cruzar, entao consideramos valido.
+  if (diaMencionado === null) return true;
+
+  const diaReal = new Date(dataHoraISO).toLocaleString("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "long",
+  });
+
+  const DIAS_EN: Record<string, number> = {
+    Sunday: 0,
+    Monday: 1,
+    Tuesday: 2,
+    Wednesday: 3,
+    Thursday: 4,
+    Friday: 5,
+    Saturday: 6,
+  };
+
+  return DIAS_EN[diaReal] === diaMencionado;
+}
+
+// Cria o registro na tabela appointments quando a IA confirma um agendamento.
+// Isso e o que faz o compromisso aparecer no feed ICS/Google Agenda.
+async function criarAgendamento(
+  supabase: SupabaseClient,
+  leadId: string,
+  scheduledAt: string,
+  procedure: string,
+  notes: string | null = null
+) {
+  const { error } = await supabase.from("appointments").insert({
+    lead_id: leadId,
+    scheduled_at: scheduledAt,
+    procedure,
+    status: "agendado",
+    created_by: DEFAULT_CREATED_BY,
+    notes,
+  });
+
+  if (error) {
+    console.error("Erro ao criar agendamento:", error);
+  }
+}
+
+// Marca que um humano acabou de intervir manualmente numa conversa
 async function marcarIntervencaoHumana(
   supabase: SupabaseClient,
   phoneE164: string
@@ -499,42 +876,34 @@ function humanoAtivoRecentemente(lead: LeadRow) {
   return agora - ultimaIntervencao < PAUSA_APOS_HUMANO_MS;
 }
 
+// Verifica se a IA foi pausada globalmente pelo painel do CRM (afeta TODAS
+// as conversas, inclusive novas, ate alguem reativar manualmente).
+async function iaPausadaGlobalmente(supabase: SupabaseClient) {
+  const { data, error } = await supabase
+    .from("global_settings")
+    .select("ia_pausada_globalmente")
+    .eq("id", 1)
+    .single();
+
+  if (error) {
+    console.error("Erro ao checar pausa global da IA:", error);
+    return false; // em caso de erro, nao bloqueia o atendimento por seguranca
+  }
+
+  return Boolean(data?.ia_pausada_globalmente);
+}
+
 async function buscarContextoClinica(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from("clinica_conhecimento")
-    .select("titulo, conteudo, categoria")
+    .select("titulo, conteudo")
     .eq("ativo", true);
 
   if (error || !data) {
     return "";
   }
 
-  // VERSÃO SIMPLES: dos procedimentos vai SÓ O NOME (sem explicações).
-  // O restante (horário, endereço, pagamento, convênio) vai completo.
-  const CATEGORIAS_PROCEDIMENTO = [
-    "corporal",
-    "facial",
-    "procedimento",
-    "depilacao",
-    "depilação",
-    "laser",
-  ];
-
-  const ehProcedimento = (categoria: string | null) =>
-    CATEGORIAS_PROCEDIMENTO.includes(String(categoria ?? "").toLowerCase());
-
-  const nomesProcedimentos = data
-    .filter((item) => ehProcedimento(item.categoria))
-    .map((item) => String(item.titulo).split(" - ")[0].trim())
-    .filter((nome, i, lista) => lista.indexOf(nome) === i)
-    .join(", ");
-
-  const infoFixa = data
-    .filter((item) => !ehProcedimento(item.categoria))
-    .map((item) => `${item.titulo}: ${item.conteudo}`)
-    .join("\n\n");
-
-  return `${infoFixa}\n\nPROCEDIMENTOS QUE A CLÍNICA REALIZA (apenas os nomes, sem detalhes): ${nomesProcedimentos}`;
+  return data.map((item) => `${item.titulo}: ${item.conteudo}`).join("\n\n");
 }
 
 async function buscarHistoricoConversa(
@@ -569,59 +938,78 @@ function obterSaudacaoPeriodo(): string {
   return "Boa noite";
 }
 
+function obterDataHojeFormatada(): string {
+  const hoje = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "long",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  const isoHoje = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+
+  return `${hoje} (${isoHoje})`;
+}
+
 function montarSystemPrompt(
   contextoClinica: string,
   ehPrimeiraMensagem: boolean,
-  nomeConhecido: string | null,
-  totalMensagensCliente: number
+  nomeConhecido: string | null
 ): string {
   const saudacao = obterSaudacaoPeriodo();
+  const dataHoje = obterDataHojeFormatada();
 
-  return `Você é o assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Seu papel é APENAS fazer o primeiro atendimento: receber o cliente com simpatia, para que ele nunca fique sem resposta, e encaminhar para a equipe.
+  return `Você é a assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Seu papel é dar o melhor atendimento possível SOZINHA: tirar dúvidas, apresentar procedimentos e deixar o cliente bem informado. Você é capaz de resolver a grande maioria dos atendimentos sem ajuda.
 
-TOM: acolhedor, simpático e direto, como uma conversa real de WhatsApp. Pode usar emojis com moderação.
+Hoje é ${dataHoje}, horário de Brasília.
 
-REGRA DE TAMANHO (SEM EXCEÇÕES): no MÁXIMO 2 frases curtas, em um único parágrafo, sem pular linha.
-
-FORMATAÇÃO: para destacar uma palavra use APENAS um asterisco de cada lado (*importante*). NUNCA use dois asteriscos.
+=== TOM E FORMATO ===
+- Frases curtas, tom acolhedor, educado e profissional. Emojis com moderação.
+- Nada de gírias nem cumprimentos informais ("Opa", "Hey", "E aí"). Prefira "Olá", "Oi", "Bom dia/Boa tarde/Boa noite".
+- Máximo 2 a 4 frases curtas por resposta. Nunca parágrafos longos.
+- Ao citar procedimentos para um problema, cite NO MÁXIMO 1 ou 2 opções, uma frase curta cada. Sem explicação técnica, a menos que o cliente peça.
+- NUNCA use negrito nem nenhum asterisco. Só texto simples.
+- NUNCA afirme qual dia da semana corresponde a uma data (é fácil errar esse cálculo). Se falar de datas, use só dia/mês e horário.
 
 ${
   ehPrimeiraMensagem
-    ? `Esta é a PRIMEIRA mensagem da conversa. Cumprimente com "${saudacao}!" e um emoji adequado, diga que é o assistente da GIO Boituva e pergunte como pode ajudar.`
-    : `Esta NÃO é a primeira mensagem — não repita saudação nem apresentação.`
+    ? `=== PRIMEIRA MENSAGEM ===
+Cumprimente com "${saudacao}!" + um emoji do período do dia, apresente-se como assistente da GIO Boituva 💜 (sempre com esse coração roxo logo após o nome) e pergunte como pode ajudar.`
+    : `Esta NÃO é a primeira mensagem da conversa — não repita saudação inicial nem apresentação.`
 }
 
-NOME DO CLIENTE:
+=== NOME DO CLIENTE ===
 ${
   nomeConhecido
-    ? `O nome já é conhecido: ${nomeConhecido}. Use de forma natural quando fizer sentido.`
-    : `O nome ainda não é conhecido. Pergunte UMA VEZ, de forma gentil. Se a pessoa não responder, siga sem insistir.`
+    ? `O nome do cliente é: ${nomeConhecido}. Use quando fizer sentido, com naturalidade.`
+    : `Nome ainda desconhecido. Pergunte UMA vez, de forma natural, de preferência no início. Se não responder, siga o atendimento sem insistir.`
 }
 
-SEU OBJETIVO: entender o que o cliente procura para que, quando a avaliadora assumir a conversa, ela já receba tudo bem encaminhado. Você NÃO explica procedimentos nem passa valores: você faz perguntas curtas e acolhedoras.
+=== COMO RESPONDER SOBRE PROCEDIMENTOS ===
+- Responda com base nas INFORMAÇÕES DA CLÍNICA abaixo. Não invente procedimentos que não estão lá, nem confirme algo que não sabe.
+- Pergunta genérica tipo "quais procedimentos vocês têm?": responda exatamente "Atualmente temos mais de 500 procedimentos entre: corporais, faciais, invasivos e depilação a laser!" e pergunte qual área interessa.
+- "Drenagem linfática" sem especificar = drenagem CORPORAL (a mais procurada). Só trate como facial se o cliente falar "facial" ou "rosto".
+- Não sugira combinações de procedimentos feitos em conjunto. Um procedimento por vez, sempre no básico.
+- Pele bronzeada e laser: NÃO toque nesse assunto espontaneamente. Só se o cliente perguntar ou disser que está bronzeado — aí explique que o ideal é avaliar presencialmente.
+- Perguntas sobre indicação, contraindicação, "será que funciona pra mim?", casos de saúde específicos: NÃO transfira para humano. Responda o básico do procedimento e diga que a avaliação presencial (que é onde tudo é analisado com segurança) confirma o que é indicado para o caso dela(e). Isso VOCÊ resolve.
+- Se realmente não tiver a informação na base (ex: um procedimento que não está listado): diga com naturalidade que essa informação você confirma com a equipe, e siga ajudando no que mais o cliente precisar. NÃO transfira para humano só por causa disso.
+- Nunca mencione ou compare com outras clínicas. Nunca dê diagnóstico médico.
+- Não ofereça agendamento de avaliação em toda mensagem — só quando o cliente demonstrar interesse claro ou a conversa estiver madura pra isso.
+- Horário de funcionamento: segunda a sexta das 11h às 20h, sábado das 9h às 13h.
 
-COMO CONDUZIR (UMA pergunta por mensagem, nunca várias juntas, e nunca repita o que o cliente já respondeu):
-1. Nome (se ainda não souber, sem insistir).
-2. O que ele(a) busca: qual procedimento, queixa ou objetivo principal.
-3. Se já fez algum tratamento para isso ou tem alguma dúvida específica que a avaliadora deva responder.
-4. Melhor dia e período para uma avaliação (dentro do horário de funcionamento).
-Adapte a ordem ao que o cliente disser. Se ele já contar tudo de uma vez, não pergunte de novo.
-
-QUANDO ENCERRAR (adicione no final o texto exato "${MARCADOR_HANDOFF}", marcador interno que o cliente não vê):
-- quando você já souber o que o cliente busca e mais pelo menos uma informação (experiência prévia, dúvida ou preferência de horário);
-- se o cliente pedir para falar com uma pessoa ou quiser marcar horário;
-- se ${totalMensagensCliente} for 5 ou mais (já conversou bastante), encerre agora mesmo com o que tiver.
-Ao encerrar, escreva UMA frase curta dizendo que a avaliadora vai continuar o atendimento e passar os detalhes, sem sugerir outro canal.
-
-O QUE VOCÊ PODE RESPONDER: horário de funcionamento, endereço, formas de pagamento e convênio (somente conforme as informações abaixo), e CONFIRMAR se a clínica realiza um procedimento, mas SOMENTE se o nome estiver na lista "PROCEDIMENTOS QUE A CLÍNICA REALIZA". Se não estiver na lista, não confirme nem negue: diga que a avaliadora vai verificar e continue a conduzir.
-
-O QUE VOCÊ NÃO DEVE RESPONDER: não explique procedimentos (como funciona, resultados, indicações, contraindicações, duração, sessões, preparo, cuidados), não dê valores/preços/promoções e nunca fale de pagamento recorrente (cobrança recorrente no cartão, assinatura, mensalidade) nem de boleto, mesmo que apareça abaixo. Se o cliente perguntar sobre boleto, recorrência, parcelamento especial ou qualquer forma de pagamento que não esteja listada abaixo, diga que a equipe passa essa informação. Se o cliente perguntar qualquer um desses pontos, diga em uma frase que a avaliadora passa os detalhes e já siga com a próxima pergunta da condução (ou encerre, se já for o caso).
-
-REGRAS OBRIGATÓRIAS:
-- Nunca mencione, recomende ou compare com outras clínicas ou concorrentes.
-- Nunca dê conselhos médicos ou diagnósticos.
-- Nunca invente informações. Se não está abaixo, encaminhe para a equipe.
-- Use o histórico para não repetir perguntas.
+=== QUANDO TRANSFERIR PARA HUMANO (ÚNICOS 3 CASOS) ===
+Transfira APENAS nestes três casos, e em NENHUM outro:
+1. O cliente quer MARCAR/AGENDAR um horário (dia e hora). Você não agenda — um humano finaliza. Antes disso, tire todas as dúvidas normalmente.
+2. O cliente PEDE EXPLICITAMENTE para falar com uma pessoa/atendente/humano.
+3. O cliente faz uma RECLAMAÇÃO sobre um atendimento ou procedimento já realizado, ou relata um problema/reação após um procedimento.
+Para transferir: adicione o texto exato "${MARCADOR_HANDOFF}" no FINAL da resposta (marcador interno, o cliente nunca vê). Nunca diga que vai "passar o contato" nem sugira outro canal — o cliente já está no canal certo.
+FORA DESSES 3 CASOS, NUNCA TRANSFIRA. Dúvida sobre procedimento, preço, indicação, contraindicação, funcionamento, localização — tudo isso VOCÊ responde. Na dúvida entre transferir ou responder: RESPONDA.
 
 INFORMAÇÕES DA CLÍNICA:
 ${contextoClinica}`;
@@ -637,8 +1025,7 @@ async function gerarRespostaIA(
   const systemPrompt = montarSystemPrompt(
     contextoClinica,
     ehPrimeiraMensagem,
-    nomeConhecido,
-    historico.filter((h) => h.mensagem).length + 1
+    nomeConhecido
   );
 
   const mensagensParaIA: Anthropic.MessageParam[] = [];
@@ -656,7 +1043,7 @@ async function gerarRespostaIA(
 
   const resposta = await anthropic.messages.create({
     model: "claude-haiku-4-5-20251001",
-    max_tokens: 150,
+    max_tokens: 180,
     system: systemPrompt,
     messages: mensagensParaIA,
   });
@@ -666,14 +1053,16 @@ async function gerarRespostaIA(
   return corrigirFormatacaoWhatsApp(textoOriginal);
 }
 
+// CORRIGIDO: agora envia via Dualhook (proxy oficial de coexistencia) em vez de
+// direto para graph.facebook.com, e verifica se a resposta deu erro.
 async function marcarComoLidoEDigitando(messageId: string) {
   try {
-    await fetch(
-      `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+    const response = await fetch(
+      `https://api.dualhook.com/v25.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+          Authorization: `Bearer ${process.env.DUALHOOK_API_KEY}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -684,13 +1073,21 @@ async function marcarComoLidoEDigitando(messageId: string) {
         }),
       }
     );
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(
+        `Falha ao marcar como lido/digitando (status ${response.status}):`,
+        errorBody
+      );
+    }
   } catch (erro) {
     console.error("Erro ao marcar como lido/digitando:", erro);
   }
 }
 
-// NOVA FUNÇÃO: calcula um atraso proposital antes de enviar,
-// simulando tempo de digitação humana (combina com o indicador "digitando...")
+// Calcula um atraso proposital antes de enviar,
+// simulando tempo de digitacao humana (combina com o indicador "digitando...")
 function calcularAtrasoDigitacao(texto: string) {
   const MINIMO_MS = 3000;
   const MAXIMO_MS = 8000;
@@ -704,71 +1101,57 @@ function aguardar(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// CORRIGIDO: agora envia via Dualhook (proxy oficial de coexistencia) em vez de
+// direto para graph.facebook.com, e lanca erro explicito se a resposta falhar
+// (antes falhava em silencio e a IA parecia simplesmente "nao responder").
 async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
-  await fetch(
-    `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
+  const response = await fetch(
+    `https://api.dualhook.com/v25.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+        Authorization: `Bearer ${process.env.DUALHOOK_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
         messaging_product: "whatsapp",
         to: numeroCliente,
+        type: "text",
         text: { body: texto },
       }),
     }
   );
+
+  if (!response.ok) {
+    const errorBody = await response.text();
+    console.error(
+      `Falha ao enviar mensagem WhatsApp (status ${response.status}):`,
+      errorBody
+    );
+    throw new Error(
+      `Falha ao enviar mensagem WhatsApp: ${response.status} - ${errorBody}`
+    );
+  }
 }
 
-// NOVA FUNÇÃO: notifica a equipe quando a IA transfere para humano
+// Notifica a equipe quando a IA transfere para humano
 async function notificarEquipeHandoff(
   numeroCliente: string,
   nomeCliente: string | null,
-  resumoConversa: string
+  ultimaMensagem: string
 ) {
   const numeroAdmin = process.env.ADMIN_WHATSAPP_NUMBER;
   if (!numeroAdmin) return;
 
   const texto = `⚠️ *Atenção necessária*\nCliente: ${
     nomeCliente ?? numeroCliente
-  }\nTelefone: ${numeroCliente}\nO que o cliente disse:\n${resumoConversa}\n\nA IA concluiu a pré-triagem: assuma a conversa.`;
+  }\nTelefone: ${numeroCliente}\nÚltima mensagem: "${ultimaMensagem}"\n\nA IA identificou que esse atendimento precisa de um humano.`;
 
   try {
     await enviarMensagemWhatsApp(numeroAdmin, texto);
   } catch (erro) {
     console.error("Erro ao notificar equipe sobre handoff:", erro);
   }
-}
-
-async function salvarConversa(
-  supabase: SupabaseClient,
-  telefoneCliente: string,
-  mensagem: string,
-  resposta: string
-) {
-  await supabase.from("whatsapp_conversas").insert({
-    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
-    telefone_cliente: telefoneCliente,
-    mensagem,
-    resposta,
-  });
-}
-
-// NOVA FUNÇÃO: salva a mensagem do cliente mesmo quando a IA está pausada
-// (sem isso, o painel não mostrava nada durante o atendimento humano)
-async function salvarMensagemSemResposta(
-  supabase: SupabaseClient,
-  telefoneCliente: string,
-  mensagem: string
-) {
-  await supabase.from("whatsapp_conversas").insert({
-    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
-    telefone_cliente: telefoneCliente,
-    mensagem,
-    resposta: null,
-  });
 }
 
 async function processIncomingMessage(
@@ -788,6 +1171,27 @@ async function processIncomingMessage(
     };
   }
 
+  // Reivindica a mensagem JA, antes de qualquer processamento demorado.
+  // Se outra requisicao paralela (reenvio da Meta) ja reivindicou essa mesma
+  // mensagem entre a checagem acima e agora, "claimed" vem false e paramos aqui
+  // -- isso e o que realmente elimina a duplicacao, nao so a checagem inicial.
+  const { claimed } = await claimMessage(
+    supabase,
+    event.phoneRaw,
+    event.message,
+    event.messageId
+  );
+
+  if (!claimed) {
+    return {
+      processed: false,
+      duplicate: true,
+      leadId: null as string | null,
+      dedupeMode: "message_id_race",
+      duplicateLeadsFound: 0,
+    };
+  }
+
   const { lead: existingLead, duplicatesFound } = await findExistingLead(
     supabase,
     event.phoneE164
@@ -801,10 +1205,12 @@ async function processIncomingMessage(
     lead = await createLead(supabase, event, defaultStageId);
   }
 
-  // Se a IA já foi pausada de vez para esse lead (handoff), não responde mais,
-  // mas salva a mensagem do cliente para aparecer no painel
+  await saveLeadAttribution(supabase, lead.id, event);
+
+  // Se a IA ja foi pausada de vez para esse lead (handoff), nao responde mais.
+  // A mensagem do cliente ja foi salva pelo claimMessage acima, entao so
+  // paramos por aqui.
   if (lead.ia_pausada) {
-    await salvarMensagemSemResposta(supabase, event.phoneRaw, event.message);
     return {
       processed: true,
       duplicate: false,
@@ -814,10 +1220,21 @@ async function processIncomingMessage(
     };
   }
 
-  // Se um humano respondeu manualmente pelo app há menos de 1h, a IA aguarda,
-  // mas salva a mensagem do cliente para aparecer no painel
+  // Pausa global do painel do CRM: afeta TODAS as conversas, inclusive essa,
+  // mesmo que o lead individualmente nao esteja pausado.
+  if (await iaPausadaGlobalmente(supabase)) {
+    return {
+      processed: true,
+      duplicate: false,
+      leadId: lead.id,
+      dedupeMode: existingLead ? "phone_e164" : "created",
+      duplicateLeadsFound: duplicatesFound,
+    };
+  }
+
+  // Se um humano respondeu manualmente pelo app ha menos de 1h, a IA aguarda.
+  // A mensagem do cliente ja foi salva pelo claimMessage acima.
   if (humanoAtivoRecentemente(lead)) {
-    await salvarMensagemSemResposta(supabase, event.phoneRaw, event.message);
     return {
       processed: true,
       duplicate: false,
@@ -845,25 +1262,60 @@ async function processIncomingMessage(
       const precisaHumano = respostaIA.includes(MARCADOR_HANDOFF);
 
       if (precisaHumano) {
-        const textoSemMarcador = respostaIA.replace(MARCADOR_HANDOFF, "").trim();
-        respostaIA = textoSemMarcador || MENSAGEM_HANDOFF;
+        respostaIA = MENSAGEM_HANDOFF;
         await pausarIAparaLead(supabase, lead.id);
-        const mensagensCliente = [
-          ...historico.map((h) => h.mensagem).filter(Boolean),
-          event.message,
-        ].slice(-8) as string[];
         await notificarEquipeHandoff(
           event.phoneRaw,
           nomeConhecido,
-          mensagensCliente.map((m) => `• ${m}`).join("\n")
+          event.message
         );
+      } else {
+        const { textoLimpo, agendamento } = extrairAgendamento(respostaIA);
+        respostaIA = textoLimpo;
+
+        if (agendamento) {
+          const horarioValido = horarioDentroDoExpediente(
+            agendamento.scheduledAt
+          );
+
+          if (!horarioValido) {
+            // Fora do expediente: isso continua bloqueando, pois nao tem como
+            // a recepcao "resolver" um horario que a clinica nem abre.
+            console.error(
+              "IA tentou agendar fora do expediente, bloqueado pelo codigo:",
+              agendamento.scheduledAt
+            );
+            respostaIA =
+              "Esse horário não está dentro do nosso expediente para agendamentos (segunda a sexta, 11h às 19h30, ou sábado das 9h às 13h). Consegue me indicar outro horário dentro desses períodos?";
+          } else {
+            // Dentro do expediente: cria normalmente. Se o cliente mencionou
+            // um dia da semana que nao bate com a data calculada, nao trava a
+            // conversa nem incomoda o cliente -- so deixa uma nota interna
+            // para a recepcao conferir na hora de confirmar por telefone.
+            const diaSemanaBate = diaSemanaMencionadoBateComData(
+              event.message,
+              agendamento.scheduledAt
+            );
+            const notas = diaSemanaBate
+              ? null
+              : "⚠️ Cliente mencionou um dia da semana que pode não bater com a data calculada pela IA — conferir ao confirmar.";
+
+            await criarAgendamento(
+              supabase,
+              lead.id,
+              agendamento.scheduledAt,
+              agendamento.procedure,
+              notas
+            );
+          }
+        }
       }
 
       const atrasoMs = calcularAtrasoDigitacao(respostaIA);
       await aguardar(atrasoMs);
 
       await enviarMensagemWhatsApp(event.phoneRaw, respostaIA);
-      await salvarConversa(supabase, event.phoneRaw, event.message, respostaIA);
+      await atualizarRespostaConversa(supabase, event.messageId, respostaIA);
     }
   } catch (iaError) {
     console.error("ERRO AO GERAR/ENVIAR RESPOSTA DA IA:", iaError);
@@ -915,10 +1367,23 @@ export async function POST(req: NextRequest) {
 
   const supabase = createSupabaseServerClient();
 
-  // Processa avisos de mensagens enviadas manualmente por humano (via app)
-  const telefonesComIntervencaoHumana = extractHumanEchoPhones(body);
-  for (const telefone of telefonesComIntervencaoHumana) {
-    await marcarIntervencaoHumana(supabase, telefone);
+  // LOG TEMPORARIO: para identificar o formato exato do campo "referral"
+  // enviado pela Meta em mensagens vindas de anuncios Click-to-WhatsApp.
+  // Remover depois de confirmar o formato.
+  console.log("PAYLOAD COMPLETO DO WEBHOOK:", JSON.stringify(body, null, 2));
+
+  // Processa mensagens enviadas manualmente pela equipe no app do WhatsApp.
+  // Elas passam a aparecer no historico do CRM e continuam pausando a IA por 1h.
+  const humanEchoes = extractHumanEchoes(body);
+  for (const echo of humanEchoes) {
+    try {
+      await saveHumanEcho(supabase, echo);
+      await marcarIntervencaoHumana(supabase, echo.phoneE164);
+    } catch (echoError) {
+      // Uma falha ao registrar o echo nao deve derrubar o webhook nem impedir
+      // o processamento de mensagens recebidas dos clientes.
+      console.error("ERRO AO PROCESSAR MENSAGEM MANUAL DO WHATSAPP:", echoError);
+    }
   }
 
   const events = extractIncomingMessages(body);
