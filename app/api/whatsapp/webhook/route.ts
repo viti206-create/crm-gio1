@@ -896,14 +896,40 @@ async function iaPausadaGlobalmente(supabase: SupabaseClient) {
 async function buscarContextoClinica(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from("clinica_conhecimento")
-    .select("titulo, conteudo")
+    .select("titulo, conteudo, categoria")
     .eq("ativo", true);
 
   if (error || !data) {
     return "";
   }
 
-  return data.map((item) => `${item.titulo}: ${item.conteudo}`).join("\n\n");
+  // ATENDIMENTO SIMPLES: dos procedimentos vai SO O NOME (sem explicacoes),
+  // para a IA nao passar informacao errada. O restante (horario, endereco,
+  // pagamento, convenio) vai completo.
+  const CATEGORIAS_PROCEDIMENTO = [
+    "corporal",
+    "facial",
+    "procedimento",
+    "depilacao",
+    "depilação",
+    "laser",
+  ];
+
+  const ehProcedimento = (categoria: string | null) =>
+    CATEGORIAS_PROCEDIMENTO.includes(String(categoria ?? "").toLowerCase());
+
+  const nomesProcedimentos = data
+    .filter((item) => ehProcedimento(item.categoria))
+    .map((item) => String(item.titulo).split(" - ")[0].trim())
+    .filter((nome, i, lista) => lista.indexOf(nome) === i)
+    .join(", ");
+
+  const infoFixa = data
+    .filter((item) => !ehProcedimento(item.categoria))
+    .map((item) => `${item.titulo}: ${item.conteudo}`)
+    .join("\n\n");
+
+  return `${infoFixa}\n\nPROCEDIMENTOS QUE A CLÍNICA REALIZA (apenas os nomes, sem detalhes): ${nomesProcedimentos}`;
 }
 
 async function buscarHistoricoConversa(
@@ -957,23 +983,90 @@ function obterDataHojeFormatada(): string {
   return `${hoje} (${isoHoje})`;
 }
 
+// Calcula o que a IA deve dizer sobre o contato da avaliadora, conforme o horario de agora.
+// Funcionamento: seg-sex 11h-20h, sab 9h-13h, domingo fechado. Fora do horario, o contato
+// acontece a partir de 30 minutos apos a abertura do proximo dia de funcionamento.
+function obterInfoContato(): string {
+  const partes = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Sao_Paulo",
+    weekday: "short",
+    hour: "numeric",
+    minute: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(new Date());
+
+  const pega = (tipo: string) =>
+    partes.find((p) => p.type === tipo)?.value ?? "";
+
+  const mapaDias: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+
+  const diaSemana = mapaDias[pega("weekday")] ?? 1;
+  const minutosAgora = Number(pega("hour")) * 60 + Number(pega("minute"));
+
+  // [abre, fecha] em minutos; null = fechado
+  const horarioDoDia = (dia: number): [number, number] | null => {
+    if (dia === 0) return null;
+    if (dia === 6) return [9 * 60, 13 * 60];
+    return [11 * 60, 20 * 60];
+  };
+
+  const hoje = horarioDoDia(diaSemana);
+  if (hoje && minutosAgora >= hoje[0] && minutosAgora < hoje[1]) {
+    return "A avaliadora entrará em contato com você em breve.";
+  }
+
+  const nomesDias = [
+    "no domingo",
+    "na segunda-feira",
+    "na terça-feira",
+    "na quarta-feira",
+    "na quinta-feira",
+    "na sexta-feira",
+    "no sábado",
+  ];
+
+  for (let i = 0; i <= 7; i++) {
+    const dia = (diaSemana + i) % 7;
+    const horario = horarioDoDia(dia);
+    if (!horario) continue;
+    if (i === 0 && minutosAgora >= horario[0]) continue; // hoje ja passou do horario
+
+    const inicio = horario[0] + 30;
+    const hh = Math.floor(inicio / 60);
+    const mm = String(inicio % 60).padStart(2, "0");
+    const quando = i === 0 ? "hoje" : i === 1 ? "amanhã" : nomesDias[dia];
+
+    return `Estamos fora do horário de atendimento, então a avaliadora entrará em contato com você ${quando}, a partir das ${hh}h${mm}.`;
+  }
+
+  return "A avaliadora entrará em contato com você assim que possível.";
+}
+
 function montarSystemPrompt(
   contextoClinica: string,
   ehPrimeiraMensagem: boolean,
-  nomeConhecido: string | null
+  nomeConhecido: string | null,
+  totalMensagensCliente: number
 ): string {
   const saudacao = obterSaudacaoPeriodo();
   const dataHoje = obterDataHojeFormatada();
 
-  return `Você é a assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Seu papel é dar o melhor atendimento possível SOZINHA: tirar dúvidas, apresentar procedimentos e deixar o cliente bem informado. Você é capaz de resolver a grande maioria dos atendimentos sem ajuda.
+  return `Você é a assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Seu papel é fazer o primeiro atendimento: receber o cliente com simpatia, entender o que ele procura e deixar a conversa bem encaminhada para a avaliadora da clínica, para que o cliente nunca fique sem resposta.
 
 Hoje é ${dataHoje}, horário de Brasília.
 
 === TOM E FORMATO ===
 - Frases curtas, tom acolhedor, educado e profissional. Emojis com moderação.
 - Nada de gírias nem cumprimentos informais ("Opa", "Hey", "E aí"). Prefira "Olá", "Oi", "Bom dia/Boa tarde/Boa noite".
-- Máximo 2 a 4 frases curtas por resposta. Nunca parágrafos longos.
-- Ao citar procedimentos para um problema, cite NO MÁXIMO 1 ou 2 opções, uma frase curta cada. Sem explicação técnica, a menos que o cliente peça.
+- Máximo 2 frases curtas por resposta, em um único parágrafo, sem pular linha.
 - NUNCA use negrito nem nenhum asterisco. Só texto simples.
 - NUNCA afirme qual dia da semana corresponde a uma data (é fácil errar esse cálculo). Se falar de datas, use só dia/mês e horário.
 
@@ -991,25 +1084,43 @@ ${
     : `Nome ainda desconhecido. Pergunte UMA vez, de forma natural, de preferência no início. Se não responder, siga o atendimento sem insistir.`
 }
 
-=== COMO RESPONDER SOBRE PROCEDIMENTOS ===
-- Responda com base nas INFORMAÇÕES DA CLÍNICA abaixo. Não invente procedimentos que não estão lá, nem confirme algo que não sabe.
-- Pergunta genérica tipo "quais procedimentos vocês têm?": responda exatamente "Atualmente temos mais de 500 procedimentos entre: corporais, faciais, invasivos e depilação a laser!" e pergunte qual área interessa.
-- "Drenagem linfática" sem especificar = drenagem CORPORAL (a mais procurada). Só trate como facial se o cliente falar "facial" ou "rosto".
-- Não sugira combinações de procedimentos feitos em conjunto. Um procedimento por vez, sempre no básico.
-- Pele bronzeada e laser: NÃO toque nesse assunto espontaneamente. Só se o cliente perguntar ou disser que está bronzeado — aí explique que o ideal é avaliar presencialmente.
-- Perguntas sobre indicação, contraindicação, "será que funciona pra mim?", casos de saúde específicos: NÃO transfira para humano. Responda o básico do procedimento e diga que a avaliação presencial (que é onde tudo é analisado com segurança) confirma o que é indicado para o caso dela(e). Isso VOCÊ resolve.
-- Se realmente não tiver a informação na base (ex: um procedimento que não está listado): diga com naturalidade que essa informação você confirma com a equipe, e siga ajudando no que mais o cliente precisar. NÃO transfira para humano só por causa disso.
-- Nunca mencione ou compare com outras clínicas. Nunca dê diagnóstico médico.
-- Não ofereça agendamento de avaliação em toda mensagem — só quando o cliente demonstrar interesse claro ou a conversa estiver madura pra isso.
-- Horário de funcionamento: segunda a sexta das 11h às 20h, sábado das 9h às 13h.
+=== SEU OBJETIVO ===
+Entender o que o cliente procura para que, quando a avaliadora assumir a conversa, ela já receba tudo bem encaminhado. Você NÃO explica procedimentos nem passa valores: você faz perguntas curtas e acolhedoras.
 
-=== QUANDO TRANSFERIR PARA HUMANO (ÚNICOS 3 CASOS) ===
-Transfira APENAS nestes três casos, e em NENHUM outro:
-1. O cliente quer MARCAR/AGENDAR um horário (dia e hora). Você não agenda — um humano finaliza. Antes disso, tire todas as dúvidas normalmente.
-2. O cliente PEDE EXPLICITAMENTE para falar com uma pessoa/atendente/humano.
-3. O cliente faz uma RECLAMAÇÃO sobre um atendimento ou procedimento já realizado, ou relata um problema/reação após um procedimento.
-Para transferir: adicione o texto exato "${MARCADOR_HANDOFF}" no FINAL da resposta (marcador interno, o cliente nunca vê). Nunca diga que vai "passar o contato" nem sugira outro canal — o cliente já está no canal certo.
-FORA DESSES 3 CASOS, NUNCA TRANSFIRA. Dúvida sobre procedimento, preço, indicação, contraindicação, funcionamento, localização — tudo isso VOCÊ responde. Na dúvida entre transferir ou responder: RESPONDA.
+COMO CONDUZIR (UMA pergunta por mensagem, nunca várias juntas, e nunca repita o que o cliente já respondeu):
+1. Nome (se ainda não souber, sem insistir).
+2. O que ele(a) busca: qual procedimento, queixa ou objetivo principal.
+3. Se já fez algum tratamento para isso ou tem alguma dúvida específica que a avaliadora deva responder.
+4. Se prefere avaliação online ou presencial, e o melhor dia e período (dentro do horário de funcionamento).
+Adapte a ordem ao que o cliente disser. Se ele já contar tudo de uma vez, não pergunte de novo.
+
+SOBRE A AVALIAÇÃO: a avaliação é feita pela avaliadora da clínica e, na maioria dos casos, pode ser feita ON-LINE, sem precisar vir até a clínica (quando necessário, ela avisa que precisa ser presencial). Pode oferecer isso ao cliente de forma natural, principalmente para quem é de fora ou quer praticidade. Não prometa que será 100% online em todos os casos.
+
+=== QUANDO ENCERRAR ===
+Para encerrar, adicione no final da resposta o texto exato "${MARCADOR_HANDOFF}" (marcador interno, o cliente nunca vê). Encerre SOMENTE quando:
+- o cliente pedir claramente para falar com uma pessoa/atendente; OU
+- o cliente quiser marcar a avaliação ou um horário; OU
+- o cliente fizer uma reclamação sobre atendimento ou procedimento já realizado, ou relatar problema/reação após um procedimento (nesse caso encerre já, com empatia); OU
+- você já souber o que ele busca E já tiver feito pelo menos mais 2 perguntas da condução, depois da resposta dele; OU
+- ${totalMensagensCliente} for 7 ou mais (conversa longa): encerre agora com o que tiver.
+NÃO encerre só porque o cliente perguntou preço, como funciona ou algo que você não pode responder: nesses casos diga que a avaliadora explica tudo na avaliação (que pode ser on-line) e CONTINUE com a próxima pergunta da condução. Cumprimentos e perguntas simples também não encerram.
+Ao encerrar, escreva UMA frase curta agradecendo as informações e dizendo que a avaliadora vai dar continuidade ao atendimento. NÃO diga dia, horário nem prazo de contato: o sistema acrescenta essa informação automaticamente depois da sua frase. Não sugira outro canal.
+
+=== O QUE VOCÊ PODE RESPONDER ===
+- Horário de funcionamento, endereço, formas de pagamento e convênio, somente conforme as informações abaixo.
+- Pergunta genérica tipo "quais procedimentos vocês têm?": responda exatamente "Atualmente temos mais de 500 procedimentos entre: corporais, faciais, invasivos e depilação a laser!" e pergunte qual área interessa.
+- CONFIRMAR se a clínica realiza um procedimento, mas SOMENTE se o nome estiver na lista "PROCEDIMENTOS QUE A CLÍNICA REALIZA". Se não estiver na lista, não confirme nem negue: diga que a avaliadora vai verificar e continue a conduzir.
+
+=== O QUE VOCÊ NÃO DEVE RESPONDER ===
+- Não explique procedimentos (como funciona, resultados, indicações, contraindicações, duração, sessões, preparo, cuidados) e não dê valores/preços/promoções.
+- Nunca fale de pagamento recorrente (cobrança recorrente no cartão, assinatura, mensalidade) nem de boleto, mesmo que apareça abaixo. Se o cliente perguntar sobre boleto, recorrência, parcelamento especial ou qualquer forma de pagamento que não esteja listada abaixo, diga que a equipe passa essa informação.
+- Quando o cliente perguntar qualquer um desses pontos, diga em uma frase que a avaliadora passa os detalhes na avaliação (que pode ser on-line) e siga com a próxima pergunta da condução.
+
+=== REGRAS OBRIGATÓRIAS ===
+- Nunca mencione, recomende ou compare com outras clínicas ou concorrentes.
+- Nunca dê conselhos médicos ou diagnósticos.
+- Nunca invente informações. Se não está abaixo, a avaliadora confirma.
+- Use o histórico para não repetir perguntas.
 
 INFORMAÇÕES DA CLÍNICA:
 ${contextoClinica}`;
@@ -1025,7 +1136,8 @@ async function gerarRespostaIA(
   const systemPrompt = montarSystemPrompt(
     contextoClinica,
     ehPrimeiraMensagem,
-    nomeConhecido
+    nomeConhecido,
+    historico.filter((h) => h.mensagem).length + 1
   );
 
   const mensagensParaIA: Anthropic.MessageParam[] = [];
@@ -1056,6 +1168,11 @@ async function gerarRespostaIA(
 // CORRIGIDO: agora envia via Dualhook (proxy oficial de coexistencia) em vez de
 // direto para graph.facebook.com, e verifica se a resposta deu erro.
 async function marcarComoLidoEDigitando(messageId: string) {
+  // Para NAO limpar o aviso de "nao lida" no celular principal (coexistencia
+  // espelha o "lido" da API no app), defina IA_MARCAR_COMO_LIDO=false na Vercel.
+  // Efeito colateral: some o "digitando..." e o cliente nao ve o "lido" azul.
+  if (process.env.IA_MARCAR_COMO_LIDO === "false") return;
+
   try {
     const response = await fetch(
       `https://api.dualhook.com/v25.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
@@ -1134,18 +1251,18 @@ async function enviarMensagemWhatsApp(numeroCliente: string, texto: string) {
   }
 }
 
-// Notifica a equipe quando a IA transfere para humano
+// Notifica a equipe quando a IA conclui a pre-triagem / transfere para humano
 async function notificarEquipeHandoff(
   numeroCliente: string,
   nomeCliente: string | null,
-  ultimaMensagem: string
+  resumoConversa: string
 ) {
   const numeroAdmin = process.env.ADMIN_WHATSAPP_NUMBER;
   if (!numeroAdmin) return;
 
   const texto = `⚠️ *Atenção necessária*\nCliente: ${
     nomeCliente ?? numeroCliente
-  }\nTelefone: ${numeroCliente}\nÚltima mensagem: "${ultimaMensagem}"\n\nA IA identificou que esse atendimento precisa de um humano.`;
+  }\nTelefone: ${numeroCliente}\nO que o cliente disse:\n${resumoConversa}\n\nA IA concluiu a pré-triagem: assuma a conversa.`;
 
   try {
     await enviarMensagemWhatsApp(numeroAdmin, texto);
@@ -1262,12 +1379,23 @@ async function processIncomingMessage(
       const precisaHumano = respostaIA.includes(MARCADOR_HANDOFF);
 
       if (precisaHumano) {
-        respostaIA = MENSAGEM_HANDOFF;
+        const textoSemMarcador = respostaIA.replace(MARCADOR_HANDOFF, "").trim();
+        // O aviso de contato da avaliadora (e o horario, se estiver fora do
+        // expediente) e acrescentado pelo CODIGO, para TODOS os clientes receberem.
+        respostaIA = `${
+          textoSemMarcador || "Obrigada pelas informações! 💜"
+        } ${obterInfoContato()}`;
         await pausarIAparaLead(supabase, lead.id);
+
+        const mensagensCliente = [
+          ...historico.map((h) => h.mensagem).filter(Boolean),
+          event.message,
+        ].slice(-8) as string[];
+
         await notificarEquipeHandoff(
           event.phoneRaw,
           nomeConhecido,
-          event.message
+          mensagensCliente.map((m) => `• ${m}`).join("\n")
         );
       } else {
         const { textoLimpo, agendamento } = extrairAgendamento(respostaIA);
