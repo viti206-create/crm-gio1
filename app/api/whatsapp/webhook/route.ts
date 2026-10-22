@@ -569,73 +569,6 @@ function obterSaudacaoPeriodo(): string {
   return "Boa noite";
 }
 
-// Calcula o que a IA deve dizer sobre o contato da avaliadora, conforme o horário de agora.
-// Funcionamento: seg-sex 11h-20h, sáb 9h-13h, domingo fechado. O contato acontece
-// a partir de 30 minutos após a abertura do próximo dia de funcionamento.
-function obterInfoContato(): string {
-  const partes = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Sao_Paulo",
-    weekday: "short",
-    hour: "numeric",
-    minute: "numeric",
-    hourCycle: "h23",
-  }).formatToParts(new Date());
-
-  const pega = (tipo: string) =>
-    partes.find((p) => p.type === tipo)?.value ?? "";
-
-  const mapaDias: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-  };
-
-  const diaSemana = mapaDias[pega("weekday")] ?? 1;
-  const minutosAgora = Number(pega("hour")) * 60 + Number(pega("minute"));
-
-  // [abre, fecha] em minutos; null = fechado
-  const horarioDoDia = (dia: number): [number, number] | null => {
-    if (dia === 0) return null;
-    if (dia === 6) return [9 * 60, 13 * 60];
-    return [11 * 60, 20 * 60];
-  };
-
-  const hoje = horarioDoDia(diaSemana);
-  if (hoje && minutosAgora >= hoje[0] && minutosAgora < hoje[1]) {
-    return "A avaliadora entrará em contato com você em breve.";
-  }
-
-  const nomesDias = [
-    "no domingo",
-    "na segunda-feira",
-    "na terça-feira",
-    "na quarta-feira",
-    "na quinta-feira",
-    "na sexta-feira",
-    "no sábado",
-  ];
-
-  for (let i = 0; i <= 7; i++) {
-    const dia = (diaSemana + i) % 7;
-    const horario = horarioDoDia(dia);
-    if (!horario) continue;
-    if (i === 0 && minutosAgora >= horario[0]) continue; // hoje já passou do horário
-
-    const inicio = horario[0] + 30;
-    const hh = Math.floor(inicio / 60);
-    const mm = String(inicio % 60).padStart(2, "0");
-    const quando = i === 0 ? "hoje" : i === 1 ? "amanhã" : nomesDias[dia];
-
-    return `Estamos fora do horário de atendimento, então a avaliadora entrará em contato com você ${quando}, a partir das ${hh}h${mm}.`;
-  }
-
-  return "A avaliadora entrará em contato com você assim que possível.";
-}
-
 function montarSystemPrompt(
   contextoClinica: string,
   ehPrimeiraMensagem: boolean,
@@ -643,7 +576,6 @@ function montarSystemPrompt(
   totalMensagensCliente: number
 ): string {
   const saudacao = obterSaudacaoPeriodo();
-  const infoContato = obterInfoContato();
 
   return `Você é o assistente virtual da GIO Boituva, uma clínica de estética facial e corporal. Seu papel é APENAS fazer o primeiro atendimento: receber o cliente com simpatia, para que ele nunca fique sem resposta, e encaminhar para a equipe.
 
@@ -672,22 +604,18 @@ COMO CONDUZIR (UMA pergunta por mensagem, nunca várias juntas, e nunca repita o
 1. Nome (se ainda não souber, sem insistir).
 2. O que ele(a) busca: qual procedimento, queixa ou objetivo principal.
 3. Se já fez algum tratamento para isso ou tem alguma dúvida específica que a avaliadora deva responder.
-4. Se prefere avaliação online ou presencial, e o melhor dia e período (dentro do horário de funcionamento).
+4. Melhor dia e período para uma avaliação (dentro do horário de funcionamento).
 Adapte a ordem ao que o cliente disser. Se ele já contar tudo de uma vez, não pergunte de novo.
 
-SOBRE A AVALIAÇÃO: a avaliação é feita pela avaliadora da clínica e, na maioria dos casos, pode ser feita ON-LINE, sem precisar vir até a clínica (quando necessário, ela avisa que precisa ser presencial). Pode oferecer isso ao cliente de forma natural, principalmente para quem é de fora ou quer praticidade. Não prometa que será 100% online em todos os casos.
-
-QUANDO ENCERRAR (adicione no final o texto exato "${MARCADOR_HANDOFF}", marcador interno que o cliente não vê). Encerre SOMENTE quando:
-- o cliente pedir claramente para falar com uma pessoa/atendente; OU
-- o cliente quiser marcar a avaliação ou um horário; OU
-- você já souber o que ele busca E já tiver feito pelo menos mais 2 perguntas da condução, depois da resposta dele; OU
-- ${totalMensagensCliente} for 7 ou mais (conversa longa), encerre agora com o que tiver.
-NÃO encerre só porque o cliente perguntou preço, como funciona ou algo que você não pode responder: nesses casos diga que a avaliadora explica tudo na avaliação (que pode ser on-line) e CONTINUE com a próxima pergunta da condução. Cumprimentos e perguntas simples também não encerram.
-Ao encerrar, escreva uma mensagem curta (no máximo 2 frases) agradecendo e informando EXATAMENTE isto sobre o contato da avaliadora: "${infoContato}" Não invente outro dia ou horário e não sugira outro canal.
+QUANDO ENCERRAR (adicione no final o texto exato "${MARCADOR_HANDOFF}", marcador interno que o cliente não vê):
+- quando você já souber o que o cliente busca e mais pelo menos uma informação (experiência prévia, dúvida ou preferência de horário);
+- se o cliente pedir para falar com uma pessoa ou quiser marcar horário;
+- se ${totalMensagensCliente} for 5 ou mais (já conversou bastante), encerre agora mesmo com o que tiver.
+Ao encerrar, escreva UMA frase curta dizendo que a avaliadora vai continuar o atendimento e passar os detalhes, sem sugerir outro canal.
 
 O QUE VOCÊ PODE RESPONDER: horário de funcionamento, endereço, formas de pagamento e convênio (somente conforme as informações abaixo), e CONFIRMAR se a clínica realiza um procedimento, mas SOMENTE se o nome estiver na lista "PROCEDIMENTOS QUE A CLÍNICA REALIZA". Se não estiver na lista, não confirme nem negue: diga que a avaliadora vai verificar e continue a conduzir.
 
-O QUE VOCÊ NÃO DEVE RESPONDER: não explique procedimentos (como funciona, resultados, indicações, contraindicações, duração, sessões, preparo, cuidados), não dê valores/preços/promoções e nunca fale de pagamento recorrente (cobrança recorrente no cartão, assinatura, mensalidade) nem de boleto, mesmo que apareça abaixo. Se o cliente perguntar sobre boleto, recorrência, parcelamento especial ou qualquer forma de pagamento que não esteja listada abaixo, diga que a equipe passa essa informação. Se o cliente perguntar qualquer um desses pontos, diga em uma frase que a avaliadora passa os detalhes na avaliação (que pode ser on-line) e já siga com a próxima pergunta da condução. Só encerre se uma das condições de encerramento acima for verdadeira.
+O QUE VOCÊ NÃO DEVE RESPONDER: não explique procedimentos (como funciona, resultados, indicações, contraindicações, duração, sessões, preparo, cuidados), não dê valores/preços/promoções e nunca fale de pagamento recorrente (cobrança recorrente no cartão, assinatura, mensalidade) nem de boleto, mesmo que apareça abaixo. Se o cliente perguntar sobre boleto, recorrência, parcelamento especial ou qualquer forma de pagamento que não esteja listada abaixo, diga que a equipe passa essa informação. Se o cliente perguntar qualquer um desses pontos, diga em uma frase que a avaliadora passa os detalhes e já siga com a próxima pergunta da condução (ou encerre, se já for o caso).
 
 REGRAS OBRIGATÓRIAS:
 - Nunca mencione, recomende ou compare com outras clínicas ou concorrentes.
