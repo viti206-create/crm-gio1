@@ -255,6 +255,12 @@ export default function EditLeadPage() {
   const [campaign, setCampaign] = useState("");
   const [responsibleId, setResponsibleId] = useState("");
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
+  const [aiReviewLevel, setAiReviewLevel] = useState<"normal" | "attention" | "urgent">("normal");
+  const [aiReviewReason, setAiReviewReason] = useState<string | null>(null);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [aiNextAction, setAiNextAction] = useState<string | null>(null);
+  const [aiConfidence, setAiConfidence] = useState<number | null>(null);
+  const [aiSuggestedStage, setAiSuggestedStage] = useState<string | null>(null);
 
   const sexOptions = useMemo(() => [
     { value: "feminino", label: "Feminino" }, { value: "masculino", label: "Masculino" },
@@ -272,7 +278,7 @@ export default function EditLeadPage() {
     setLoading(true); setErr(null);
     const [st, lead, prof, interestsRes, sourcesRes] = await Promise.all([
       supabase.from("stages").select("id,name,position,is_final").order("position", { ascending: true }),
-      supabase.from("leads").select("id,name,phone_raw,source,interest,interests,stage_id,campaign,responsible_id,cpf,birth_date,sex").eq("id", leadId).single(),
+      supabase.from("leads").select("id,name,phone_raw,source,interest,interests,stage_id,campaign,responsible_id,cpf,birth_date,sex,ai_review_level,ai_review_reason,ai_summary,ai_next_action,ai_confidence,ai_suggested_stage").eq("id", leadId).single(),
       supabase.from("profiles").select("id,name"),
       supabase.from("leads").select("interest,interests").not("interest", "is", null),
       supabase.from("leads").select("source").not("source", "is", null),
@@ -293,6 +299,12 @@ export default function EditLeadPage() {
     setStageId(l?.stage_id ?? "");
     setCampaign(l?.campaign ?? "");
     setResponsibleId(l?.responsible_id ?? "");
+    setAiReviewLevel(l?.ai_review_level ?? "normal");
+    setAiReviewReason(l?.ai_review_reason ?? null);
+    setAiSummary(l?.ai_summary ?? null);
+    setAiNextAction(l?.ai_next_action ?? null);
+    setAiConfidence(l?.ai_confidence == null ? null : Number(l.ai_confidence));
+    setAiSuggestedStage(l?.ai_suggested_stage ?? null);
 
     // Carregar interesses: preferir array, fallback para string legada
     if (l?.interests && l.interests.length > 0) setInterests(l.interests);
@@ -409,6 +421,27 @@ export default function EditLeadPage() {
     }
   }
 
+  async function handleClearAiReview() {
+    if (!leadId) return;
+
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        ai_review_level: "normal",
+        ai_review_reason: null,
+        ai_reviewed_at: new Date().toISOString(),
+      })
+      .eq("id", leadId);
+
+    if (error) {
+      setErr(`Não foi possível marcar a análise como revisada: ${error.message}`);
+      return;
+    }
+
+    setAiReviewLevel("normal");
+    setAiReviewReason(null);
+  }
+
   async function handleDelete() {
     if (!leadId || deleting) return;
 
@@ -474,6 +507,31 @@ export default function EditLeadPage() {
       </div>
 
       <div style={{ height: 14 }} />
+
+      {!loading && (aiReviewLevel === "attention" || aiReviewLevel === "urgent") && (
+        <div
+          style={{
+            ...card,
+            marginBottom: 14,
+            border: aiReviewLevel === "urgent" ? "1px solid rgba(255,90,90,0.45)" : "1px solid rgba(255,190,70,0.45)",
+            background: aiReviewLevel === "urgent" ? "rgba(255,70,70,0.08)" : "rgba(255,190,70,0.07)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "grid", gap: 8 }}>
+              <div style={{ fontWeight: 950 }}>
+                {aiReviewLevel === "urgent" ? "⚠ Revisão humana urgente" : "⚠ Revisão humana recomendada"}
+              </div>
+              {aiReviewReason ? <div style={{ fontSize: 13 }}>{aiReviewReason}</div> : null}
+              {aiSummary ? <div style={{ fontSize: 12, opacity: 0.82 }}>Resumo: {aiSummary}</div> : null}
+              {aiNextAction ? <div style={{ fontSize: 12, opacity: 0.82 }}>Próxima ação sugerida: {aiNextAction}</div> : null}
+              {aiSuggestedStage ? <div style={{ fontSize: 12, opacity: 0.72 }}>Etapa sugerida: {aiSuggestedStage}</div> : null}
+              {aiConfidence != null ? <div style={{ fontSize: 11, opacity: 0.6 }}>Confiança da análise: {Math.round(aiConfidence * 100)}%</div> : null}
+            </div>
+            <button type="button" onClick={handleClearAiReview} style={btn}>Marcar como revisado</button>
+          </div>
+        </div>
+      )}
 
       <div style={card}>
         {loading ? <div style={{ opacity: 0.8 }}>Carregando...</div> : null}

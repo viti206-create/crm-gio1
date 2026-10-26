@@ -15,6 +15,10 @@ type Lead = {
   next_action_type?: string | null; next_action_at?: string | null;
   cpf?: string | null; birth_date?: string | null; sex?: string | null;
   created_at?: string | null;
+  ai_review_level?: "normal" | "attention" | "urgent" | null;
+  ai_review_reason?: string | null;
+  ai_summary?: string | null;
+  ai_next_action?: string | null;
 };
 
 type Profile = { id: string; name: string | null; };
@@ -90,6 +94,7 @@ export default function LeadsListPage() {
   const [campaignFilter, setCampaignFilter] = useState<string>("all");
   const [contactDateFrom, setContactDateFrom] = useState<string>("");
   const [contactDateTo, setContactDateTo] = useState<string>("");
+  const [reviewFilter, setReviewFilter] = useState<"all" | "review">("all");
 
   // Filtros aba responsáveis
   const [dateFrom, setDateFrom] = useState(firstDayOfMonth());
@@ -120,7 +125,7 @@ export default function LeadsListPage() {
     setLoading(true);
     const [{ data: stagesData }, { data: leadsData }, { data: profilesData }] = await Promise.all([
       supabase.from("stages").select("id,name,position,is_final").order("position", { ascending: true }),
-      supabase.from("leads").select("id,name,phone_raw,phone_e164,source,interest,interests,stage_id,campaign,responsible_id,next_action_type,next_action_at,cpf,birth_date,sex,created_at").is("deleted_at", null).order("id", { ascending: false }),
+      supabase.from("leads").select("id,name,phone_raw,phone_e164,source,interest,interests,stage_id,campaign,responsible_id,next_action_type,next_action_at,cpf,birth_date,sex,created_at,ai_review_level,ai_review_reason,ai_summary,ai_next_action").is("deleted_at", null).order("id", { ascending: false }),
       supabase.from("profiles").select("id,name"),
     ]);
     setStages((stagesData as any) ?? []);
@@ -164,6 +169,11 @@ export default function LeadsListPage() {
         if (!li.includes(interestFilter.toLowerCase())) return false;
       }
       if (campaignFilter !== "all" && (l.campaign ?? "") !== campaignFilter) return false;
+      if (
+        reviewFilter === "review" &&
+        l.ai_review_level !== "attention" &&
+        l.ai_review_level !== "urgent"
+      ) return false;
       if (contactDateFrom || contactDateTo) {
         if (!l.created_at) return false;
         const createdAt = new Date(l.created_at);
@@ -188,7 +198,7 @@ export default function LeadsListPage() {
       ].join(" ").toLowerCase();
       return hay.includes(query);
     });
-  }, [leads, q, stageFilter, sourceFilter, interestFilter, campaignFilter, contactDateFrom, contactDateTo, stages]);
+  }, [leads, q, stageFilter, sourceFilter, interestFilter, campaignFilter, contactDateFrom, contactDateTo, reviewFilter, stages]);
 
   // Contagem por responsável filtrada por período
   const responsaveisCounts = useMemo(() => {
@@ -265,7 +275,8 @@ export default function LeadsListPage() {
               options={[{ value: "all", label: "Todos os interesses" }, ...interestOptions.map((i) => ({ value: i, label: i }))]} />
             <SelectDark value={campaignFilter} onChange={setCampaignFilter} placeholder="Todas as campanhas" searchable={true} minWidth={220}
               options={[{ value: "all", label: "Todas as campanhas" }, ...campaignOptions.map((c) => ({ value: c, label: c }))]} />
-            <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); setCampaignFilter("all"); setContactDateFrom(""); setContactDateTo(""); }} style={btn}>Limpar</button>
+            <button onClick={() => setReviewFilter(reviewFilter === "review" ? "all" : "review")} style={reviewFilter === "review" ? btnPrimary : btn}>⚠ Requer atenção</button>
+            <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); setCampaignFilter("all"); setContactDateFrom(""); setContactDateTo(""); setReviewFilter("all"); }} style={btn}>Limpar</button>
           </div>
 
           {loading ? (
@@ -285,7 +296,21 @@ export default function LeadsListPage() {
                     onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/leads/${l.id}`); }}>
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                       <div style={{ display: "grid", gap: 6 }}>
-                        <div style={{ fontWeight: 950, fontSize: 15 }}>{l.name}</div>
+                        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                          <div style={{ fontWeight: 950, fontSize: 15 }}>{l.name}</div>
+                          {(l.ai_review_level === "attention" || l.ai_review_level === "urgent") && (
+                            <span
+                              title={l.ai_review_reason ?? "Revisão humana recomendada"}
+                              style={{
+                                ...chipStyle("primary"),
+                                border: l.ai_review_level === "urgent" ? "1px solid rgba(255,90,90,0.45)" : "1px solid rgba(255,190,70,0.45)",
+                                background: l.ai_review_level === "urgent" ? "rgba(255,70,70,0.12)" : "rgba(255,190,70,0.10)",
+                              }}
+                            >
+                              {l.ai_review_level === "urgent" ? "⚠ Urgente" : "⚠ Atenção"}
+                            </span>
+                          )}
+                        </div>
                         <div style={{ fontSize: 12, opacity: 0.85 }}>{l.phone_raw ?? l.phone_e164}</div>
                         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                           <span style={chipStyle("primary")}>{stageName}</span>

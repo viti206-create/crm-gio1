@@ -17,6 +17,13 @@ type Conversa = {
   origem: string | null;
   interesses: string[];
   statusConversa: "em_atendimento" | "aguardando_cliente" | "finalizada";
+  aiReviewLevel: "normal" | "attention" | "urgent";
+  aiReviewReason: string | null;
+  aiSummary: string | null;
+  aiNextAction: string | null;
+  aiConfidence: number | null;
+  aiSuggestedStage: string | null;
+  aiLastAnalyzedAt: string | null;
 };
 
 type Bolha = {
@@ -31,6 +38,7 @@ export default function WhatsAppPainelPage() {
   const [alturaDisponivel, setAlturaDisponivel] = useState<number | null>(null);
   const [conversas, setConversas] = useState<Conversa[]>([]);
   const [buscaConversas, setBuscaConversas] = useState("");
+  const [filtroAtencao, setFiltroAtencao] = useState<"all" | "review">("all");
   const [telefoneSelecionado, setTelefoneSelecionado] = useState<string | null>(
     null
   );
@@ -264,6 +272,30 @@ export default function WhatsAppPainelPage() {
     }
   }
 
+  async function marcarAnaliseComoRevisada() {
+    if (!telefoneSelecionado) return;
+
+    try {
+      const resposta = await fetch("/api/whatsapp/conversas", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          telefone: telefoneSelecionado,
+          action: "clear_ai_review",
+        }),
+      });
+
+      if (!resposta.ok) {
+        const dados = await resposta.json().catch(() => null);
+        throw new Error(dados?.error ?? "Erro ao revisar alerta");
+      }
+
+      await carregarConversas();
+    } catch (erro) {
+      console.error("Erro ao marcar alerta como revisado:", erro);
+    }
+  }
+
   function formatarHorario(horario: string) {
     return new Date(horario).toLocaleTimeString("pt-BR", {
       hour: "2-digit",
@@ -326,7 +358,7 @@ export default function WhatsAppPainelPage() {
 
   const termoBusca = buscaConversas.trim().toLocaleLowerCase("pt-BR");
 
-  const conversasFiltradas = termoBusca
+  const conversasBuscadas = termoBusca
     ? conversas.filter((conversa) => {
         const nome = conversa.nome.toLocaleLowerCase("pt-BR");
         const telefone = conversa.telefone.replace(/\D/g, "");
@@ -340,6 +372,15 @@ export default function WhatsAppPainelPage() {
         );
       })
     : conversas;
+
+  const conversasFiltradas =
+    filtroAtencao === "review"
+      ? conversasBuscadas.filter(
+          (conversa) =>
+            conversa.aiReviewLevel === "attention" ||
+            conversa.aiReviewLevel === "urgent"
+        )
+      : conversasBuscadas;
 
   const conversaSelecionada = conversas.find(
     (conversa) => conversa.telefone === telefoneSelecionado
@@ -492,6 +533,50 @@ export default function WhatsAppPainelPage() {
             </div>
           </div>
 
+          <div
+            style={{
+              display: "flex",
+              gap: 6,
+              padding: "0 12px 10px",
+              background: "#ffffff",
+              borderBottom: "1px solid #f0f0f0",
+              flexShrink: 0,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setFiltroAtencao("all")}
+              style={{
+                border: "1px solid #d1d7db",
+                background: filtroAtencao === "all" ? "#e7f7f3" : "#ffffff",
+                color: "#111b21",
+                borderRadius: 14,
+                padding: "5px 10px",
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 700,
+              }}
+            >
+              Todas
+            </button>
+            <button
+              type="button"
+              onClick={() => setFiltroAtencao("review")}
+              style={{
+                border: "1px solid #d1d7db",
+                background: filtroAtencao === "review" ? "#fff3cd" : "#ffffff",
+                color: "#111b21",
+                borderRadius: 14,
+                padding: "5px 10px",
+                cursor: "pointer",
+                fontSize: 11,
+                fontWeight: 700,
+              }}
+            >
+              ⚠ Requer atenção
+            </button>
+          </div>
+
           <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
             {conversasFiltradas.map((conversa) => {
               const selecionada = telefoneSelecionado === conversa.telefone;
@@ -588,6 +673,27 @@ export default function WhatsAppPainelPage() {
                       marginTop: 2,
                     }}
                   >
+                    {(conversa.aiReviewLevel === "attention" ||
+                      conversa.aiReviewLevel === "urgent") && (
+                      <span
+                        title={conversa.aiReviewReason ?? "Revisão humana recomendada"}
+                        style={{
+                          background:
+                            conversa.aiReviewLevel === "urgent"
+                              ? "#d32f2f"
+                              : "#f59e0b",
+                          color: "#ffffff",
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          borderRadius: 8,
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      >
+                        {conversa.aiReviewLevel === "urgent" ? "URGENTE" : "ATENÇÃO"}
+                      </span>
+                    )}
+
                     {conversa.iaPausada && (
                       <span
                         style={{
@@ -831,6 +937,65 @@ export default function WhatsAppPainelPage() {
                   </button>
                 </div>
               </div>
+
+              {conversaSelecionada &&
+                (conversaSelecionada.aiReviewLevel === "attention" ||
+                  conversaSelecionada.aiReviewLevel === "urgent") && (
+                  <div
+                    style={{
+                      background:
+                        conversaSelecionada.aiReviewLevel === "urgent"
+                          ? "#ffe8e8"
+                          : "#fff7df",
+                      borderBottom:
+                        conversaSelecionada.aiReviewLevel === "urgent"
+                          ? "1px solid #f1a5a5"
+                          : "1px solid #f0d58c",
+                      color: "#3b2f2f",
+                      padding: "10px 14px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      alignItems: "flex-start",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <div style={{ display: "grid", gap: 4 }}>
+                      <div style={{ fontWeight: 800, fontSize: 12 }}>
+                        {conversaSelecionada.aiReviewLevel === "urgent"
+                          ? "⚠ Revisão humana urgente"
+                          : "⚠ Revisão humana recomendada"}
+                      </div>
+                      {conversaSelecionada.aiReviewReason && (
+                        <div style={{ fontSize: 12 }}>
+                          {conversaSelecionada.aiReviewReason}
+                        </div>
+                      )}
+                      {conversaSelecionada.aiNextAction && (
+                        <div style={{ fontSize: 11, opacity: 0.8 }}>
+                          Próxima ação sugerida: {conversaSelecionada.aiNextAction}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={marcarAnaliseComoRevisada}
+                      style={{
+                        border: "1px solid rgba(0,0,0,0.16)",
+                        background: "#ffffff",
+                        color: "#111b21",
+                        borderRadius: 10,
+                        padding: "6px 10px",
+                        cursor: "pointer",
+                        fontSize: 11,
+                        fontWeight: 700,
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Marcar como revisado
+                    </button>
+                  </div>
+                )}
 
               <div
                 style={{
