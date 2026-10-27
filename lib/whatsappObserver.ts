@@ -117,6 +117,35 @@ function buildTranscript(rows: ConversationRow[]) {
   return parts.join("\n");
 }
 
+function stageThreshold(stageName: string) {
+  const normalized = normalizeText(stageName);
+
+  if (normalized === "em negociacao") return 0.72;
+  if (normalized === "agendado") return 0.9;
+  if (normalized === "compareceu") return 0.95;
+
+  return 0.9;
+}
+
+function canMoveAutomatically(
+  currentStage: StageRow | undefined,
+  suggestedStage: StageRow | null,
+  confidence: number
+) {
+  if (!currentStage || !suggestedStage) return false;
+  if (suggestedStage.is_final) return false;
+  if (suggestedStage.position <= currentStage.position) return false;
+
+  const currentName = normalizeText(currentStage.name);
+  const suggestedName = normalizeText(suggestedStage.name);
+
+  if (currentName === "novo" && suggestedName === "em negociacao") {
+    return confidence >= 0.72;
+  }
+
+  return confidence >= stageThreshold(suggestedStage.name);
+}
+
 async function generateAnalysis(
   lead: LeadRow,
   stages: StageRow[],
@@ -152,6 +181,7 @@ REGRAS DE ETAPA:
 - Só sugira uma etapa se houver evidência clara na conversa.
 - Nunca sugira voltar para uma etapa anterior.
 - "Em negociação": há interesse real, conversa sobre preço, procedimento, condições, avaliação ou disponibilidade.
+- Se o cliente já demonstrou claramente interesse comercial ou está conversando sobre um procedimento, "Em negociação" pode ter confiança entre 0.75 e 0.89; não precisa reservar 0.90 apenas para essa etapa.
 - "Agendado": somente se houver confirmação concreta de dia/horário ou evidência inequívoca de agendamento.
 - "Compareceu": somente se houver evidência inequívoca de que o atendimento/avaliação ocorreu.
 - Não invente "Fechado" apenas porque o cliente demonstrou interesse. Venda é confirmada por outro sistema.
@@ -165,7 +195,8 @@ REVISÃO HUMANA:
 
 CONFIDENCE:
 - Seja conservadora.
-- Use >= 0.90 apenas quando a classificação de etapa estiver muito clara.
+- Para "Agendado" e "Compareceu", use confiança alta somente quando houver evidência objetiva.
+- Para "Em negociação", interesse comercial claro já é evidência suficiente mesmo que a confiança fique abaixo de 0.90.
 
 Não dê diagnóstico médico. Não invente fatos.`;
 
@@ -268,12 +299,12 @@ export async function analyzeWhatsAppConversationSilently(
     if (!analysis) return;
 
     const currentStage = stages.find((stage) => stage.id === lead.stage_id);
-    const suggestedStage = analysis.suggested_stage_name
+    const suggestedStage: StageRow | null = analysis.suggested_stage_name
       ? stages.find(
           (stage) =>
             normalizeText(stage.name) ===
             normalizeText(analysis.suggested_stage_name)
-        )
+        ) ?? null
       : null;
 
     const review = chooseReviewLevel(
@@ -293,13 +324,13 @@ export async function analyzeWhatsAppConversationSilently(
       ai_review_reason: review.reason,
     };
 
-    if (
-      suggestedStage &&
-      currentStage &&
-      analysis.confidence >= 0.9 &&
-      suggestedStage.position > currentStage.position &&
-      !suggestedStage.is_final
-    ) {
+    const shouldMoveStage = canMoveAutomatically(
+      currentStage,
+      suggestedStage,
+      analysis.confidence
+    );
+
+    if (shouldMoveStage && suggestedStage) {
       update.stage_id = suggestedStage.id;
     }
 
@@ -321,13 +352,33 @@ export async function analyzeWhatsAppConversationSilently(
       }
     }
 
-    const { error: updateError } = await supabase
+    const { data: updatedLead, error: updateError } = await supabase
       .from("leads")
       .update(update)
-      .eq("id", lead.id);
+      .eq("id", lead.id)
+      .select("id,stage_id")
+      .maybeSingle();
 
     if (updateError) {
       console.error("IA OBSERVADORA - erro ao atualizar lead:", updateError);
+      return;
+    }
+
+    if (
+      shouldMoveStage &&
+      suggestedStage &&
+      updatedLead?.stage_id !== suggestedStage.id
+    ) {
+      console.error(
+        "IA OBSERVADORA - stage_id nao foi confirmado apos update:",
+        {
+          leadId: lead.id,
+          esperado: suggestedStage.id,
+          recebido: updatedLead?.stage_id ?? null,
+          etapaSugerida: suggestedStage.name,
+          confidence: analysis.confidence,
+        }
+      );
     }
   } catch (error) {
     console.error("IA OBSERVADORA - erro inesperado:", error);
