@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
-
 import { sendWhatsAppMessage } from "@/lib/whatsapp";
 
 export async function POST(
@@ -9,16 +8,23 @@ export async function POST(
   { params }: { params: Promise<{ telefone: string }> }
 ) {
   const { telefone } = await params;
-  const { texto } = await req.json();
+  const body = await req.json().catch(() => null);
+  const textoLimpo = String(body?.texto ?? "").trim();
 
-  if (!texto || !String(texto).trim()) {
+  if (!textoLimpo) {
     return NextResponse.json({ error: "Mensagem vazia" }, { status: 400 });
   }
 
   const supabase = createSupabaseServerClient();
-  const textoLimpo = String(texto).trim();
 
-  await sendWhatsAppMessage(telefone, textoLimpo);
+  try {
+    await sendWhatsAppMessage(telefone, textoLimpo);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Erro ao enviar mensagem";
+
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 
   const responseAt = new Date().toISOString();
 
@@ -32,7 +38,6 @@ export async function POST(
       created_at: responseAt,
       response_at: responseAt,
       response_origin: "crm_human",
-      conversation_status: "aguardando_cliente",
     });
 
   if (insertError) {
@@ -45,15 +50,6 @@ export async function POST(
       },
       { status: 500 }
     );
-  }
-
-  const { error: leadError } = await supabase
-    .from("leads")
-    .update({ ultima_intervencao_humana: responseAt })
-    .eq("phone_raw", telefone);
-
-  if (leadError) {
-    console.error("Erro ao registrar intervenção humana no lead:", leadError);
   }
 
   return NextResponse.json({ ok: true });

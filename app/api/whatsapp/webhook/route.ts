@@ -2992,6 +2992,8 @@ export async function POST(req: NextRequest) {
 
 
   const supabase = createSupabaseServerClient();
+  const automationEnabled =
+    process.env.WHATSAPP_AUTOMATION_ENABLED === "true";
 
 
 
@@ -3017,12 +3019,14 @@ export async function POST(req: NextRequest) {
 
       await saveHumanEcho(supabase, echo);
 
-      await marcarIntervencaoHumana(supabase, echo.phoneE164);
+      if (automationEnabled) {
+        await marcarIntervencaoHumana(supabase, echo.phoneE164);
 
-      await analyzeWhatsAppConversationSilently(supabase, {
-        phoneRaw: echo.phoneRaw,
-        phoneE164: echo.phoneE164,
-      });
+        await analyzeWhatsAppConversationSilently(supabase, {
+          phoneRaw: echo.phoneRaw,
+          phoneE164: echo.phoneE164,
+        });
+      }
 
     } catch (echoError) {
 
@@ -3069,6 +3073,61 @@ export async function POST(req: NextRequest) {
 
 
   try {
+
+    if (!automationEnabled) {
+      const results: Array<{
+        processed: boolean;
+        duplicate: boolean;
+        leadId: string | null;
+        dedupeMode: string;
+        duplicateLeadsFound: number;
+      }> = [];
+
+      for (const event of events) {
+        const alreadyProcessed = await hasProcessedMessage(
+          supabase,
+          event.messageId
+        );
+
+        if (alreadyProcessed) {
+          results.push({
+            processed: false,
+            duplicate: true,
+            leadId: null,
+            dedupeMode: "message_id",
+            duplicateLeadsFound: 0,
+          });
+          continue;
+        }
+
+        const { claimed } = await claimMessage(
+          supabase,
+          event.phoneRaw,
+          event.message,
+          event.messageId
+        );
+
+        results.push({
+          processed: claimed,
+          duplicate: !claimed,
+          leadId: null,
+          dedupeMode: claimed ? "manual_whatsapp_only" : "message_id_race",
+          duplicateLeadsFound: 0,
+        });
+      }
+
+      return NextResponse.json(
+        {
+          ok: true,
+          automationEnabled: false,
+          manualMode: true,
+          processed: results.filter((item) => item.processed).length,
+          duplicates: results.filter((item) => item.duplicate).length,
+          results,
+        },
+        { status: 200 }
+      );
+    }
 
     const defaultStageId = await getDefaultStageId(supabase);
 

@@ -1,29 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Conversa = {
   telefone: string;
   nome: string;
   ultimaMensagem: string;
   ultimoHorario: string;
-  iaPausada: boolean;
-  aguardandoResposta: boolean;
-  aguardandoDesde: string | null;
   naoLidas: number;
-  ultimaOrigemResposta: "ai" | "crm_human" | "whatsapp_human" | null;
-  leadId: string | null;
-  etapa: string | null;
-  origem: string | null;
-  interesses: string[];
-  statusConversa: "em_atendimento" | "aguardando_cliente" | "finalizada";
-  aiReviewLevel: "normal" | "attention" | "urgent";
-  aiReviewReason: string | null;
-  aiSummary: string | null;
-  aiNextAction: string | null;
-  aiConfidence: number | null;
-  aiSuggestedStage: string | null;
-  aiLastAnalyzedAt: string | null;
 };
 
 type Bolha = {
@@ -32,359 +16,286 @@ type Bolha = {
   horario: string;
 };
 
-export default function WhatsAppPainelPage() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mensagensContainerRef = useRef<HTMLDivElement>(null);
-  const [alturaDisponivel, setAlturaDisponivel] = useState<number | null>(null);
+function formatarHorario(horario: string) {
+  return new Date(horario).toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "America/Sao_Paulo",
+  });
+}
+
+function chaveData(horario: string) {
+  return new Date(horario).toLocaleDateString("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  });
+}
+
+function formatarSeparadorData(horario: string) {
+  const data = new Date(horario);
+  const hoje = new Date();
+
+  const chaveMensagem = chaveData(horario);
+  const chaveHoje = hoje.toLocaleDateString("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  });
+
+  const ontem = new Date(hoje);
+  ontem.setDate(ontem.getDate() - 1);
+
+  const chaveOntem = ontem.toLocaleDateString("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  });
+
+  if (chaveMensagem === chaveHoje) return "HOJE";
+  if (chaveMensagem === chaveOntem) return "ONTEM";
+
+  return data
+    .toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "long",
+      year: "numeric",
+      timeZone: "America/Sao_Paulo",
+    })
+    .toUpperCase();
+}
+
+function iniciais(nome: string) {
+  const partes = nome.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  return partes.map((p) => p[0]?.toUpperCase()).join("") || "?";
+}
+
+export default function WhatsAppPage() {
   const [conversas, setConversas] = useState<Conversa[]>([]);
-  const [buscaConversas, setBuscaConversas] = useState("");
-  const [filtroAtencao, setFiltroAtencao] = useState<"all" | "review">("all");
   const [telefoneSelecionado, setTelefoneSelecionado] = useState<string | null>(
     null
   );
-  const [nomeSelecionado, setNomeSelecionado] = useState<string>("");
-  const [iaPausada, setIaPausada] = useState(false);
+  const [nomeSelecionado, setNomeSelecionado] = useState("");
   const [bolhas, setBolhas] = useState<Bolha[]>([]);
+  const [busca, setBusca] = useState("");
   const [textoInput, setTextoInput] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [alturaDisponivel, setAlturaDisponivel] = useState<number | null>(null);
   const [mostrarBotaoDescer, setMostrarBotaoDescer] = useState(false);
-  const quantidadeAnteriorRef = useRef(0);
-  const [agora, setAgora] = useState(() => Date.now());
 
-  // Pausa global da IA (afeta todas as conversas, inclusive novas)
-  const [iaPausadaGlobal, setIaPausadaGlobal] = useState(false);
-  const [carregandoPausaGlobal, setCarregandoPausaGlobal] = useState(true);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mensagensContainerRef = useRef<HTMLDivElement | null>(null);
+  const quantidadeAnteriorRef = useRef(0);
 
   async function carregarConversas() {
     try {
-      const resposta = await fetch("/api/whatsapp/conversas");
+      const resposta = await fetch("/api/whatsapp/conversas", {
+        cache: "no-store",
+      });
+
+      if (!resposta.ok) {
+        const dados = await resposta.json().catch(() => null);
+        throw new Error(dados?.error ?? "Erro ao carregar conversas");
+      }
+
       const dados = await resposta.json();
       setConversas(dados.conversas ?? []);
-    } catch (erro) {
-      console.error("Erro ao carregar conversas:", erro);
+    } catch (error) {
+      console.error("Erro ao carregar conversas:", error);
     }
   }
 
   async function carregarMensagens(telefone: string) {
     try {
       const resposta = await fetch(
-        `/api/whatsapp/conversas/${telefone}/mensagens`
+        `/api/whatsapp/conversas/${encodeURIComponent(telefone)}/mensagens`,
+        { cache: "no-store" }
       );
+
+      if (!resposta.ok) {
+        const dados = await resposta.json().catch(() => null);
+        throw new Error(dados?.error ?? "Erro ao carregar mensagens");
+      }
+
       const dados = await resposta.json();
+
       setBolhas(dados.bolhas ?? []);
       setNomeSelecionado(dados.nome ?? telefone);
-      setIaPausada(Boolean(dados.iaPausada));
 
       if (dados.marcouComoLida) {
         await carregarConversas();
       }
-    } catch (erro) {
-      console.error("Erro ao carregar mensagens:", erro);
-    }
-  }
-
-  async function carregarPausaGlobal() {
-    try {
-      const resposta = await fetch("/api/whatsapp/ia-global");
-      const dados = await resposta.json();
-      setIaPausadaGlobal(Boolean(dados.iaPausadaGlobalmente));
-    } catch (erro) {
-      console.error("Erro ao carregar pausa global:", erro);
-    } finally {
-      setCarregandoPausaGlobal(false);
-    }
-  }
-
-  async function alternarPausaGlobal() {
-    const novoValor = !iaPausadaGlobal;
-    setIaPausadaGlobal(novoValor);
-
-    try {
-      await fetch("/api/whatsapp/ia-global", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pausada: novoValor }),
-      });
-    } catch (erro) {
-      console.error("Erro ao alternar pausa global:", erro);
-      setIaPausadaGlobal(!novoValor); // reverte em caso de erro
+    } catch (error) {
+      console.error("Erro ao carregar mensagens:", error);
     }
   }
 
   useEffect(() => {
     carregarConversas();
-    carregarPausaGlobal();
-
-    const intervaloConversas = setInterval(carregarConversas, 5000);
-    const intervaloRelogio = setInterval(() => setAgora(Date.now()), 30000);
-
-    return () => {
-      clearInterval(intervaloConversas);
-      clearInterval(intervaloRelogio);
-    };
+    const intervalo = window.setInterval(carregarConversas, 5000);
+    return () => window.clearInterval(intervalo);
   }, []);
 
   useEffect(() => {
-    if (!telefoneSelecionado) return;
+    if (!telefoneSelecionado) {
+      setBolhas([]);
+      setNomeSelecionado("");
+      return;
+    }
+
     carregarMensagens(telefoneSelecionado);
-    const intervalo = setInterval(
+
+    const intervalo = window.setInterval(
       () => carregarMensagens(telefoneSelecionado),
       3000
     );
-    return () => clearInterval(intervalo);
+
+    return () => window.clearInterval(intervalo);
   }, [telefoneSelecionado]);
 
   useEffect(() => {
     const container = mensagensContainerRef.current;
     if (!container) return;
 
-    const quantidadeAumentou = bolhas.length > quantidadeAnteriorRef.current;
+    const aumentou = bolhas.length > quantidadeAnteriorRef.current;
     quantidadeAnteriorRef.current = bolhas.length;
 
-    if (quantidadeAumentou) {
+    if (aumentou) {
       container.scrollTop = container.scrollHeight;
     }
   }, [bolhas]);
 
-  // Zera a contagem ao trocar de conversa, para rolar até o final na abertura
   useEffect(() => {
     quantidadeAnteriorRef.current = 0;
   }, [telefoneSelecionado]);
 
-  function aoRolarMensagens() {
-    const container = mensagensContainerRef.current;
-    if (!container) return;
-
-    const distanciaDoFinal =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-
-    setMostrarBotaoDescer(distanciaDoFinal > 150);
-  }
-
-  function descerParaFinal() {
-    const container = mensagensContainerRef.current;
-    if (!container) return;
-    container.scrollTop = container.scrollHeight;
-    setMostrarBotaoDescer(false);
-  }
-
-  // Trava a rolagem da página inteira enquanto essa tela estiver aberta,
-  // sem precisar alterar o layout do CRM — restaura ao sair da página
   useEffect(() => {
-    const overflowOriginalHtml = document.documentElement.style.overflow;
-    const overflowOriginalBody = document.body.style.overflow;
+    const overflowHtml = document.documentElement.style.overflow;
+    const overflowBody = document.body.style.overflow;
 
     document.documentElement.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
 
     return () => {
-      document.documentElement.style.overflow = overflowOriginalHtml;
-      document.body.style.overflow = overflowOriginalBody;
+      document.documentElement.style.overflow = overflowHtml;
+      document.body.style.overflow = overflowBody;
     };
   }, []);
 
   useEffect(() => {
     function calcularAltura() {
       if (!containerRef.current) return;
+
       const topo = containerRef.current.getBoundingClientRect().top;
-      const margemInferior = 18; // mesmo padding que o CrmShell usa embaixo
-      const altura = window.innerHeight - topo - margemInferior;
-      setAlturaDisponivel(altura > 300 ? altura : 300);
+      const altura = window.innerHeight - topo - 18;
+      setAlturaDisponivel(altura > 320 ? altura : 320);
     }
 
     calcularAltura();
     window.addEventListener("resize", calcularAltura);
+
     return () => window.removeEventListener("resize", calcularAltura);
   }, []);
+
+  const conversasFiltradas = useMemo(() => {
+    const termo = busca.trim().toLowerCase();
+    if (!termo) return conversas;
+
+    return conversas.filter((conversa) =>
+      [conversa.nome, conversa.telefone, conversa.ultimaMensagem]
+        .join(" ")
+        .toLowerCase()
+        .includes(termo)
+    );
+  }, [conversas, busca]);
+
+  const conversaSelecionada = useMemo(
+    () =>
+      conversas.find((conversa) => conversa.telefone === telefoneSelecionado) ??
+      null,
+    [conversas, telefoneSelecionado]
+  );
+
+  const grupos = useMemo(() => {
+    const resultado: Array<
+      | { tipo: "data"; chave: string; texto: string }
+      | { tipo: "mensagem"; chave: string; bolha: Bolha }
+    > = [];
+
+    let ultimaData = "";
+
+    bolhas.forEach((bolha, index) => {
+      const data = chaveData(bolha.horario);
+
+      if (data !== ultimaData) {
+        resultado.push({
+          tipo: "data",
+          chave: `data-${data}`,
+          texto: formatarSeparadorData(bolha.horario),
+        });
+        ultimaData = data;
+      }
+
+      resultado.push({
+        tipo: "mensagem",
+        chave: `msg-${index}-${bolha.horario}`,
+        bolha,
+      });
+    });
+
+    return resultado;
+  }, [bolhas]);
 
   async function enviarMensagem() {
     if (!telefoneSelecionado || !textoInput.trim() || enviando) return;
 
-    setEnviando(true);
-    const texto = textoInput;
+    const texto = textoInput.trim();
     setTextoInput("");
+    setEnviando(true);
+    setErro(null);
 
     try {
-      await fetch(`/api/whatsapp/conversas/${telefoneSelecionado}/enviar`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ texto }),
-      });
+      const resposta = await fetch(
+        `/api/whatsapp/conversas/${encodeURIComponent(
+          telefoneSelecionado
+        )}/enviar`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ texto }),
+        }
+      );
+
+      if (!resposta.ok) {
+        const dados = await resposta.json().catch(() => null);
+        throw new Error(dados?.error ?? "Erro ao enviar mensagem");
+      }
+
       await carregarMensagens(telefoneSelecionado);
       await carregarConversas();
-    } catch (erro) {
-      console.error("Erro ao enviar mensagem:", erro);
+    } catch (error) {
+      console.error("Erro ao enviar mensagem:", error);
+      setErro(
+        error instanceof Error ? error.message : "Erro ao enviar mensagem"
+      );
+      setTextoInput(texto);
     } finally {
       setEnviando(false);
     }
   }
 
-  async function alterarStatusConversa(
-    novoStatus: Conversa["statusConversa"]
-  ) {
-    if (!telefoneSelecionado) return;
+  function aoRolarMensagens() {
+    const container = mensagensContainerRef.current;
+    if (!container) return;
 
-    const estadoAnterior = conversas;
-    setConversas((atuais) =>
-      atuais.map((conversa) =>
-        conversa.telefone === telefoneSelecionado
-          ? { ...conversa, statusConversa: novoStatus }
-          : conversa
-      )
-    );
+    const distancia =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
 
-    try {
-      const resposta = await fetch("/api/whatsapp/conversas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          telefone: telefoneSelecionado,
-          status: novoStatus,
-        }),
-      });
-
-      if (!resposta.ok) {
-        const dados = await resposta.json().catch(() => null);
-        throw new Error(dados?.error ?? "Erro ao alterar status da conversa");
-      }
-
-      await carregarConversas();
-    } catch (erro) {
-      console.error("Erro ao alterar status da conversa:", erro);
-      setConversas(estadoAnterior);
-    }
+    setMostrarBotaoDescer(distancia > 150);
   }
 
-  async function alternarPausaIA() {
-    if (!telefoneSelecionado) return;
-    const novoValor = !iaPausada;
-    setIaPausada(novoValor);
+  function descerParaFinal() {
+    const container = mensagensContainerRef.current;
+    if (!container) return;
 
-    try {
-      await fetch(`/api/whatsapp/conversas/${telefoneSelecionado}/pausa`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pausada: novoValor }),
-      });
-      await carregarConversas();
-    } catch (erro) {
-      console.error("Erro ao alternar pausa da IA:", erro);
-    }
+    container.scrollTop = container.scrollHeight;
+    setMostrarBotaoDescer(false);
   }
-
-  async function marcarAnaliseComoRevisada() {
-    if (!telefoneSelecionado) return;
-
-    try {
-      const resposta = await fetch("/api/whatsapp/conversas", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          telefone: telefoneSelecionado,
-          action: "clear_ai_review",
-        }),
-      });
-
-      if (!resposta.ok) {
-        const dados = await resposta.json().catch(() => null);
-        throw new Error(dados?.error ?? "Erro ao revisar alerta");
-      }
-
-      await carregarConversas();
-    } catch (erro) {
-      console.error("Erro ao marcar alerta como revisado:", erro);
-    }
-  }
-
-  function formatarHorario(horario: string) {
-    return new Date(horario).toLocaleTimeString("pt-BR", {
-      hour: "2-digit",
-      minute: "2-digit",
-      timeZone: "America/Sao_Paulo",
-    });
-  }
-
-  function chaveData(horario: string) {
-    return new Date(horario).toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-  }
-
-  function formatarSeparadorData(horario: string) {
-    const data = new Date(horario);
-    const hoje = new Date();
-    const chaveMensagem = chaveData(horario);
-    const chaveHoje = hoje.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-    const ontem = new Date(hoje);
-    ontem.setDate(ontem.getDate() - 1);
-    const chaveOntem = ontem.toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-    if (chaveMensagem === chaveHoje) return "HOJE";
-    if (chaveMensagem === chaveOntem) return "ONTEM";
-    return data.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric", timeZone: "America/Sao_Paulo" }).toUpperCase();
-  }
-
-  function formatarTempoEspera(desde: string | null) {
-    if (!desde) return "";
-
-    const inicio = new Date(desde).getTime();
-    if (!Number.isFinite(inicio)) return "";
-
-    const totalSegundos = Math.max(0, Math.floor((agora - inicio) / 1000));
-
-    if (totalSegundos < 60) return "agora";
-
-    const minutos = Math.floor(totalSegundos / 60);
-    if (minutos < 60) return `${minutos} min`;
-
-    const horas = Math.floor(minutos / 60);
-    const minutosRestantes = minutos % 60;
-    if (horas < 24) {
-      return minutosRestantes > 0
-        ? `${horas}h ${minutosRestantes}min`
-        : `${horas}h`;
-    }
-
-    const dias = Math.floor(horas / 24);
-    const horasRestantes = horas % 24;
-    return horasRestantes > 0 ? `${dias}d ${horasRestantes}h` : `${dias}d`;
-  }
-
-  function rotuloOrigemResposta(
-    origem: Conversa["ultimaOrigemResposta"]
-  ) {
-    if (origem === "ai") return "IA respondeu";
-    if (origem === "crm_human") return "Equipe respondeu pelo CRM";
-    if (origem === "whatsapp_human") return "Equipe respondeu pelo WhatsApp";
-    return null;
-  }
-
-  const termoBusca = buscaConversas.trim().toLocaleLowerCase("pt-BR");
-
-  const conversasBuscadas = termoBusca
-    ? conversas.filter((conversa) => {
-        const nome = conversa.nome.toLocaleLowerCase("pt-BR");
-        const telefone = conversa.telefone.replace(/\D/g, "");
-        const telefoneBuscado = termoBusca.replace(/\D/g, "");
-        const mensagem = conversa.ultimaMensagem.toLocaleLowerCase("pt-BR");
-
-        return (
-          nome.includes(termoBusca) ||
-          mensagem.includes(termoBusca) ||
-          (telefoneBuscado.length > 0 && telefone.includes(telefoneBuscado))
-        );
-      })
-    : conversas;
-
-  const conversasFiltradas =
-    filtroAtencao === "review"
-      ? conversasBuscadas.filter(
-          (conversa) =>
-            conversa.aiReviewLevel === "attention" ||
-            conversa.aiReviewLevel === "urgent"
-        )
-      : conversasBuscadas;
-
-  const conversaSelecionada = conversas.find(
-    (conversa) => conversa.telefone === telefoneSelecionado
-  );
 
   return (
     <div
@@ -393,325 +304,125 @@ export default function WhatsAppPainelPage() {
         height: alturaDisponivel ? `${alturaDisponivel}px` : "80vh",
         width: "100%",
         display: "flex",
-        flexDirection: "column",
-        fontFamily: "sans-serif",
         overflow: "hidden",
+        border: "1px solid rgba(255,255,255,0.10)",
+        borderRadius: 18,
+        background: "#0b0f14",
+        color: "#f5f7f8",
       }}
     >
-      {/* Interruptor de pausa global da IA */}
-      {!carregandoPausaGlobal && (
+      <aside
+        style={{
+          width: 360,
+          minWidth: 300,
+          borderRight: "1px solid rgba(255,255,255,0.10)",
+          display: "flex",
+          flexDirection: "column",
+          background: "#111820",
+        }}
+      >
         <div
           style={{
-            padding: "10px 16px",
-            background: iaPausadaGlobal ? "#ffb020" : "#f0f2f5",
-            borderBottom: "1px solid #d1d7db",
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            flexShrink: 0,
+            padding: 16,
+            borderBottom: "1px solid rgba(255,255,255,0.08)",
           }}
         >
-          <span
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: iaPausadaGlobal ? "#ffffff" : "#111b21",
-            }}
-          >
-            {iaPausadaGlobal
-              ? "⏸️ IA pausada para TODAS as conversas"
-              : "🤖 IA ativa normalmente"}
-          </span>
-          <button
-            onClick={alternarPausaGlobal}
-            style={{
-              background: iaPausadaGlobal ? "#ffffff" : "#008069",
-              color: iaPausadaGlobal ? "#ffb020" : "#ffffff",
-              border: "none",
-              borderRadius: 14,
-              padding: "4px 12px",
-              cursor: "pointer",
-              fontWeight: 700,
-              fontSize: 12,
-            }}
-          >
-            {iaPausadaGlobal ? "Reativar" : "Pausar tudo"}
-          </button>
-        </div>
-      )}
-
-      <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        {/* Lista de conversas */}
-        <div
-          style={{
-            width: 320,
-            borderRight: "1px solid #d1d7db",
-            display: "flex",
-            flexDirection: "column",
-            background: "#ffffff",
-            height: "100%",
-          }}
-        >
-          <div
-            style={{
-              background: "#008069",
-              color: "#ffffff",
-              padding: "16px",
-              fontWeight: 700,
-              fontSize: 18,
-              flexShrink: 0,
-            }}
-          >
-            Conversas
+          <div style={{ fontWeight: 900, fontSize: 18 }}>WhatsApp</div>
+          <div style={{ fontSize: 12, opacity: 0.65, marginTop: 4 }}>
+            Atendimento manual
           </div>
-          <div
-            style={{
-              padding: "10px 12px",
-              background: "#ffffff",
-              borderBottom: "1px solid #f0f0f0",
-              flexShrink: 0,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                background: "#f0f2f5",
-                borderRadius: 8,
-                padding: "0 10px",
-              }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  color: "#667781",
-                  fontSize: 15,
-                  flexShrink: 0,
-                }}
-              >
-                ⌕
-              </span>
 
-              <input
-                value={buscaConversas}
-                onChange={(evento) => setBuscaConversas(evento.target.value)}
-                placeholder="Buscar nome, telefone ou mensagem"
-                aria-label="Buscar conversas"
+          <input
+            value={busca}
+            onChange={(event) => setBusca(event.target.value)}
+            placeholder="Buscar nome, telefone ou mensagem..."
+            style={{
+              width: "100%",
+              marginTop: 14,
+              border: "1px solid rgba(255,255,255,0.10)",
+              borderRadius: 12,
+              background: "rgba(255,255,255,0.06)",
+              color: "#fff",
+              padding: "11px 12px",
+              outline: "none",
+            }}
+          />
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto" }}>
+          {conversasFiltradas.map((conversa) => {
+            const selecionada = conversa.telefone === telefoneSelecionado;
+
+            return (
+              <button
+                key={conversa.telefone}
+                onClick={() => setTelefoneSelecionado(conversa.telefone)}
                 style={{
                   width: "100%",
                   border: "none",
-                  outline: "none",
-                  background: "transparent",
-                  color: "#111b21",
-                  fontSize: 13,
-                  padding: "9px 0",
-                  minWidth: 0,
+                  borderBottom: "1px solid rgba(255,255,255,0.06)",
+                  background: selecionada
+                    ? "rgba(180,120,255,0.12)"
+                    : "transparent",
+                  color: "#fff",
+                  padding: 14,
+                  display: "flex",
+                  gap: 12,
+                  textAlign: "left",
+                  cursor: "pointer",
                 }}
-              />
-
-              {buscaConversas && (
-                <button
-                  type="button"
-                  onClick={() => setBuscaConversas("")}
-                  aria-label="Limpar busca"
-                  title="Limpar busca"
+              >
+                <div
                   style={{
-                    border: "none",
-                    background: "transparent",
-                    color: "#667781",
-                    cursor: "pointer",
-                    fontSize: 16,
-                    lineHeight: 1,
-                    padding: 2,
+                    width: 42,
+                    height: 42,
+                    borderRadius: "50%",
+                    background: "rgba(180,120,255,0.18)",
+                    display: "grid",
+                    placeItems: "center",
+                    fontWeight: 900,
                     flexShrink: 0,
                   }}
                 >
-                  ×
-                </button>
-              )}
-            </div>
-          </div>
+                  {iniciais(conversa.nome)}
+                </div>
 
-          <div
-            style={{
-              display: "flex",
-              gap: 6,
-              padding: "0 12px 10px",
-              background: "#ffffff",
-              borderBottom: "1px solid #f0f0f0",
-              flexShrink: 0,
-            }}
-          >
-            <button
-              type="button"
-              onClick={() => setFiltroAtencao("all")}
-              style={{
-                border: "1px solid #d1d7db",
-                background: filtroAtencao === "all" ? "#e7f7f3" : "#ffffff",
-                color: "#111b21",
-                borderRadius: 14,
-                padding: "5px 10px",
-                cursor: "pointer",
-                fontSize: 11,
-                fontWeight: 700,
-              }}
-            >
-              Todas
-            </button>
-            <button
-              type="button"
-              onClick={() => setFiltroAtencao("review")}
-              style={{
-                border: "1px solid #d1d7db",
-                background: filtroAtencao === "review" ? "#fff3cd" : "#ffffff",
-                color: "#111b21",
-                borderRadius: 14,
-                padding: "5px 10px",
-                cursor: "pointer",
-                fontSize: 11,
-                fontWeight: 700,
-              }}
-            >
-              ⚠ Requer atenção
-            </button>
-          </div>
-
-          <div style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
-            {conversasFiltradas.map((conversa) => {
-              const selecionada = telefoneSelecionado === conversa.telefone;
-              const rotuloResposta = rotuloOrigemResposta(
-                conversa.ultimaOrigemResposta
-              );
-
-              return (
-                <div
-                  key={conversa.telefone}
-                  onClick={() => setTelefoneSelecionado(conversa.telefone)}
-                  style={{
-                    padding: "12px 16px",
-                    cursor: "pointer",
-                    borderBottom: "1px solid #f0f0f0",
-                    background: selecionada
-                      ? "#f0f2f5"
-                      : conversa.naoLidas > 0
-                        ? "#f7fffb"
-                        : "transparent",
-                  }}
-                >
+                <div style={{ minWidth: 0, flex: 1 }}>
                   <div
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
-                      alignItems: "center",
                       gap: 8,
                     }}
                   >
-                    <span
+                    <strong
                       style={{
-                        fontWeight: conversa.naoLidas > 0 ? 700 : 600,
-                        color: "#111b21",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
                       }}
                     >
                       {conversa.nome}
+                    </strong>
+
+                    <span style={{ fontSize: 11, opacity: 0.55 }}>
+                      {formatarHorario(conversa.ultimoHorario)}
                     </span>
-
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 12,
-                          color: conversa.naoLidas > 0 ? "#00a884" : "#667781",
-                          fontWeight: conversa.naoLidas > 0 ? 700 : 400,
-                        }}
-                      >
-                        {formatarHorario(conversa.ultimoHorario)}
-                      </span>
-
-                      {conversa.naoLidas > 0 && (
-                        <span
-                          style={{
-                            minWidth: 20,
-                            height: 20,
-                            padding: "0 6px",
-                            borderRadius: 10,
-                            background: "#25d366",
-                            color: "#ffffff",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {conversa.naoLidas > 99 ? "99+" : conversa.naoLidas}
-                        </span>
-                      )}
-                    </div>
                   </div>
 
                   <div
                     style={{
-                      fontSize: 13,
-                      color: conversa.naoLidas > 0 ? "#111b21" : "#667781",
-                      fontWeight: conversa.naoLidas > 0 ? 600 : 400,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
                       display: "flex",
                       alignItems: "center",
-                      gap: 6,
-                      marginTop: 2,
+                      gap: 8,
+                      marginTop: 5,
                     }}
                   >
-                    {(conversa.aiReviewLevel === "attention" ||
-                      conversa.aiReviewLevel === "urgent") && (
-                      <span
-                        title={conversa.aiReviewReason ?? "Revisão humana recomendada"}
-                        style={{
-                          background:
-                            conversa.aiReviewLevel === "urgent"
-                              ? "#d32f2f"
-                              : "#f59e0b",
-                          color: "#ffffff",
-                          fontSize: 10,
-                          padding: "1px 6px",
-                          borderRadius: 8,
-                          fontWeight: 700,
-                          flexShrink: 0,
-                        }}
-                      >
-                        {conversa.aiReviewLevel === "urgent" ? "URGENTE" : "ATENÇÃO"}
-                      </span>
-                    )}
-
-                    {conversa.iaPausada && (
-                      <span
-                        style={{
-                          background: "#ffb020",
-                          color: "#ffffff",
-                          fontSize: 10,
-                          padding: "1px 6px",
-                          borderRadius: 8,
-                          fontWeight: 700,
-                          flexShrink: 0,
-                        }}
-                      >
-                        HUMANO
-                      </span>
-                    )}
-
                     <span
                       style={{
+                        flex: 1,
+                        fontSize: 12,
+                        opacity: 0.68,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
@@ -719,443 +430,285 @@ export default function WhatsAppPainelPage() {
                     >
                       {conversa.ultimaMensagem}
                     </span>
-                  </div>
 
-                  {conversa.aguardandoResposta ? (
-                    <div
-                      style={{
-                        marginTop: 5,
-                        fontSize: 11,
-                        fontWeight: 700,
-                        color: "#c62828",
-                      }}
-                    >
-                      Aguardando resposta
-                      {conversa.aguardandoDesde
-                        ? ` • ${formatarTempoEspera(conversa.aguardandoDesde)}`
-                        : ""}
-                    </div>
-                  ) : (
-                    rotuloResposta && (
-                      <div
+                    {conversa.naoLidas > 0 ? (
+                      <span
                         style={{
-                          marginTop: 5,
+                          minWidth: 20,
+                          height: 20,
+                          padding: "0 6px",
+                          borderRadius: 999,
+                          display: "grid",
+                          placeItems: "center",
+                          background: "#25d366",
+                          color: "#07120b",
                           fontSize: 11,
-                          fontWeight: 600,
-                          color: "#008069",
+                          fontWeight: 900,
                         }}
                       >
-                        {rotuloResposta}
-                      </div>
-                    )
-                  )}
+                        {conversa.naoLidas}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
-              );
-            })}
-            {conversas.length === 0 && (
-              <div style={{ padding: 16, color: "#667781" }}>
-                Nenhuma conversa ainda.
-              </div>
-            )}
+              </button>
+            );
+          })}
 
-            {conversas.length > 0 && conversasFiltradas.length === 0 && (
-              <div
-                style={{
-                  padding: "24px 16px",
-                  color: "#667781",
-                  fontSize: 13,
-                  textAlign: "center",
-                }}
-              >
-                Nenhuma conversa encontrada para “{buscaConversas.trim()}”.
-              </div>
-            )}
-          </div>
+          {conversasFiltradas.length === 0 ? (
+            <div style={{ padding: 20, opacity: 0.6, fontSize: 13 }}>
+              Nenhuma conversa encontrada.
+            </div>
+          ) : null}
         </div>
+      </aside>
 
-        {/* Área da conversa */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            background: "#e5ddd5",
-            height: "100%",
-            minWidth: 0,
-          }}
-        >
-          {telefoneSelecionado ? (
-            <>
-              <div
-                style={{
-                  background: "#008069",
-                  color: "#ffffff",
-                  padding: "12px 20px",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  flexShrink: 0,
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, color: "#ffffff" }}>
-                    {nomeSelecionado}
-                  </div>
-
-                  {(() => {
-                    const conversaSelecionada = conversas.find(
-                      (conversa) => conversa.telefone === telefoneSelecionado
-                    );
-
-                    const detalhes = [
-                      conversaSelecionada?.etapa,
-                      conversaSelecionada?.interesses?.length
-                        ? conversaSelecionada.interesses.join(", ")
-                        : null,
-                      conversaSelecionada?.origem,
-                    ].filter(Boolean);
-
-                    return (
-                      <>
-                        {detalhes.length > 0 && (
-                          <div
-                            style={{
-                              fontSize: 11,
-                              fontWeight: 600,
-                              opacity: 0.95,
-                              color: "#ffffff",
-                              marginTop: 2,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              maxWidth: 620,
-                            }}
-                            title={detalhes.join(" • ")}
-                          >
-                            {detalhes.join(" • ")}
-                          </div>
-                        )}
-
-                        <div
-                          style={{
-                            fontSize: 12,
-                            opacity: 0.78,
-                            color: "#ffffff",
-                            marginTop: detalhes.length > 0 ? 2 : 0,
-                          }}
-                        >
-                          {telefoneSelecionado}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    flexWrap: "wrap",
-                    justifyContent: "flex-end",
-                  }}
-                >
-                  {conversaSelecionada && (
-                    <select
-                      value={conversaSelecionada.statusConversa}
-                      onChange={(evento) =>
-                        alterarStatusConversa(
-                          evento.target.value as Conversa["statusConversa"]
-                        )
-                      }
-                      aria-label="Status da conversa"
-                      title="Status da conversa"
-                      style={{
-                        background: "rgba(255,255,255,0.2)",
-                        color: "#ffffff",
-                        border: "1px solid rgba(255,255,255,0.28)",
-                        borderRadius: 20,
-                        padding: "8px 12px",
-                        cursor: "pointer",
-                        fontWeight: 600,
-                        fontSize: 13,
-                        outline: "none",
-                      }}
-                    >
-                      <option value="em_atendimento" style={{ color: "#111b21" }}>
-                        Em atendimento
-                      </option>
-                      <option value="aguardando_cliente" style={{ color: "#111b21" }}>
-                        Aguardando cliente
-                      </option>
-                      <option value="finalizada" style={{ color: "#111b21" }}>
-                        Finalizada
-                      </option>
-                    </select>
-                  )}
-
-                  {(() => {
-                    const conversaSelecionada = conversas.find(
-                      (conversa) => conversa.telefone === telefoneSelecionado
-                    );
-
-                    return conversaSelecionada?.leadId ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          window.location.href = `/leads/${conversaSelecionada.leadId}`;
-                        }}
-                        style={{
-                          background: "rgba(255,255,255,0.2)",
-                          color: "#ffffff",
-                          border: "1px solid rgba(255,255,255,0.28)",
-                          borderRadius: 20,
-                          padding: "8px 16px",
-                          cursor: "pointer",
-                          fontWeight: 600,
-                          fontSize: 13,
-                        }}
-                      >
-                        Ver cadastro
-                      </button>
-                    ) : null;
-                  })()}
-
-                  <button
-                    onClick={alternarPausaIA}
-                    style={{
-                      background: iaPausada ? "#ffb020" : "rgba(255,255,255,0.2)",
-                      color: "#ffffff",
-                      border: "none",
-                      borderRadius: 20,
-                      padding: "8px 16px",
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      fontSize: 13,
-                    }}
-                  >
-                    {iaPausada ? "🙋 Humano no controle" : "🤖 IA ativa"}
-                  </button>
-                </div>
+      <main
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+          background:
+            "radial-gradient(circle at top right, rgba(116,71,170,0.12), transparent 35%), #0b0f14",
+        }}
+      >
+        {!telefoneSelecionado ? (
+          <div
+            style={{
+              flex: 1,
+              display: "grid",
+              placeItems: "center",
+              textAlign: "center",
+              padding: 30,
+              opacity: 0.7,
+            }}
+          >
+            <div>
+              <div style={{ fontSize: 22, fontWeight: 900 }}>
+                Selecione uma conversa
               </div>
-
-              {conversaSelecionada &&
-                (conversaSelecionada.aiReviewLevel === "attention" ||
-                  conversaSelecionada.aiReviewLevel === "urgent") && (
-                  <div
-                    style={{
-                      background:
-                        conversaSelecionada.aiReviewLevel === "urgent"
-                          ? "#ffe8e8"
-                          : "#fff7df",
-                      borderBottom:
-                        conversaSelecionada.aiReviewLevel === "urgent"
-                          ? "1px solid #f1a5a5"
-                          : "1px solid #f0d58c",
-                      color: "#3b2f2f",
-                      padding: "10px 14px",
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      alignItems: "flex-start",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <div style={{ display: "grid", gap: 4 }}>
-                      <div style={{ fontWeight: 800, fontSize: 12 }}>
-                        {conversaSelecionada.aiReviewLevel === "urgent"
-                          ? "⚠ Revisão humana urgente"
-                          : "⚠ Revisão humana recomendada"}
-                      </div>
-                      {conversaSelecionada.aiReviewReason && (
-                        <div style={{ fontSize: 12 }}>
-                          {conversaSelecionada.aiReviewReason}
-                        </div>
-                      )}
-                      {conversaSelecionada.aiNextAction && (
-                        <div style={{ fontSize: 11, opacity: 0.8 }}>
-                          Próxima ação sugerida: {conversaSelecionada.aiNextAction}
-                        </div>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={marcarAnaliseComoRevisada}
-                      style={{
-                        border: "1px solid rgba(0,0,0,0.16)",
-                        background: "#ffffff",
-                        color: "#111b21",
-                        borderRadius: 10,
-                        padding: "6px 10px",
-                        cursor: "pointer",
-                        fontSize: 11,
-                        fontWeight: 700,
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Marcar como revisado
-                    </button>
-                  </div>
-                )}
-
-              <div
-                style={{
-                  flex: 1,
-                  position: "relative",
-                  minHeight: 0,
-                  overflow: "hidden",
-                }}
-              >
-                <div
-                  ref={mensagensContainerRef}
-                  onScroll={aoRolarMensagens}
-                  style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    overflowY: "auto",
-                    padding: "16px 24px",
-                  }}
-                >
-                  {bolhas.map((bolha, indice) => {
-                    const mostrarData = indice === 0 || chaveData(bolha.horario) !== chaveData(bolhas[indice - 1].horario);
-                    return (
-                      <div key={indice}>
-                        {mostrarData && (
-                          <div style={{ display: "flex", justifyContent: "center", margin: indice === 0 ? "4px 0 14px" : "18px 0 14px" }}>
-                            <div style={{ background: "#ffffff", color: "#54656f", fontSize: 11, fontWeight: 600, padding: "6px 12px", borderRadius: 8, boxShadow: "0 1px 1px rgba(0,0,0,0.08)" }}>
-                              {formatarSeparadorData(bolha.horario)}
-                            </div>
-                          </div>
-                        )}
-                        <div
-                      style={{
-                        display: "flex",
-                        justifyContent:
-                          bolha.tipo === "enviada" ? "flex-end" : "flex-start",
-                        marginBottom: 8,
-                      }}
-                    >
-                      <div
-                        style={{
-                          maxWidth: "65%",
-                          background:
-                            bolha.tipo === "enviada" ? "#d9fdd3" : "#ffffff",
-                          borderRadius: 8,
-                          padding: "8px 12px",
-                          boxShadow: "0 1px 1px rgba(0,0,0,0.1)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 14,
-                            whiteSpace: "pre-wrap",
-                            color: "#111b21",
-                          }}
-                        >
-                          {bolha.texto}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: 10,
-                            color: "#667781",
-                            textAlign: "right",
-                            marginTop: 2,
-                          }}
-                        >
-                          {formatarHorario(bolha.horario)}
-                        </div>
-                      </div>
-                    </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {mostrarBotaoDescer && (
-                  <button
-                    onClick={descerParaFinal}
-                    style={{
-                      position: "absolute",
-                      bottom: 16,
-                      right: 24,
-                      width: 40,
-                      height: 40,
-                      borderRadius: "50%",
-                      background: "#ffffff",
-                      border: "1px solid #d1d7db",
-                      boxShadow: "0 2px 6px rgba(0,0,0,0.2)",
-                      cursor: "pointer",
-                      fontSize: 18,
-                      color: "#111b21",
-                    }}
-                  >
-                    ↓
-                  </button>
-                )}
+              <div style={{ marginTop: 8, fontSize: 13 }}>
+                As mensagens recebidas aparecem aqui. O atendimento é manual.
               </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: 8,
-                  padding: "12px 16px",
-                  background: "#f0f2f5",
-                  flexShrink: 0,
-                }}
-              >
-                <input
-                  value={textoInput}
-                  onChange={(evento) => setTextoInput(evento.target.value)}
-                  onKeyDown={(evento) => {
-                    if (evento.key === "Enter") enviarMensagem();
-                  }}
-                  placeholder="Digite uma mensagem"
-                  style={{
-                    flex: 1,
-                    border: "none",
-                    borderRadius: 20,
-                    padding: "10px 16px",
-                    fontSize: 14,
-                    color: "#111b21",
-                    background: "#ffffff",
-                  }}
-                />
-                <button
-                  onClick={enviarMensagem}
-                  disabled={enviando}
-                  style={{
-                    background: "#008069",
-                    color: "#ffffff",
-                    border: "none",
-                    borderRadius: "50%",
-                    width: 40,
-                    height: 40,
-                    cursor: "pointer",
-                    fontSize: 16,
-                    flexShrink: 0,
-                  }}
-                >
-                  ➤
-                </button>
-              </div>
-            </>
-          ) : (
-            <div
+            </div>
+          </div>
+        ) : (
+          <>
+            <header
               style={{
-                flex: 1,
+                padding: "13px 16px",
+                borderBottom: "1px solid rgba(255,255,255,0.08)",
+                background: "#111820",
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "center",
-                color: "#667781",
+                gap: 12,
               }}
             >
-              Selecione uma conversa para começar
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: "50%",
+                  background: "rgba(180,120,255,0.18)",
+                  display: "grid",
+                  placeItems: "center",
+                  fontWeight: 900,
+                }}
+              >
+                {iniciais(nomeSelecionado || conversaSelecionada?.nome || "?")}
+              </div>
+
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 900 }}>
+                  {nomeSelecionado || conversaSelecionada?.nome}
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.6 }}>
+                  {telefoneSelecionado}
+                </div>
+              </div>
+            </header>
+
+            <div
+              ref={mensagensContainerRef}
+              onScroll={aoRolarMensagens}
+              style={{
+                flex: 1,
+                overflowY: "auto",
+                padding: "18px 22px",
+                position: "relative",
+              }}
+            >
+              {grupos.map((item) => {
+                if (item.tipo === "data") {
+                  return (
+                    <div
+                      key={item.chave}
+                      style={{
+                        display: "flex",
+                        justifyContent: "center",
+                        margin: "12px 0",
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 800,
+                          letterSpacing: 0.5,
+                          padding: "5px 10px",
+                          borderRadius: 999,
+                          background: "rgba(255,255,255,0.08)",
+                          color: "rgba(255,255,255,0.68)",
+                        }}
+                      >
+                        {item.texto}
+                      </span>
+                    </div>
+                  );
+                }
+
+                const enviada = item.bolha.tipo === "enviada";
+
+                return (
+                  <div
+                    key={item.chave}
+                    style={{
+                      display: "flex",
+                      justifyContent: enviada ? "flex-end" : "flex-start",
+                      marginBottom: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        maxWidth: "75%",
+                        padding: "9px 11px 6px",
+                        borderRadius: enviada
+                          ? "14px 14px 4px 14px"
+                          : "14px 14px 14px 4px",
+                        background: enviada
+                          ? "#6e3da0"
+                          : "rgba(255,255,255,0.09)",
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      <div style={{ fontSize: 14, lineHeight: 1.4 }}>
+                        {item.bolha.texto}
+                      </div>
+
+                      <div
+                        style={{
+                          textAlign: "right",
+                          fontSize: 10,
+                          opacity: 0.6,
+                          marginTop: 4,
+                        }}
+                      >
+                        {formatarHorario(item.bolha.horario)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {mostrarBotaoDescer ? (
+                <button
+                  onClick={descerParaFinal}
+                  style={{
+                    position: "sticky",
+                    bottom: 8,
+                    marginLeft: "auto",
+                    display: "block",
+                    width: 38,
+                    height: 38,
+                    borderRadius: "50%",
+                    border: "1px solid rgba(255,255,255,0.12)",
+                    background: "#1c2630",
+                    color: "#fff",
+                    cursor: "pointer",
+                  }}
+                >
+                  ↓
+                </button>
+              ) : null}
             </div>
-          )}
-        </div>
-      </div>
+
+            <footer
+              style={{
+                padding: 12,
+                borderTop: "1px solid rgba(255,255,255,0.08)",
+                background: "#111820",
+              }}
+            >
+              {erro ? (
+                <div
+                  style={{
+                    marginBottom: 8,
+                    fontSize: 12,
+                    color: "#ff9aa8",
+                  }}
+                >
+                  {erro}
+                </div>
+              ) : null}
+
+              <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
+                <textarea
+                  value={textoInput}
+                  onChange={(event) => setTextoInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (
+                      event.key === "Enter" &&
+                      !event.shiftKey &&
+                      !event.nativeEvent.isComposing
+                    ) {
+                      event.preventDefault();
+                      enviarMensagem();
+                    }
+                  }}
+                  placeholder="Digite uma mensagem..."
+                  style={{
+                    flex: 1,
+                    minHeight: 44,
+                    maxHeight: 140,
+                    resize: "vertical",
+                    borderRadius: 14,
+                    border: "1px solid rgba(255,255,255,0.10)",
+                    background: "rgba(255,255,255,0.06)",
+                    color: "#fff",
+                    padding: "11px 12px",
+                    outline: "none",
+                    font: "inherit",
+                  }}
+                />
+
+                <button
+                  onClick={enviarMensagem}
+                  disabled={enviando || !textoInput.trim()}
+                  style={{
+                    minHeight: 44,
+                    padding: "0 18px",
+                    borderRadius: 14,
+                    border: "none",
+                    background:
+                      enviando || !textoInput.trim() ? "#3a4249" : "#25d366",
+                    color:
+                      enviando || !textoInput.trim() ? "#aeb6bc" : "#07120b",
+                    fontWeight: 900,
+                    cursor:
+                      enviando || !textoInput.trim()
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
+                >
+                  {enviando ? "Enviando..." : "Enviar"}
+                </button>
+              </div>
+            </footer>
+          </>
+        )}
+      </main>
     </div>
   );
 }

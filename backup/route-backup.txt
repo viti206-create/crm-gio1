@@ -1,0 +1,328 @@
+import { NextRequest, NextResponse } from "next/server";
+
+import { createSupabaseServerClient } from "@/lib/supabaseServer";
+
+type SupabaseClient = ReturnType<typeof createSupabaseServerClient>;
+
+type WhatsAppMessage = {
+  id?: string;
+  from?: string;
+  to?: string;
+  timestamp?: string;
+  type?: string;
+  text?: { body?: string };
+  image?: { caption?: string; mime_type?: string };
+  video?: { caption?: string; mime_type?: string };
+  audio?: { mime_type?: string };
+  document?: { caption?: string; filename?: string; mime_type?: string };
+  sticker?: { mime_type?: string };
+  button?: { text?: string };
+  interactive?: {
+    button_reply?: { title?: string };
+    list_reply?: { title?: string; description?: string };
+  };
+  location?: {
+    latitude?: number;
+    longitude?: number;
+    name?: string;
+    address?: string;
+  };
+  contacts?: Array<{
+    name?: { formatted_name?: string };
+  }>;
+};
+
+type WhatsAppWebhookPayload = {
+  object?: string;
+  entry?: Array<{
+    changes?: Array<{
+      field?: string;
+      value?: {
+        contacts?: Array<{
+          wa_id?: string;
+          profile?: { name?: string };
+        }>;
+        messages?: WhatsAppMessage[];
+        message_echoes?: WhatsAppMessage[];
+        statuses?: Array<unknown>;
+      };
+    }>;
+  }>;
+};
+
+type IncomingMessage = {
+  messageId: string;
+  phoneRaw: string;
+  contactName: string | null;
+  message: string;
+  timestamp: string | null;
+};
+
+type HumanEcho = {
+  messageId: string;
+  phoneRaw: string;
+  message: string;
+  timestamp: string | null;
+};
+
+function jsonError(message: string, status: number) {
+  return NextResponse.json({ error: message }, { status });
+}
+
+function getWebhookVerifyToken() {
+  return (
+    process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN ||
+    process.env.WHATSAPP_VERIFY_TOKEN ||
+    ""
+  );
+}
+
+function trimOrNull(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text ? text : null;
+}
+
+function toIsoTimestamp(timestamp: string | null | undefined) {
+  const raw = trimOrNull(timestamp);
+  if (!raw) return null;
+
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds)) return null;
+
+  return new Date(seconds * 1000).toISOString();
+}
+
+function extractMessageText(message: WhatsAppMessage) {
+  const type = String(message.type ?? "").trim().toLowerCase();
+
+  if (type === "text") return trimOrNull(message.text?.body) ?? "";
+  if (type === "image") return trimOrNull(message.image?.caption) ?? "[Imagem]";
+  if (type === "video") return trimOrNull(message.video?.caption) ?? "[Vídeo]";
+  if (type === "audio") return "[Áudio]";
+
+  if (type === "document") {
+    const caption = trimOrNull(message.document?.caption);
+    const filename = trimOrNull(message.document?.filename);
+    return caption ?? (filename ? `[Documento: ${filename}]` : "[Documento]");
+  }
+
+  if (type === "sticker") return "[Figurinha]";
+  if (type === "button") return trimOrNull(message.button?.text) ?? "[Botão]";
+
+  if (type === "interactive") {
+    return (
+      trimOrNull(message.interactive?.button_reply?.title) ??
+      trimOrNull(message.interactive?.list_reply?.title) ??
+      trimOrNull(message.interactive?.list_reply?.description) ??
+      "[Interação]"
+    );
+  }
+
+  if (type === "location") {
+    const name = trimOrNull(message.location?.name);
+    const address = trimOrNull(message.location?.address);
+
+    if (name && address) return `[Localização] ${name} - ${address}`;
+    if (name) return `[Localização] ${name}`;
+    if (address) return `[Localização] ${address}`;
+    return "[Localização]";
+  }
+
+  if (type === "contacts") {
+    const name = trimOrNull(message.contacts?.[0]?.name?.formatted_name);
+    return name ? `[Contato] ${name}` : "[Contato]";
+  }
+
+  return type ? `[${type}]` : "[Mensagem]";
+}
+
+function extractIncomingMessages(body: WhatsAppWebhookPayload) {
+  const events: IncomingMessage[] = [];
+
+  for (const entry of body.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      if (change.field !== "messages") continue;
+
+      const value = change.value;
+      if (!value?.messages?.length) continue;
+
+      for (const message of value.messages) {
+        const type = String(message.type ?? "").trim().toLowerCase();
+        if (type === "unsupported") continue;
+
+        const messageId = trimOrNull(message.id);
+        const phoneRaw =
+          trimOrNull(message.from) ?? trimOrNull(value.contacts?.[0]?.wa_id);
+
+        if (!messageId || !phoneRaw) continue;
+
+        const matchingContact =
+          value.contacts?.find((contact) => contact.wa_id === phoneRaw) ??
+          value.contacts?.[0];
+
+        events.push({
+          messageId,
+          phoneRaw,
+          contactName: trimOrNull(matchingContact?.profile?.name),
+          message: extractMessageText(message),
+          timestamp: toIsoTimestamp(message.timestamp),
+        });
+      }
+    }
+  }
+
+  return events;
+}
+
+function extractHumanEchoes(body: WhatsAppWebhookPayload) {
+  const echoes: HumanEcho[] = [];
+
+  for (const entry of body.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      if (change.field !== "smb_message_echoes") continue;
+
+      for (const echo of change.value?.message_echoes ?? []) {
+        const messageId = trimOrNull(echo.id);
+        const phoneRaw = trimOrNull(echo.to);
+
+        if (!messageId || !phoneRaw) continue;
+
+        echoes.push({
+          messageId,
+          phoneRaw,
+          message: extractMessageText(echo),
+          timestamp: toIsoTimestamp(echo.timestamp),
+        });
+      }
+    }
+  }
+
+  return echoes;
+}
+
+async function insertIncomingMessage(
+  supabase: SupabaseClient,
+  event: IncomingMessage
+) {
+  const createdAt = event.timestamp ?? new Date().toISOString();
+
+  const { error } = await supabase.from("whatsapp_conversas").insert({
+    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    telefone_cliente: event.phoneRaw,
+    nome_cliente: event.contactName,
+    mensagem: event.message,
+    resposta: null,
+    message_id: event.messageId,
+    created_at: createdAt,
+    response_at: null,
+    response_origin: null,
+    read_at: null,
+  });
+
+  if (error?.code === "23505") return { duplicate: true };
+
+  if (error) {
+    throw new Error(`Erro ao salvar mensagem recebida: ${error.message}`);
+  }
+
+  return { duplicate: false };
+}
+
+async function insertHumanEcho(
+  supabase: SupabaseClient,
+  echo: HumanEcho
+) {
+  const responseAt = echo.timestamp ?? new Date().toISOString();
+
+  const { error } = await supabase.from("whatsapp_conversas").insert({
+    numero_origem: process.env.WHATSAPP_PHONE_NUMBER_ID,
+    telefone_cliente: echo.phoneRaw,
+    mensagem: null,
+    resposta: echo.message,
+    message_id: echo.messageId,
+    created_at: responseAt,
+    response_at: responseAt,
+    response_origin: "whatsapp_human",
+  });
+
+  if (error?.code === "23505") return { duplicate: true };
+
+  if (error) {
+    throw new Error(`Erro ao salvar mensagem manual do WhatsApp: ${error.message}`);
+  }
+
+  return { duplicate: false };
+}
+
+export async function GET(req: NextRequest) {
+  const mode = req.nextUrl.searchParams.get("hub.mode");
+  const verifyToken = req.nextUrl.searchParams.get("hub.verify_token");
+  const challenge = req.nextUrl.searchParams.get("hub.challenge");
+  const expectedVerifyToken = getWebhookVerifyToken();
+
+  if (!mode || !verifyToken || !challenge) {
+    return jsonError("Parametros de verificacao ausentes", 400);
+  }
+
+  if (!expectedVerifyToken) {
+    return jsonError("Webhook verify token nao configurado", 500);
+  }
+
+  if (mode === "subscribe" && verifyToken === expectedVerifyToken) {
+    return new NextResponse(challenge, {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
+    });
+  }
+
+  return jsonError("Verificacao do webhook falhou", 403);
+}
+
+export async function POST(req: NextRequest) {
+  let body: WhatsAppWebhookPayload;
+
+  try {
+    body = (await req.json()) as WhatsAppWebhookPayload;
+  } catch {
+    return jsonError("Body JSON invalido", 400);
+  }
+
+  const supabase = createSupabaseServerClient();
+
+  try {
+    let processed = 0;
+    let duplicates = 0;
+
+    const humanEchoes = extractHumanEchoes(body);
+    for (const echo of humanEchoes) {
+      const result = await insertHumanEcho(supabase, echo);
+      if (result.duplicate) duplicates += 1;
+      else processed += 1;
+    }
+
+    const events = extractIncomingMessages(body);
+    for (const event of events) {
+      const result = await insertIncomingMessage(supabase, event);
+      if (result.duplicate) duplicates += 1;
+      else processed += 1;
+    }
+
+    return NextResponse.json({
+      ok: true,
+      processed,
+      duplicates,
+      incoming: events.length,
+      humanEchoes: humanEchoes.length,
+      manualMode: true,
+    });
+  } catch (error) {
+    console.error("WHATSAPP WEBHOOK ERROR:", error);
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Erro interno ao processar webhook";
+
+    return jsonError(message, 500);
+  }
+}

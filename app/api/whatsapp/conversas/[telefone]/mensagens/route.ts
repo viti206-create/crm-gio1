@@ -3,16 +3,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabaseServer";
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ telefone: string }> }
 ) {
   const { telefone } = await params;
-
   const supabase = createSupabaseServerClient();
 
   const { data, error } = await supabase
     .from("whatsapp_conversas")
-    .select("mensagem, resposta, created_at, response_at")
+    .select("mensagem,resposta,created_at,response_at,nome_cliente")
     .eq("telefone_cliente", telefone)
     .order("created_at", { ascending: true });
 
@@ -26,7 +25,11 @@ export async function GET(
     horario: string;
   }> = [];
 
+  let nome: string | null = null;
+
   for (const linha of data ?? []) {
+    if (linha.nome_cliente) nome = linha.nome_cliente;
+
     if (linha.mensagem) {
       bolhas.push({
         tipo: "recebida",
@@ -62,16 +65,9 @@ export async function GET(
     console.error("Erro ao marcar mensagens como lidas:", readError);
   }
 
-  const { data: lead } = await supabase
-    .from("leads")
-    .select("name, ia_pausada")
-    .eq("phone_raw", telefone)
-    .maybeSingle();
-
   return NextResponse.json({
     bolhas,
-    nome: lead?.name ?? telefone,
-    iaPausada: lead?.ia_pausada ?? false,
+    nome: nome ?? telefone,
     marcouComoLida: !readError && (marcadas?.length ?? 0) > 0,
   });
 }
