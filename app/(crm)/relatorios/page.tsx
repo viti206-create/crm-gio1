@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 import { useAdminAccess } from "../_hooks/useAdminAccess";
 import WhatsAppRelatorio from "./WhatsAppRelatorio";
+import EquipeRelatorio from "./EquipeRelatorio";
 
 type RecorrenciaJoin = {
   id: string;
@@ -309,7 +310,7 @@ function metaPeriod(mode: MetaFilterMode, year: number, month: number, customFro
 export default function RelatoriosPage() {
   const router = useRouter();
   const { isAdmin, loadingRole } = useAdminAccess();
-  const [abaAtiva, setAbaAtiva] = useState<"meta" | "comercial" | "whatsapp">("meta");
+  const [abaAtiva, setAbaAtiva] = useState<"meta" | "comercial" | "whatsapp" | "equipe">("meta");
 
   const todayRef = useMemo(() => new Date(), []);
   const [filterMode, setFilterMode] = useState<FilterMode>("monthly");
@@ -873,7 +874,7 @@ export default function RelatoriosPage() {
             </div>
 
             <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"6px 0 10px"}}>
-              {([ ["meta","Meta Ads"], ["comercial","Análise comercial"], ["whatsapp","WhatsApp"] ] as const).map(([id,label]) => (
+              {([ ["meta","Meta Ads"], ["comercial","Análise comercial"], ["whatsapp","WhatsApp"], ["equipe","Equipe"] ] as const).map(([id,label]) => (
                 <button key={id} type="button" onClick={() => setAbaAtiva(id)}
                   style={{...btn,background:abaAtiva===id?"rgba(180,120,255,0.26)":"rgba(255,255,255,0.05)",borderColor:abaAtiva===id?"rgba(180,120,255,0.6)":"rgba(255,255,255,0.12)"}}>
                   {label}
@@ -1281,6 +1282,7 @@ export default function RelatoriosPage() {
           </>
         )}
         {abaAtiva === "whatsapp" && <WhatsAppRelatorio />}
+        {abaAtiva === "equipe" && <EquipeRelatorio />}
       </div>
     </div>
   );
