@@ -751,6 +751,14 @@ export default function LancamentosClinicaPage() {
 
 
 
+  const [filterCategory, setFilterCategory] = useState<string>("all");
+
+
+
+  const [filterAccount, setFilterAccount] = useState<string>("all");
+
+
+
 
 
 
@@ -2484,140 +2492,68 @@ export default function LancamentosClinicaPage() {
 
   const filtered = useMemo(() => {
 
-
-
     const query = q.trim().toLowerCase();
 
-
-
-
-
-
-
     return txOfMonth.filter((tx) => {
-
-
-
       if (
-
-
-
         filterKind !== "all" &&
-
-
-
         tx.kind !== filterKind
-
-
-
       ) {
-
-
-
         return false;
-
-
-
       }
-
-
-
-
-
-
 
       if (
-
-
-
         filterStatus !== "all" &&
-
-
-
         tx.status !== filterStatus
-
-
-
       ) {
-
-
-
         return false;
-
-
-
       }
 
+      if (
+        filterCategory !== "all" &&
+        tx.category_id !== filterCategory
+      ) {
+        return false;
+      }
 
-
-
-
-
+      if (
+        filterAccount !== "all" &&
+        tx.account_id !== filterAccount
+      ) {
+        return false;
+      }
 
       if (!query) return true;
 
+      const categoryName =
+        categories.find((category) => category.id === tx.category_id)?.name ?? "";
 
+      const account = accounts.find((item) => item.id === tx.account_id);
 
-
-
-
+      const accountName = account
+        ? [account.name, account.bank_name ?? ""].filter(Boolean).join(" ")
+        : "";
 
       return [
-
-
-
         tx.description,
-
-
-
         tx.counterparty_name ?? "",
-
-
-
         tx.notes ?? "",
-
-
-
+        categoryName,
+        accountName,
       ]
-
-
-
         .join(" ")
-
-
-
         .toLowerCase()
-
-
-
         .includes(query);
-
-
-
     });
-
-
-
   }, [
-
-
-
     txOfMonth,
-
-
-
     q,
-
-
-
     filterKind,
-
-
-
     filterStatus,
-
-
-
+    filterCategory,
+    filterAccount,
+    categories,
+    accounts,
   ]);
 
 
@@ -6067,363 +6003,102 @@ export default function LancamentosClinicaPage() {
 
 
 
-
-
-
-
       <div
-
-
-
         style={{
-
-
-
-          display: "flex",
-
-
-
+          display: "grid",
+          gridTemplateColumns: "1.4fr 1fr 1fr 1fr 1fr auto",
           gap: 10,
-
-
-
-          flexWrap: "wrap",
-
-
-
+          alignItems: "center",
         }}
-
-
-
       >
-
-
-
         <input
-
-
-
           style={{
-
-
-
             background: "rgba(255,255,255,0.06)",
-
-
-
             color: "white",
-
-
-
-            border:
-
-
-
-              "1px solid rgba(255,255,255,0.12)",
-
-
-
+            border: "1px solid rgba(255,255,255,0.12)",
             padding: "8px 12px",
-
-
-
             borderRadius: 10,
-
-
-
             outline: "none",
-
-
-
-            minWidth: 220,
-
-
-
+            minWidth: 0,
+            width: "100%",
+            boxSizing: "border-box",
           }}
-
-
-
-          placeholder="Buscar descrição..."
-
-
-
+          placeholder="Buscar descrição, observação, pessoa..."
           value={q}
-
-
-
           onChange={(e) => setQ(e.target.value)}
-
-
-
         />
 
-
-
-
-
-
-
-        {(
-
-
-
-          [
-
-
-
-            "all",
-
-
-
-            "income",
-
-
-
-            "expense",
-
-
-
-          ] as const
-
-
-
-        ).map((v) => (
-
-
-
-          <button
-
-
-
-            key={v}
-
-
-
-            onClick={() => setFilterKind(v)}
-
-
-
-            style={
-
-
-
-              filterKind === v
-
-
-
-                ? btnActive
-
-
-
-                : btn
-
-
-
-            }
-
-
-
-          >
-
-
-
-            {v === "all"
-
-
-
-              ? "Todos tipos"
-
-
-
-              : v === "income"
-
-
-
-              ? "Receitas"
-
-
-
-              : "Despesas"}
-
-
-
-          </button>
-
-
-
-        ))}
-
-
-
-
-
-
-
-        {(
-
-
-
-          [
-
-
-
-            "all",
-
-
-
-            "paid",
-
-
-
-            "received",
-
-
-
-            "pending",
-
-
-
-            "late",
-
-
-
-          ] as const
-
-
-
-        ).map((v) => (
-
-
-
-          <button
-
-
-
-            key={v}
-
-
-
-            onClick={() => setFilterStatus(v)}
-
-
-
-            style={
-
-
-
-              filterStatus === v
-
-
-
-                ? btnActive
-
-
-
-                : btn
-
-
-
-            }
-
-
-
-          >
-
-
-
-            {v === "all"
-
-
-
-              ? "Todos status"
-
-
-
-              : v === "paid"
-
-
-
-              ? "Pago"
-
-
-
-              : v === "received"
-
-
-
-              ? "Recebido"
-
-
-
-              : v === "pending"
-
-
-
-              ? "Em aberto"
-
-
-
-              : "Atrasado"}
-
-
-
-          </button>
-
-
-
-        ))}
-
-
-
-
-
-
+        <SelectDark
+          value={filterKind}
+          onChange={(value) =>
+            setFilterKind(value as "all" | "income" | "expense")
+          }
+          searchable={false}
+          options={[
+            { value: "all", label: "Todos tipos" },
+            { value: "income", label: "Receita" },
+            { value: "expense", label: "Despesa" },
+          ]}
+        />
+
+        <SelectDark
+          value={filterStatus}
+          onChange={(value) =>
+            setFilterStatus(
+              value as "all" | "paid" | "pending" | "received" | "late"
+            )
+          }
+          searchable={false}
+          options={[
+            { value: "all", label: "Todos status" },
+            { value: "pending", label: "Em aberto" },
+            { value: "paid", label: "Pago" },
+            { value: "received", label: "Recebido" },
+            { value: "late", label: "Atrasado" },
+          ]}
+        />
+
+        <SelectDark
+          value={filterCategory}
+          onChange={setFilterCategory}
+          searchable
+          options={[
+            { value: "all", label: "Todas categorias" },
+            ...categories.map((category) => ({
+              value: category.id,
+              label: category.name,
+            })),
+          ]}
+        />
+
+        <SelectDark
+          value={filterAccount}
+          onChange={setFilterAccount}
+          searchable
+          options={[
+            { value: "all", label: "Todas contas" },
+            ...accounts.map((account) => ({
+              value: account.id,
+              label: account.bank_name
+                ? `${account.name} — ${account.bank_name}`
+                : account.name,
+            })),
+          ]}
+        />
 
         <button
-
-
-
           onClick={() => {
-
-
-
             setQ("");
-
-
-
             setFilterKind("all");
-
-
-
             setFilterStatus("all");
-
-
-
+            setFilterCategory("all");
+            setFilterAccount("all");
           }}
-
-
-
           style={btn}
-
-
-
         >
-
-
-
           Limpar
-
-
-
         </button>
-
-
-
       </div>
-
-
-
-
 
 
 
