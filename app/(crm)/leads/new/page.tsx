@@ -318,6 +318,7 @@ export default function NewLeadPage() {
     setName(""); setPhoneRaw(""); setCpf(""); setBirthDate(""); setSex("");
     setBecameClientAt(todayInputValue()); setSource("instagram"); setInterests([]);
     setCampaign(""); setNextActionEnabled(false); setNextActionType("whatsapp"); setNextActionAt("");
+    setNoteText("");
     setTimeout(() => nameRef.current?.focus(), 50);
   }
 
@@ -333,66 +334,301 @@ export default function NewLeadPage() {
     return true;
   }, [saving, name, source, interests, stageId, phoneRaw, nextActionEnabled, nextActionType, nextActionAt]);
 
-  async function handleSave() {
-    if (saving) return;
-    const cleanName = name.trim();
-    const phoneE164 = toE164BR(phoneRaw.trim());
-    const normalizedCampaign = campaignSuggestions.find(item => item.trim().toLowerCase() === campaign.trim().toLowerCase()) ?? campaign.trim();
+  async function saveNoteForLead(leadId: string) {
+    const note = noteText.trim();
+    if (!note) return;
 
-    if (!cleanName) return showToast("Preencha o nome.", { variant: "error", title: "Campos obrigatórios" });
-    if (!phoneRaw.trim()) return showToast("Preencha o telefone.", { variant: "error", title: "Campos obrigatórios" });
-    if (!phoneE164) return showToast("Telefone inválido. Ex: (15) 9xxxx-xxxx", { variant: "error", title: "Telefone" });
-    if (!source.trim()) return showToast("Preencha a origem.", { variant: "error", title: "Campos obrigatórios" });
-    if (interests.length === 0) return showToast("Adicione pelo menos um interesse.", { variant: "error", title: "Campos obrigatórios" });
-    if (!stageId) return showToast("Selecione a etapa.", { variant: "error", title: "Campos obrigatórios" });
+    const { data: userRes } = await supabase.auth.getUser();
+    const userId = userRes?.user?.id ?? null;
 
-    let nextActionPayload: Record<string, any> = {};
-    if (nextActionEnabled) {
-      if (!nextActionAt) return showToast("Escolha a data da próxima ação.", { variant: "error", title: "Próxima ação" });
-      const iso = formatDateToISO(nextActionAt);
-      if (!iso) return showToast("Data inválida.", { variant: "error", title: "Próxima ação" });
-      nextActionPayload = { next_action_type: nextActionType, next_action_at: iso };
+    const { error } = await supabase.from("activities").insert({
+      lead_id: leadId,
+      user_id: userId,
+      type: "note",
+      payload: { text: note },
+    });
+
+    if (error) {
+      console.error("Não foi possível salvar a observação:", error);
     }
+  }
 
-    setSaving(true);
-    const payload: Record<string, any> = {
-      name: cleanName, phone_raw: phoneRaw.trim(), phone_e164: phoneE164,
-      source: source.trim(),
-      interest: interests[0], // manter compatibilidade com campo legado
-      interests: interests,   // novo campo array
-      stage_id: stageId, responsible_id: responsibleId || null, ...nextActionPayload,
-    };
-    if (normalizedCampaign) payload.campaign = normalizedCampaign;
-    if (cpf.trim()) payload.cpf = cpf.trim();
-    if (birthDate) payload.birth_date = birthDate;
-    if (sex) payload.sex = sex;
-    if (becameClientAt) payload.became_client_at = becameClientAt;
+  async function persistLead(
+    mode: "create" | "update",
+    payload: Record<string, any>,
+    existingId?: string
+  ) {
+    if (mode === "update") {
+      if (!existingId) {
+        throw new Error("Contato existente não identificado.");
+      }
 
-    const { error: insertErr } = await supabase.from("leads").insert(payload);
-    setSaving(false);
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
-    if (insertErr) {
-      showToast(insertErr.message ?? "Erro ao criar lead", { title: "Não consegui criar", variant: "error", durationMs: 6000 });
+      const updatePayload = {
+        ...payload,
+        deleted_at: null,
+        updated_by: user?.id ?? undefined,
+      };
+
+      const { data, error } = await supabase
+        .from("leads")
+        .update(updatePayload)
+        .eq("id", existingId)
+        .select("id,name")
+        .single();
+
+      if (error) throw error;
+      if (!data?.id) throw new Error("O Supabase não confirmou a atualização do contato.");
+
+      await saveNoteForLead(data.id);
+
+      showToast(`Contato atualizado: ${data.name || payload.name}`, {
+        title: "Contato atualizado ✅",
+        variant: "success",
+        actions: [
+          {
+            label: "Criar outro",
+            variant: "primary",
+            onClick: () => {
+              closeToast();
+              resetForm();
+            },
+          },
+          {
+            label: "Voltar",
+            variant: "ghost",
+            onClick: () => {
+              closeToast();
+              router.replace("/leads");
+            },
+          },
+        ],
+      });
+
       return;
     }
 
-    // Salvar observação se preenchida
-    if (noteText.trim()) {
-      const { data: userRes } = await supabase.auth.getUser();
-      const userId = userRes?.user?.id ?? null;
-      const { data: newLead } = await supabase.from("leads").select("id").eq("name", cleanName).eq("phone_e164", phoneE164).order("created_at", { ascending: false }).limit(1).single();
-      if (newLead?.id) {
-        await supabase.from("activities").insert({ lead_id: newLead.id, user_id: userId, type: "note", payload: { text: noteText.trim() } });
-      }
-    }
+    const { data, error } = await supabase
+      .from("leads")
+      .insert(payload)
+      .select("id,name")
+      .single();
 
-    showToast(`Lead criado: ${cleanName}`, {
-      title: "Sucesso ✅", variant: "success",
+    if (error) throw error;
+    if (!data?.id) throw new Error("O Supabase não confirmou a criação do contato.");
+
+    await saveNoteForLead(data.id);
+
+    showToast(`Lead criado: ${data.name || payload.name}`, {
+      title: "Sucesso ✅",
+      variant: "success",
       actions: [
-        { label: "Criar outro", variant: "primary", onClick: () => { closeToast(); resetForm(); } },
-        { label: "Voltar", variant: "ghost", onClick: () => { closeToast(); router.replace("/leads"); } },
+        {
+          label: "Criar outro",
+          variant: "primary",
+          onClick: () => {
+            closeToast();
+            resetForm();
+          },
+        },
+        {
+          label: "Voltar",
+          variant: "ghost",
+          onClick: () => {
+            closeToast();
+            router.replace("/leads");
+          },
+        },
       ],
     });
+  }
+
+  async function handleSave() {
+    if (saving) return;
+
+    const cleanName = name.trim();
+    const cleanPhoneRaw = phoneRaw.trim();
+    const phoneE164 = toE164BR(cleanPhoneRaw);
+    const normalizedCampaign =
+      campaignSuggestions.find(
+        (item) =>
+          item.trim().toLowerCase() === campaign.trim().toLowerCase()
+      ) ?? campaign.trim();
+
+    if (!cleanName)
+      return showToast("Preencha o nome.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+
+    if (!cleanPhoneRaw)
+      return showToast("Preencha o telefone.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+
+    if (!phoneE164)
+      return showToast("Telefone inválido. Ex: (15) 9xxxx-xxxx", {
+        variant: "error",
+        title: "Telefone",
+      });
+
+    if (!source.trim())
+      return showToast("Preencha a origem.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+
+    if (interests.length === 0)
+      return showToast("Adicione pelo menos um interesse.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+
+    if (!stageId)
+      return showToast("Selecione a etapa.", {
+        variant: "error",
+        title: "Campos obrigatórios",
+      });
+
+    let nextActionPayload: Record<string, any> = {};
+
+    if (nextActionEnabled) {
+      if (!nextActionAt)
+        return showToast("Escolha a data da próxima ação.", {
+          variant: "error",
+          title: "Próxima ação",
+        });
+
+      const iso = formatDateToISO(nextActionAt);
+
+      if (!iso)
+        return showToast("Data inválida.", {
+          variant: "error",
+          title: "Próxima ação",
+        });
+
+      nextActionPayload = {
+        next_action_type: nextActionType,
+        next_action_at: iso,
+      };
+    }
+
+    const payload: Record<string, any> = {
+      name: cleanName,
+      phone_raw: cleanPhoneRaw,
+      phone_e164: phoneE164,
+      source: source.trim(),
+      interest: interests[0],
+      interests,
+      stage_id: stageId,
+      responsible_id: responsibleId || null,
+      ...nextActionPayload,
+    };
+
+    if (normalizedCampaign) payload.campaign = normalizedCampaign;
+    else payload.campaign = null;
+
+    payload.cpf = cpf.trim() ? cpf.trim() : null;
+    payload.birth_date = birthDate || null;
+    payload.sex = sex || null;
+    payload.became_client_at = becameClientAt || null;
+
+    setSaving(true);
+
+    try {
+      const { data: existingRows, error: lookupError } = await supabase
+        .from("leads")
+        .select("id,name,phone_raw,phone_e164,deleted_at,created_at")
+        .eq("phone_e164", phoneE164)
+        .order("deleted_at", { ascending: true, nullsFirst: true })
+        .order("created_at", { ascending: true })
+        .limit(10);
+
+      if (lookupError) throw lookupError;
+
+      const existing = existingRows?.[0] ?? null;
+
+      if (existing) {
+        setSaving(false);
+
+        const isHidden = Boolean(existing.deleted_at);
+        const duplicateCount = existingRows?.length ?? 1;
+
+        showToast(
+          [
+            `Já existe um contato com este telefone: ${existing.name || "Sem nome"}.`,
+            isHidden
+              ? "Esse contato está oculto. Se atualizar, ele será reativado e voltará a aparecer no CRM."
+              : "Esse contato já está ativo no CRM.",
+            duplicateCount > 1
+              ? `Atenção: encontrei ${duplicateCount} registros com este mesmo telefone. O CRM atualizará o registro mais antigo encontrado.`
+              : "",
+            "",
+            "Deseja atualizar o contato existente com os dados preenchidos agora?",
+          ]
+            .filter(Boolean)
+            .join("\n"),
+          {
+            title: "Contato duplicado",
+            variant: "info",
+            actions: [
+              {
+                label: isHidden
+                  ? "Reativar e atualizar"
+                  : "Atualizar contato existente",
+                variant: "primary",
+                onClick: async () => {
+                  closeToast();
+                  setSaving(true);
+
+                  try {
+                    await persistLead("update", payload, existing.id);
+                  } catch (error) {
+                    const message =
+                      error instanceof Error
+                        ? error.message
+                        : "Erro ao atualizar contato existente.";
+
+                    showToast(message, {
+                      title: "Não consegui atualizar",
+                      variant: "error",
+                      durationMs: 6500,
+                    });
+                  } finally {
+                    setSaving(false);
+                  }
+                },
+              },
+              {
+                label: "Cancelar",
+                variant: "ghost",
+                onClick: () => closeToast(),
+              },
+            ],
+            durationMs: 15000,
+          }
+        );
+
+        return;
+      }
+
+      await persistLead("create", payload);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Erro ao criar contato.";
+
+      showToast(message, {
+        title: "Não consegui salvar",
+        variant: "error",
+        durationMs: 6500,
+      });
+    } finally {
+      setSaving(false);
+    }
   }
 
   const card: React.CSSProperties = { border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", borderRadius: 18, padding: 16, boxShadow: "0 24px 80px rgba(0,0,0,0.55)" };
