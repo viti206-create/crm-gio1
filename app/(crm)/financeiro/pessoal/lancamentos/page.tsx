@@ -1050,7 +1050,11 @@ export default function FinanceiroPessoalLancamentosPage() {
 
       if (filterKind !== "all" && row.kind !== filterKind) return false;
       if (filterStatus !== "all" && row.status !== filterStatus) return false;
-      if (filterCategory !== "all" && row.category_id !== filterCategory) return false;
+      if (filterCategory === "__none__") {
+        if (row.category_id) return false;
+      } else if (filterCategory !== "all" && row.category_id !== filterCategory) {
+        return false;
+      }
       if (filterAccount !== "all" && row.account_id !== filterAccount) return false;
 
       if (!q) return true;
@@ -1685,6 +1689,7 @@ export default function FinanceiroPessoalLancamentosPage() {
             searchable
             options={[
               { value: "all", label: "Todas categorias" },
+              { value: "__none__", label: "Sem categoria" },
               ...categories.map((c) => ({
                 value: c.id,
                 label: c.name,
