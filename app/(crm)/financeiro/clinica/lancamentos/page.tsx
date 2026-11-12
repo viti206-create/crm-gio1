@@ -2509,7 +2509,9 @@ export default function LancamentosClinicaPage() {
         return false;
       }
 
-      if (
+      if (filterCategory === "__none__") {
+        if (tx.category_id) return false;
+      } else if (
         filterCategory !== "all" &&
         tx.category_id !== filterCategory
       ) {
@@ -6064,6 +6066,7 @@ export default function LancamentosClinicaPage() {
           searchable
           options={[
             { value: "all", label: "Todas categorias" },
+            { value: "__none__", label: "Sem categoria" },
             ...categories.map((category) => ({
               value: category.id,
               label: category.name,
