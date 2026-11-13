@@ -1,0 +1,1289 @@
+"use client";
+
+import React, { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
+import { useAdminAccess } from "../_hooks/useAdminAccess";
+import WhatsAppRelatorio from "./WhatsAppRelatorio";
+import EquipeRelatorio from "./EquipeRelatorio";
+
+type RecorrenciaJoin = {
+  id: string;
+  status: string | null;
+  start_date: string | null;
+  installments_total: number | null;
+  installments_done: number | null;
+  price_per_installment: number | null;
+};
+
+type SaleRow = {
+  id: string;
+  lead_id: string | null;
+  recorrencia_id: string | null;
+  value: number | null;
+  value_gross: number | null;
+  value_net: number | null;
+  fee_percent: number | null;
+  payment_method: string | null;
+  installments_label: string | null;
+  sale_type: string | null;
+  seller_name: string | null;
+  source: string | null;
+  procedure: string | null;
+  notes: string | null;
+  closed_at: string | null;
+  recorrencias?: RecorrenciaJoin | null;
+};
+
+type RecRow = {
+  id: string;
+  lead_id: string | null;
+  status: string | null;
+  start_date: string | null;
+  installments_total: number | null;
+  installments_done: number | null;
+  price_per_installment: number | null;
+};
+
+type ForecastMonthlyGroupedRow = {
+  month: string;
+  expected_amount: number;
+  active_count: number;
+};
+
+type GroupAmountRow = {
+  label: string;
+  count: number;
+  gross: number;
+  net: number;
+};
+
+type MonthlySalesRow = {
+  month: string;
+  gross: number;
+  net: number;
+  count: number;
+  recorrentes: number;
+  avulsas: number;
+};
+
+type ExpandedSaleMetric = {
+  lead_id: string | null;
+  seller_name: string | null;
+  source: string | null;
+  payment_method: string | null;
+  month: string;
+  effectiveGross: number;
+  effectiveNet: number;
+  isRecurring: boolean;
+};
+
+type MetaAdsRow = {
+  meta_source_id: string | null;
+  ad_headline: string | null;
+  investimento: number;
+  leads: number;
+  cpl: number | null;
+  negociaram: number;
+  custo_negociacao: number | null;
+  agendaram: number;
+  custo_agendamento: number | null;
+  compareceram: number;
+  custo_comparecimento: number | null;
+  fecharam: number;
+  cac: number | null;
+  perdidos: number;
+  taxa_negociacao: number | string | null;
+  taxa_agendamento: number | string | null;
+  taxa_comparecimento: number | string | null;
+  taxa_fechamento: number | string | null;
+};
+
+type MetaFilterMode = "today" | "monthly" | "yearly" | "custom";
+
+type FilterMode = "monthly" | "yearly";
+
+function FilterToggle({
+  options,
+  value,
+  onChange,
+}: {
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        gap: 8,
+        padding: 4,
+        borderRadius: 14,
+        border: "1px solid rgba(255,255,255,0.10)",
+        background: "rgba(255,255,255,0.04)",
+        flexWrap: "wrap",
+      }}
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            style={{
+              background: active
+                ? "linear-gradient(180deg, rgba(180,120,255,0.20) 0%, rgba(180,120,255,0.08) 100%)"
+                : "rgba(255,255,255,0.06)",
+              color: "white",
+              border: active
+                ? "1px solid rgba(180,120,255,0.30)"
+                : "1px solid rgba(255,255,255,0.12)",
+              padding: "10px 14px",
+              borderRadius: 12,
+              cursor: "pointer",
+              fontWeight: 900,
+              fontSize: 13,
+              minWidth: 72,
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function formatBRL(v: number | null | undefined) {
+  const n = Number(v ?? 0);
+  if (!Number.isFinite(n)) return "—";
+  try {
+    return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  } catch {
+    return `R$ ${n.toFixed(2)}`;
+  }
+}
+
+function formatMonthLabel(v: string | null | undefined) {
+  if (!v) return "—";
+  const text = String(v);
+
+  if (/^\d{4}-\d{2}$/.test(text)) {
+    const [year, month] = text.split("-");
+    return `${month}/${year}`;
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) {
+    const d = new Date(text);
+    if (Number.isNaN(d.getTime())) return text;
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${mm}/${yyyy}`;
+  }
+
+  return text;
+}
+
+function monthKeyFromDate(v: string | Date | null | undefined) {
+  if (!v) return "";
+  const d = typeof v === "string" ? new Date(v) : v;
+  if (Number.isNaN(d.getTime())) return "";
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${yyyy}-${mm}`;
+}
+
+function addMonths(dt: Date, months: number) {
+  const x = new Date(dt.getTime());
+  x.setMonth(x.getMonth() + months);
+  return x;
+}
+
+function normalizeRecStatus(status: string | null | undefined) {
+  const s = String(status ?? "").trim().toLowerCase();
+
+  if (["ativo", "ativa"].includes(s)) return "ativo";
+  if (
+    [
+      "encerrado",
+      "encerrada",
+      "concluido",
+      "concluida",
+      "concluído",
+      "concluída",
+    ].includes(s)
+  ) {
+    return "encerrado";
+  }
+  if (s === "pausada") return "pausada";
+  if (s === "cancelada") return "cancelada";
+  return s || "ativo";
+}
+
+function formatPaymentMethod(v: string | null | undefined) {
+  const key = String(v ?? "").trim().toLowerCase();
+
+  if (key === "pix") return "Pix";
+  if (key === "cartao") return "Cartão";
+  if (key === "cartao_gio") return "Cartão GIO";
+  if (key === "cartao_recorrente") return "Cartão recorrente";
+  if (key === "debito") return "Débito";
+  if (key === "dinheiro") return "Dinheiro";
+  if (key === "boleto") return "Boleto";
+
+  return v || "—";
+}
+
+function chipStyle(
+  kind: "primary" | "muted" | "warn" | "danger" = "muted"
+): React.CSSProperties {
+  let border = "1px solid rgba(255,255,255,0.10)";
+  let bg = "rgba(255,255,255,0.04)";
+
+  if (kind === "primary") {
+    border = "1px solid rgba(180,120,255,0.35)";
+    bg = "rgba(180,120,255,0.12)";
+  }
+
+  if (kind === "warn") {
+    border = "1px solid rgba(255,200,120,0.35)";
+    bg = "rgba(255,200,120,0.10)";
+  }
+
+  if (kind === "danger") {
+    border = "1px solid rgba(255,120,120,0.35)";
+    bg = "rgba(255,120,120,0.10)";
+  }
+
+  return {
+    fontSize: 12,
+    padding: "3px 8px",
+    borderRadius: 999,
+    border,
+    background: bg,
+    color: "rgba(255,255,255,0.92)",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    lineHeight: "16px",
+    whiteSpace: "nowrap",
+    fontWeight: 900,
+  };
+}
+
+function isInPeriod(date: Date, mode: FilterMode, year: number, month: number) {
+  if (mode === "yearly") return date.getFullYear() === year;
+  return date.getFullYear() === year && date.getMonth() === month;
+}
+
+function periodLabel(mode: FilterMode, year: number, month: number) {
+  if (mode === "yearly") return `Ano ${year}`;
+  return `${String(month + 1).padStart(2, "0")}/${year}`;
+}
+
+function dateInputValue(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function metaPeriod(mode: MetaFilterMode, year: number, month: number, customFrom: string, customTo: string) {
+  const now = new Date();
+  if (mode === "today") {
+    const value = dateInputValue(now);
+    return { from: value, to: value, label: "Hoje" };
+  }
+  if (mode === "yearly") {
+    return { from: `${year}-01-01`, to: `${year}-12-31`, label: `Ano ${year}` };
+  }
+  if (mode === "custom") {
+    return { from: customFrom || null, to: customTo || null, label: customFrom && customTo ? `${customFrom.split("-").reverse().join("/")} a ${customTo.split("-").reverse().join("/")}` : "Personalizado" };
+  }
+  const first = new Date(year, month, 1);
+  const last = new Date(year, month + 1, 0);
+  return { from: dateInputValue(first), to: dateInputValue(last), label: `${String(month + 1).padStart(2, "0")}/${year}` };
+}
+
+export default function RelatoriosPage() {
+  const router = useRouter();
+  const { isAdmin, loadingRole } = useAdminAccess();
+  const [abaAtiva, setAbaAtiva] = useState<"meta" | "comercial" | "whatsapp" | "equipe">("meta");
+
+  const todayRef = useMemo(() => new Date(), []);
+  const [filterMode, setFilterMode] = useState<FilterMode>("monthly");
+  const [selectedYear, setSelectedYear] = useState(todayRef.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(todayRef.getMonth());
+
+  const [loading, setLoading] = useState(true);
+  const [sales, setSales] = useState<SaleRow[]>([]);
+  const [recorrencias, setRecorrencias] = useState<RecRow[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
+
+  const [metaFilterMode, setMetaFilterMode] = useState<MetaFilterMode>("monthly");
+  const [metaYear, setMetaYear] = useState(todayRef.getFullYear());
+  const [metaMonth, setMetaMonth] = useState(todayRef.getMonth());
+  const [metaCustomFrom, setMetaCustomFrom] = useState(dateInputValue(new Date(todayRef.getFullYear(), todayRef.getMonth(), 1)));
+  const [metaCustomTo, setMetaCustomTo] = useState(dateInputValue(todayRef));
+  const [metaRows, setMetaRows] = useState<MetaAdsRow[]>([]);
+  const [metaLoading, setMetaLoading] = useState(false);
+  const [metaError, setMetaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!loadingRole && !isAdmin) {
+      router.replace("/dashboard");
+    }
+  }, [loadingRole, isAdmin, router]);
+
+  async function fetchAll() {
+    setLoading(true);
+    setErrors([]);
+
+    const [
+      { data: salesData, error: salesErr },
+      { data: recData, error: recErr },
+    ] = await Promise.all([
+      supabase
+        .from("sales")
+        .select(
+          "id,lead_id,recorrencia_id,value,value_gross,value_net,fee_percent,payment_method,installments_label,sale_type,seller_name,source,procedure,notes,closed_at,recorrencias(id,status,start_date,installments_total,installments_done,price_per_installment)"
+        )
+        .order("closed_at", { ascending: false }),
+      supabase
+        .from("recorrencias")
+        .select(
+          "id,lead_id,status,start_date,installments_total,installments_done,price_per_installment"
+        )
+        .order("start_date", { ascending: false }),
+    ]);
+
+    const nextErrors: string[] = [];
+
+    if (salesErr) {
+      console.error("sales error:", JSON.stringify(salesErr, null, 2));
+      nextErrors.push("Vendas não carregaram.");
+    }
+
+    if (recErr) {
+      console.error("recorrencias error:", JSON.stringify(recErr, null, 2));
+      nextErrors.push("Recorrências não carregaram.");
+    }
+
+    setSales((salesData as any) ?? []);
+    setRecorrencias((recData as any) ?? []);
+    setErrors(nextErrors);
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    if (isAdmin) {
+      fetchAll();
+    }
+  }, [isAdmin]);
+
+  const metaSelectedPeriod = useMemo(
+    () => metaPeriod(metaFilterMode, metaYear, metaMonth, metaCustomFrom, metaCustomTo),
+    [metaFilterMode, metaYear, metaMonth, metaCustomFrom, metaCustomTo]
+  );
+
+  async function fetchMetaAds() {
+    if (!isAdmin) return;
+    if (metaFilterMode === "custom" && metaCustomFrom && metaCustomTo && metaCustomFrom > metaCustomTo) {
+      setMetaError("A data inicial não pode ser maior que a data final.");
+      setMetaRows([]);
+      return;
+    }
+
+    setMetaLoading(true);
+    setMetaError(null);
+
+    const { data, error } = await supabase.rpc("meta_ads_funnel_report", {
+      p_date_from: metaSelectedPeriod.from,
+      p_date_to: metaSelectedPeriod.to,
+    });
+
+    if (error) {
+      console.error("meta ads report error:", JSON.stringify(error, null, 2));
+      setMetaError(`Meta Ads não carregou: ${error.message}`);
+      setMetaRows([]);
+    } else {
+      setMetaRows(((data as any[]) ?? []).map((row) => ({
+        ...row,
+        investimento: Number(row.investimento ?? 0),
+        leads: Number(row.leads ?? 0),
+        cpl: row.cpl == null ? null : Number(row.cpl),
+        negociaram: Number(row.negociaram ?? 0),
+        custo_negociacao: row.custo_negociacao == null ? null : Number(row.custo_negociacao),
+        agendaram: Number(row.agendaram ?? 0),
+        custo_agendamento: row.custo_agendamento == null ? null : Number(row.custo_agendamento),
+        compareceram: Number(row.compareceram ?? 0),
+        custo_comparecimento: row.custo_comparecimento == null ? null : Number(row.custo_comparecimento),
+        fecharam: Number(row.fecharam ?? 0),
+        cac: row.cac == null ? null : Number(row.cac),
+        perdidos: Number(row.perdidos ?? 0),
+      })) as MetaAdsRow[]);
+    }
+
+    setMetaLoading(false);
+  }
+
+  useEffect(() => {
+    if (isAdmin) fetchMetaAds();
+  }, [isAdmin, metaSelectedPeriod.from, metaSelectedPeriod.to]);
+
+  const metaSummary = useMemo(() => {
+    const totals = metaRows.reduce(
+      (acc, row) => ({
+        investimento: acc.investimento + row.investimento,
+        leads: acc.leads + row.leads,
+        negociaram: acc.negociaram + row.negociaram,
+        agendaram: acc.agendaram + row.agendaram,
+        compareceram: acc.compareceram + row.compareceram,
+        fecharam: acc.fecharam + row.fecharam,
+        perdidos: acc.perdidos + row.perdidos,
+      }),
+      { investimento: 0, leads: 0, negociaram: 0, agendaram: 0, compareceram: 0, fecharam: 0, perdidos: 0 }
+    );
+
+    return {
+      ...totals,
+      cpl: totals.leads > 0 ? totals.investimento / totals.leads : null,
+      custoNegociacao: totals.negociaram > 0 ? totals.investimento / totals.negociaram : null,
+      custoAgendamento: totals.agendaram > 0 ? totals.investimento / totals.agendaram : null,
+      custoComparecimento: totals.compareceram > 0 ? totals.investimento / totals.compareceram : null,
+      cac: totals.fecharam > 0 ? totals.investimento / totals.fecharam : null,
+    };
+  }, [metaRows]);
+
+  const allYears = useMemo(() => {
+    const set = new Set<number>();
+    set.add(todayRef.getFullYear());
+
+    for (const s of sales) {
+      if (!s.closed_at) continue;
+      const d = new Date(s.closed_at);
+      if (!Number.isNaN(d.getTime())) set.add(d.getFullYear());
+    }
+
+    for (const r of recorrencias) {
+      if (!r.start_date) continue;
+      const d = new Date(r.start_date);
+      if (!Number.isNaN(d.getTime())) set.add(d.getFullYear());
+    }
+
+    return Array.from(set).sort((a, b) => b - a);
+  }, [sales, recorrencias, todayRef]);
+
+  const monthOptions = [
+    "Jan",
+    "Fev",
+    "Mar",
+    "Abr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Ago",
+    "Set",
+    "Out",
+    "Nov",
+    "Dez",
+  ];
+
+  const expandedMetrics = useMemo<ExpandedSaleMetric[]>(() => {
+    const out: ExpandedSaleMetric[] = [];
+
+    for (const row of sales) {
+      if (!row.closed_at) continue;
+
+      const saleDate = new Date(row.closed_at);
+      if (Number.isNaN(saleDate.getTime())) continue;
+
+      const isRecurring = row.sale_type === "recorrencia" || !!row.recorrencia_id;
+      const grossTotal = Number(row.value_gross ?? row.value ?? 0);
+      const netTotal = Number(row.value_net ?? 0);
+      const feePercent = Number(row.fee_percent ?? 0);
+
+      if (!isRecurring) {
+        if (saleDate > todayRef) continue;
+        if (!isInPeriod(saleDate, filterMode, selectedYear, selectedMonth)) continue;
+
+        out.push({
+          lead_id: row.lead_id ?? null,
+          seller_name: row.seller_name ?? null,
+          source: row.source ?? null,
+          payment_method: row.payment_method ?? null,
+          month: monthKeyFromDate(saleDate),
+          effectiveGross: grossTotal,
+          effectiveNet:
+            netTotal > 0
+              ? netTotal
+              : Number((grossTotal * (1 - feePercent / 100)).toFixed(2)),
+          isRecurring: false,
+        });
+        continue;
+      }
+
+      const totalInstallments =
+        Number(row.recorrencias?.installments_total ?? 0) ||
+        Number((row.installments_label || "").replace(/\D/g, "")) ||
+        1;
+
+      const monthlyGross =
+        totalInstallments > 0 ? Number((grossTotal / totalInstallments).toFixed(2)) : grossTotal;
+      const monthlyNet =
+        totalInstallments > 0
+          ? Number((netTotal / totalInstallments).toFixed(2))
+          : Number((monthlyGross * (1 - feePercent / 100)).toFixed(2));
+
+      for (let i = 0; i < totalInstallments; i += 1) {
+        const installmentDate = addMonths(saleDate, i);
+        if (installmentDate > todayRef) break;
+        if (!isInPeriod(installmentDate, filterMode, selectedYear, selectedMonth)) continue;
+
+        out.push({
+          lead_id: row.lead_id ?? null,
+          seller_name: row.seller_name ?? null,
+          source: row.source ?? null,
+          payment_method: row.payment_method ?? null,
+          month: monthKeyFromDate(installmentDate),
+          effectiveGross: monthlyGross,
+          effectiveNet:
+            monthlyNet > 0
+              ? monthlyNet
+              : Number((monthlyGross * (1 - feePercent / 100)).toFixed(2)),
+          isRecurring: true,
+        });
+      }
+    }
+
+    return out;
+  }, [sales, todayRef, filterMode, selectedYear, selectedMonth]);
+
+  const forecastMonthlyAll = useMemo<ForecastMonthlyGroupedRow[]>(() => {
+    const map = new Map<string, ForecastMonthlyGroupedRow>();
+
+    for (const row of recorrencias) {
+      const status = normalizeRecStatus(row.status);
+      if (status !== "ativo") continue;
+
+      const startDate = row.start_date ? new Date(row.start_date) : null;
+      if (!startDate || Number.isNaN(startDate.getTime())) continue;
+
+      const total = Number(row.installments_total ?? 0);
+      const done = Number(row.installments_done ?? 0);
+      const monthly = Number(row.price_per_installment ?? 0);
+
+      if (!total || !monthly) continue;
+
+      for (let idx = Math.max(done - 1, 0); idx < total; idx += 1) {
+        const paymentDate = addMonths(startDate, idx);
+        const month = monthKeyFromDate(paymentDate);
+        if (!month) continue;
+
+        if (!map.has(month)) {
+          map.set(month, {
+            month,
+            expected_amount: 0,
+            active_count: 0,
+          });
+        }
+
+        const current = map.get(month)!;
+        current.expected_amount += monthly;
+        current.active_count += 1;
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
+  }, [recorrencias]);
+
+  const forecastMonthly = useMemo<ForecastMonthlyGroupedRow[]>(() => {
+    return forecastMonthlyAll.filter((row) => {
+      const [year, month] = row.month.split("-").map(Number);
+      if (!year || !month) return false;
+
+      const d = new Date(year, month - 1, 1);
+      return isInPeriod(d, filterMode, selectedYear, selectedMonth);
+    });
+  }, [forecastMonthlyAll, filterMode, selectedYear, selectedMonth]);
+
+  const forecastSummary = useMemo(() => {
+    if (filterMode === "yearly") {
+      const total = forecastMonthly.reduce((sum, row) => sum + row.expected_amount, 0);
+      return {
+        expectedThis: total,
+        expectedNext: 0,
+        expectedNext3: 0,
+      };
+    }
+
+    const currentBase = new Date(selectedYear, selectedMonth, 1);
+    const currentMonthKey = monthKeyFromDate(currentBase);
+    const nextMonthKey = monthKeyFromDate(addMonths(currentBase, 1));
+
+    let expectedThis = 0;
+    let expectedNext = 0;
+    let expectedNext3 = 0;
+
+    for (const row of forecastMonthlyAll) {
+      if (row.month === currentMonthKey) expectedThis += row.expected_amount;
+      if (row.month === nextMonthKey) expectedNext += row.expected_amount;
+    }
+
+    for (let i = 1; i <= 3; i += 1) {
+      const key = monthKeyFromDate(addMonths(currentBase, i));
+      const found = forecastMonthlyAll.find((x) => x.month === key);
+      expectedNext3 += Number(found?.expected_amount ?? 0);
+    }
+
+    return {
+      expectedThis,
+      expectedNext,
+      expectedNext3,
+    };
+  }, [forecastMonthly, forecastMonthlyAll, filterMode, selectedYear, selectedMonth]);
+
+  const recorrenciasSummary = useMemo(() => {
+    let ativas = 0;
+    let pausadas = 0;
+    let canceladas = 0;
+    let encerradas = 0;
+    let mensalPrevistoAtivo = 0;
+
+    for (const row of recorrencias) {
+      const status = normalizeRecStatus(row.status);
+      const startDate = row.start_date ? new Date(row.start_date) : null;
+      const inPeriodStart =
+        startDate && !Number.isNaN(startDate.getTime())
+          ? isInPeriod(startDate, filterMode, selectedYear, selectedMonth)
+          : false;
+
+      if (filterMode === "monthly" && !inPeriodStart) {
+        const possibleDates: Date[] = [];
+        const total = Number(row.installments_total ?? 0);
+        for (let i = 0; i < total; i += 1) {
+          if (!startDate) continue;
+          possibleDates.push(addMonths(startDate, i));
+        }
+        const touchesPeriod = possibleDates.some((d) =>
+          isInPeriod(d, filterMode, selectedYear, selectedMonth)
+        );
+        if (!touchesPeriod) continue;
+      }
+
+      if (filterMode === "yearly" && startDate && !isInPeriod(startDate, filterMode, selectedYear, selectedMonth)) {
+        const total = Number(row.installments_total ?? 0);
+        let touchesYear = false;
+        for (let i = 0; i < total; i += 1) {
+          const d = addMonths(startDate, i);
+          if (isInPeriod(d, filterMode, selectedYear, selectedMonth)) {
+            touchesYear = true;
+            break;
+          }
+        }
+        if (!touchesYear) continue;
+      }
+
+      if (status === "ativo") {
+        ativas += 1;
+        mensalPrevistoAtivo += Number(row.price_per_installment ?? 0);
+      } else if (status === "pausada") {
+        pausadas += 1;
+      } else if (status === "cancelada") {
+        canceladas += 1;
+      } else {
+        encerradas += 1;
+      }
+    }
+
+    return {
+      total: ativas + pausadas + canceladas + encerradas,
+      ativas,
+      pausadas,
+      canceladas,
+      encerradas,
+      mensalPrevistoAtivo,
+    };
+  }, [recorrencias, filterMode, selectedYear, selectedMonth]);
+
+  const bySeller = useMemo<GroupAmountRow[]>(() => {
+    const map = new Map<string, GroupAmountRow>();
+
+    for (const row of expandedMetrics) {
+      const key = String(row.seller_name || "Sem vendedor").trim() || "Sem vendedor";
+
+      if (!map.has(key)) {
+        map.set(key, { label: key, count: 0, gross: 0, net: 0 });
+      }
+
+      const current = map.get(key)!;
+      current.count += 1;
+      current.gross += row.effectiveGross;
+      current.net += row.effectiveNet;
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.net - a.net);
+  }, [expandedMetrics]);
+
+  const byPayment = useMemo<GroupAmountRow[]>(() => {
+    const map = new Map<string, GroupAmountRow>();
+
+    for (const row of expandedMetrics) {
+      const key = formatPaymentMethod(row.payment_method);
+      if (!map.has(key)) {
+        map.set(key, { label: key, count: 0, gross: 0, net: 0 });
+      }
+
+      const current = map.get(key)!;
+      current.count += 1;
+      current.gross += row.effectiveGross;
+      current.net += row.effectiveNet;
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.net - a.net);
+  }, [expandedMetrics]);
+
+  const bySource = useMemo<GroupAmountRow[]>(() => {
+    const map = new Map<string, GroupAmountRow>();
+
+    for (const row of expandedMetrics) {
+      const key = String(row.source || "Não informada").trim() || "Não informada";
+      if (!map.has(key)) {
+        map.set(key, { label: key, count: 0, gross: 0, net: 0 });
+      }
+
+      const current = map.get(key)!;
+      current.count += 1;
+      current.gross += row.effectiveGross;
+      current.net += row.effectiveNet;
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.net - a.net);
+  }, [expandedMetrics]);
+
+  const monthlySales = useMemo<MonthlySalesRow[]>(() => {
+    const map = new Map<string, MonthlySalesRow>();
+
+    for (const row of expandedMetrics) {
+      if (!row.month) continue;
+
+      if (!map.has(row.month)) {
+        map.set(row.month, {
+          month: row.month,
+          gross: 0,
+          net: 0,
+          count: 0,
+          recorrentes: 0,
+          avulsas: 0,
+        });
+      }
+
+      const current = map.get(row.month)!;
+      current.gross += row.effectiveGross;
+      current.net += row.effectiveNet;
+      current.count += 1;
+
+      if (row.isRecurring) current.recorrentes += 1;
+      else current.avulsas += 1;
+    }
+
+    return Array.from(map.values()).sort((a, b) => a.month.localeCompare(b.month));
+  }, [expandedMetrics]);
+
+  const page: React.CSSProperties = {
+    padding: 16,
+    color: "white",
+  };
+
+  const shell: React.CSSProperties = {
+    background:
+      "radial-gradient(900px 500px at 20% 15%, rgba(180,120,255,0.25), transparent 60%), linear-gradient(180deg, #09070c 0%, #050408 100%)",
+    borderRadius: 18,
+    border: "1px solid rgba(255,255,255,0.10)",
+    padding: 16,
+  };
+
+  const card: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.04)",
+    borderRadius: 18,
+    padding: 14,
+    boxShadow: "0 22px 70px rgba(0,0,0,0.55)",
+  };
+
+  const miniCard: React.CSSProperties = {
+    border: "1px solid rgba(255,255,255,0.10)",
+    background: "rgba(255,255,255,0.03)",
+    borderRadius: 14,
+    padding: 14,
+  };
+
+  const btn: React.CSSProperties = {
+    background: "rgba(255,255,255,0.06)",
+    color: "white",
+    border: "1px solid rgba(255,255,255,0.12)",
+    padding: "10px 12px",
+    borderRadius: 12,
+    cursor: "pointer",
+    fontWeight: 900,
+  };
+
+  const th: React.CSSProperties = {
+    textAlign: "left",
+    fontSize: 12,
+    opacity: 0.85,
+    fontWeight: 900,
+    padding: "12px",
+    borderBottom: "1px solid rgba(255,255,255,0.10)",
+    whiteSpace: "nowrap",
+  };
+
+  const td: React.CSSProperties = {
+    padding: "12px",
+    borderBottom: "1px solid rgba(255,255,255,0.08)",
+    verticalAlign: "top",
+    fontSize: 13,
+  };
+
+  if (loadingRole) {
+    return <div style={{ padding: 20, color: "white" }}>Carregando permissões...</div>;
+  }
+
+  if (!isAdmin) {
+    return null;
+  }
+
+  return (
+    <div style={page}>
+      <div style={shell}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 12,
+            flexWrap: "wrap",
+            alignItems: "center",
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>
+              Relatórios
+            </div>
+
+            <div style={{display:"flex",gap:8,flexWrap:"wrap",margin:"6px 0 10px"}}>
+              {([ ["meta","Meta Ads"], ["comercial","Análise comercial"], ["whatsapp","WhatsApp"], ["equipe","Equipe"] ] as const).map(([id,label]) => (
+                <button key={id} type="button" onClick={() => setAbaAtiva(id)}
+                  style={{...btn,background:abaAtiva===id?"rgba(180,120,255,0.26)":"rgba(255,255,255,0.05)",borderColor:abaAtiva===id?"rgba(180,120,255,0.6)":"rgba(255,255,255,0.12)"}}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {abaAtiva === "comercial" && (
+              <div style={{display:"grid",gap:9}}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <FilterToggle
+                value={filterMode}
+                onChange={(v) => setFilterMode(v as FilterMode)}
+                options={[
+                  { value: "monthly", label: "Mensal" },
+                  { value: "yearly", label: "Anual" },
+                ]}
+              />
+
+              <FilterToggle
+                value={String(selectedYear)}
+                onChange={(v) => setSelectedYear(Number(v))}
+                options={allYears.map((year) => ({
+                  value: String(year),
+                  label: String(year),
+                }))}
+              />
+
+              {filterMode === "monthly" ? (
+                <FilterToggle
+                  value={String(selectedMonth)}
+                  onChange={(v) => setSelectedMonth(Number(v))}
+                  options={monthOptions.map((label, idx) => ({
+                    value: String(idx),
+                    label,
+                  }))}
+                />
+              ) : null}
+            </div>
+                <span style={{...chipStyle("muted"),width:"fit-content"}}>Período: {periodLabel(filterMode,selectedYear,selectedMonth)}</span>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={() => { fetchAll(); fetchMetaAds(); }} style={btn}>
+              Atualizar
+            </button>
+            <button onClick={() => router.push("/dashboard")} style={btn}>
+              Voltar
+            </button>
+          </div>
+        </div>
+
+        {!!errors.length && (
+          <div
+            style={{
+              ...card,
+              marginBottom: 14,
+              border: "1px solid rgba(255,120,120,0.20)",
+              background: "rgba(255,120,120,0.06)",
+            }}
+          >
+            <div style={{ fontWeight: 900, marginBottom: 8 }}>Avisos de carregamento</div>
+            <div style={{ display: "grid", gap: 6, fontSize: 13 }}>
+              {errors.map((err, idx) => (
+                <div key={idx}>• {err}</div>
+              ))}
+            </div>
+          </div>
+        )}
+        {abaAtiva === "meta" && (
+        <div style={{ ...card, marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 17, fontWeight: 950 }}>Meta Ads • Funil de Leads</div>
+              <div style={{ marginTop: 5, fontSize: 12, opacity: 0.72 }}>First Touch por lead. As conversões contam somente etapas registradas depois da primeira atribuição do anúncio.</div>
+            </div>
+            <span style={chipStyle("primary")}>Período: {metaSelectedPeriod.label}</span>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+            <FilterToggle
+              value={metaFilterMode}
+              onChange={(v) => setMetaFilterMode(v as MetaFilterMode)}
+              options={[
+                { value: "today", label: "Hoje" },
+                { value: "monthly", label: "Mensal" },
+                { value: "yearly", label: "Anual" },
+                { value: "custom", label: "Personalizado" },
+              ]}
+            />
+
+            {metaFilterMode === "monthly" || metaFilterMode === "yearly" ? (
+              <FilterToggle
+                value={String(metaYear)}
+                onChange={(v) => setMetaYear(Number(v))}
+                options={allYears.map((year) => ({ value: String(year), label: String(year) }))}
+              />
+            ) : null}
+
+            {metaFilterMode === "monthly" ? (
+              <FilterToggle
+                value={String(metaMonth)}
+                onChange={(v) => setMetaMonth(Number(v))}
+                options={monthOptions.map((label, idx) => ({ value: String(idx), label }))}
+              />
+            ) : null}
+
+            {metaFilterMode === "custom" ? (
+              <>
+                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 800 }}>
+                  De
+                  <input type="date" value={metaCustomFrom} onChange={(e) => setMetaCustomFrom(e.target.value)} style={{ ...btn, padding: "9px 10px", fontWeight: 700 }} />
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, fontWeight: 800 }}>
+                  Até
+                  <input type="date" value={metaCustomTo} onChange={(e) => setMetaCustomTo(e.target.value)} style={{ ...btn, padding: "9px 10px", fontWeight: 700 }} />
+                </label>
+              </>
+            ) : null}
+          </div>
+
+          {metaError ? <div style={{ ...chipStyle("danger"), marginBottom: 12 }}>{metaError}</div> : null}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, minmax(150px, 1fr))", gap: 10, marginBottom: 14, overflowX: "auto" }}>
+            {[
+              ["Investimento", formatBRL(metaSummary.investimento)],
+              ["Leads", metaSummary.leads],
+              ["CPL", metaSummary.cpl == null ? "—" : formatBRL(metaSummary.cpl)],
+              ["Negociaram", metaSummary.negociaram],
+              ["Custo / negociação", metaSummary.custoNegociacao == null ? "—" : formatBRL(metaSummary.custoNegociacao)],
+              ["Agendaram", metaSummary.agendaram],
+              ["Custo / agendamento", metaSummary.custoAgendamento == null ? "—" : formatBRL(metaSummary.custoAgendamento)],
+              ["Compareceram", metaSummary.compareceram],
+              ["Custo / comparecimento", metaSummary.custoComparecimento == null ? "—" : formatBRL(metaSummary.custoComparecimento)],
+              ["Fecharam", metaSummary.fecharam],
+              ["CAC", metaSummary.cac == null ? "—" : formatBRL(metaSummary.cac)],
+              ["Perdidos", metaSummary.perdidos],
+            ].map(([label, value]) => (
+              <div key={String(label)} style={miniCard}>
+                <div style={{ fontSize: 12, opacity: 0.72 }}>{label}</div>
+                <div style={{ fontSize: 24, fontWeight: 950, marginTop: 6 }}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+                <tr>
+                  <th style={th}>Anúncio</th>
+                  <th style={th}>ID Meta</th>
+                  <th style={th}>Investimento</th>
+                  <th style={th}>Leads</th>
+                  <th style={th}>CPL</th>
+                  <th style={th}>Negociação</th>
+                  <th style={th}>Custo / negociação</th>
+                  <th style={th}>Agendamento</th>
+                  <th style={th}>Custo / agendamento</th>
+                  <th style={th}>Comparecimento</th>
+                  <th style={th}>Custo / comparecimento</th>
+                  <th style={th}>Fechamento</th>
+                  <th style={th}>CAC</th>
+                  <th style={th}>Perdidos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {metaLoading ? (
+                  <tr><td style={td} colSpan={14}>Carregando Meta Ads...</td></tr>
+                ) : metaRows.length === 0 ? (
+                  <tr><td style={td} colSpan={14}>Nenhum lead atribuído ao Meta Ads neste período.</td></tr>
+                ) : (
+                  metaRows.map((row) => (
+                    <tr key={`${row.meta_source_id ?? "sem-id"}-${row.ad_headline ?? "sem-titulo"}`}>
+                      <td style={td}><div style={{ fontWeight: 900 }}>{row.ad_headline || "Sem título"}</div></td>
+                      <td style={td}>{row.meta_source_id || "—"}</td>
+                      <td style={td}>{formatBRL(row.investimento)}</td>
+                      <td style={td}><b>{row.leads}</b></td>
+                      <td style={td}>{row.cpl == null ? "—" : formatBRL(row.cpl)}</td>
+                      <td style={td}>{row.negociaram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_negociacao ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.custo_negociacao == null ? "—" : formatBRL(row.custo_negociacao)}</td>
+                      <td style={td}>{row.agendaram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_agendamento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.custo_agendamento == null ? "—" : formatBRL(row.custo_agendamento)}</td>
+                      <td style={td}>{row.compareceram} <span style={{ opacity: 0.65 }}>({Number(row.taxa_comparecimento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.custo_comparecimento == null ? "—" : formatBRL(row.custo_comparecimento)}</td>
+                      <td style={td}>{row.fecharam} <span style={{ opacity: 0.65 }}>({Number(row.taxa_fechamento ?? 0).toFixed(1)}%)</span></td>
+                      <td style={td}>{row.cac == null ? "—" : formatBRL(row.cac)}</td>
+                      <td style={td}>{row.perdidos}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        )}
+        {abaAtiva === "comercial" && (
+          <>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))",gap:12,marginBottom:14}}>
+              <div style={miniCard}><div style={{fontSize:12,opacity:0.75}}>Previsão do período (recorrências)</div>
+                <div style={{fontSize:25,fontWeight:900,marginTop:6}}>{formatBRL(forecastSummary.expectedThis)}</div>
+                <div style={{fontSize:12,opacity:0.75}}>Próximo mês: {formatBRL(forecastSummary.expectedNext)}</div></div>
+              <div style={miniCard}><div style={{fontSize:12,opacity:0.75}}>Próximos três meses</div>
+                <div style={{fontSize:25,fontWeight:900,marginTop:6}}>{formatBRL(forecastSummary.expectedNext3)}</div></div>
+            </div>
+            <details style={{...card,marginBottom:14}}>
+              <summary style={{cursor:"pointer",fontWeight:900}}>Situação das recorrências ({recorrenciasSummary.total})</summary>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:10,marginTop:14}}>
+                {([ ["Ativas",recorrenciasSummary.ativas],["Pausadas",recorrenciasSummary.pausadas],["Canceladas",recorrenciasSummary.canceladas],["Encerradas",recorrenciasSummary.encerradas] ] as const).map(([label,valor]) =>
+                  <div key={label} style={miniCard}><div style={{fontSize:12,opacity:0.75}}>{label}</div><div style={{fontSize:24,fontWeight:900}}>{valor}</div></div>
+                )}
+              </div>
+            </details>
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "1fr 1fr",
+            marginBottom: 14,
+          }}
+        >
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Vendas por vendedor</div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Vendedor</th>
+                    <th style={th}>Qtd.</th>
+                    <th style={th}>Bruto</th>
+                    <th style={th}>Líquido</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : bySeller.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    bySeller.map((row) => (
+                      <tr key={row.label}>
+                        <td style={td}>{row.label}</td>
+                        <td style={td}>{row.count}</td>
+                        <td style={td}>{formatBRL(row.gross)}</td>
+                        <td style={td}>{formatBRL(row.net)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Vendas por forma de pagamento</div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Pagamento</th>
+                    <th style={th}>Qtd.</th>
+                    <th style={th}>Bruto</th>
+                    <th style={th}>Líquido</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : byPayment.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    byPayment.map((row) => (
+                      <tr key={row.label}>
+                        <td style={td}>{row.label}</td>
+                        <td style={td}>{row.count}</td>
+                        <td style={td}>{formatBRL(row.gross)}</td>
+                        <td style={td}>{formatBRL(row.net)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gap: 14,
+            gridTemplateColumns: "1fr 1fr",
+            marginBottom: 14,
+          }}
+        >
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>Vendas por origem</div>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+                <thead>
+                  <tr>
+                    <th style={th}>Origem</th>
+                    <th style={th}>Qtd.</th>
+                    <th style={th}>Bruto</th>
+                    <th style={th}>Líquido</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {loading ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Carregando...
+                      </td>
+                    </tr>
+                  ) : bySource.length === 0 ? (
+                    <tr>
+                      <td style={td} colSpan={4}>
+                        Nenhum dado encontrado.
+                      </td>
+                    </tr>
+                  ) : (
+                    bySource.map((row) => (
+                      <tr key={row.label}>
+                        <td style={td}>{row.label}</td>
+                        <td style={td}>{row.count}</td>
+                        <td style={td}>{formatBRL(row.gross)}</td>
+                        <td style={td}>{formatBRL(row.net)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div style={card}>
+            <div style={{ fontWeight: 950, marginBottom: 10 }}>
+            {filterMode === "monthly" ? "Vendas por mês" : "Vendas por mês do ano"}
+            </div>
+
+            <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
+              <thead>
+              <tr>
+              <th style={th}>Mês</th>
+      <th style={th}>Qtd.</th>
+      <th style={th}>Avulsas</th>
+      <th style={th}>Recorrentes</th>
+      <th style={th}>Bruto</th>
+      <th style={th}>Líquido</th>
+      </tr>
+      </thead>
+
+              <tbody>
+              {loading ? (
+                <tr>
+                <td style={td} colSpan={6}>
+                  Carregando...
+                </td>
+                </tr>
+              ) : monthlySales.length === 0 ? (
+                <tr>
+                <td style={td} colSpan={6}>
+                  Nenhum dado encontrado.
+                </td>
+                </tr>
+              ) : (
+                monthlySales.map((row) => (
+      <tr key={row.month}>
+      <td style={td}>{formatMonthLabel(row.month)}</td>
+      <td style={td}>{row.count}</td>
+      <td style={td}>{row.avulsas}</td>
+      <td style={td}>{row.recorrentes}</td>
+      <td style={td}>{formatBRL(row.gross)}</td>
+      <td style={td}>{formatBRL(row.net)}</td>
+      </tr>
+                ))
+              )}
+              </tbody>
+            </table>
+            </div>
+          </div>
+        </div>
+          </>
+        )}
+        {abaAtiva === "whatsapp" && <WhatsAppRelatorio />}
+        {abaAtiva === "equipe" && <EquipeRelatorio />}
+      </div>
+    </div>
+  );
+}
