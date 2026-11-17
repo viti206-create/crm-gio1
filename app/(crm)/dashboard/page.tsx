@@ -120,11 +120,21 @@ function formatDateOnly(iso: string) {
   }
 }
 
+function formatDateInputFromISO(iso?: string | null) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function prettyActivityLabel(type: string) {
   const t = (type || "").toLowerCase();
   const map: Record<string, string> = {
     created: "Criado", updated: "Atualizado", stage_changed: "Etapa alterada",
-    next_action_set: "Próxima ação definida", appointment_set: "Agendamento definido",
+    next_action_set: "Próxima ação definida", next_action_completed: "Próxima ação concluída", appointment_set: "Agendamento definido",
     note_added: "Nota adicionada", contact_whatsapp: "Contato (WhatsApp)",
     contact_call: "Contato (Ligação)", contact_instagram: "Contato (Instagram)",
     proposal_sent: "Proposta enviada", sale_closed: "Venda fechada", lost_set: "Marcado como perdido",
@@ -337,7 +347,12 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!selectedLeadId) return;
-    setNoteText(""); setNextActionType("whatsapp"); setNextActionAt("");
+
+    const lead = leads.find((l) => l.id === selectedLeadId);
+
+    setNoteText("");
+    setNextActionType(lead?.next_action_type || "whatsapp");
+    setNextActionAt(formatDateInputFromISO(lead?.next_action_at));
     loadActivities(selectedLeadId);
   }, [selectedLeadId]); // eslint-disable-line
 
@@ -447,6 +462,78 @@ export default function DashboardPage() {
     } catch { pushToast({ kind: "error", title: "Data inválida" }); setNextActionSaving(false); }
   }
 
+  async function handleCompleteNextAction() {
+    if (!selectedLead) return;
+
+    if (!selectedLead.next_action_at && !selectedLead.next_action_type) {
+      pushToast({ kind: "info", title: "Este lead não possui próxima ação ativa" });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Concluir a próxima ação de ${selectedLead.name}?\n\nO lead será removido da Agenda de ações, mas continuará normalmente no CRM e na mesma etapa.`
+    );
+
+    if (!confirmed) return;
+
+    setNextActionSaving(true);
+
+    const previousType = selectedLead.next_action_type ?? null;
+    const previousAt = selectedLead.next_action_at ?? null;
+
+    const { error } = await supabase
+      .from("leads")
+      .update({
+        next_action_type: null,
+        next_action_at: null,
+      })
+      .eq("id", selectedLead.id);
+
+    if (error) {
+      setNextActionSaving(false);
+      pushToast({
+        kind: "error",
+        title: "Não consegui concluir a próxima ação",
+        description: error.message,
+      });
+      return;
+    }
+
+    setLeads((prev) =>
+      prev.map((l) =>
+        l.id === selectedLead.id
+          ? { ...l, next_action_type: null, next_action_at: null }
+          : l
+      )
+    );
+
+    setNextActionType("whatsapp");
+    setNextActionAt("");
+
+    try {
+      const { data: userRes } = await supabase.auth.getUser();
+      await supabase.from("activities").insert({
+        lead_id: selectedLead.id,
+        user_id: userRes?.user?.id ?? null,
+        type: "next_action_completed",
+        payload: {
+          next_action_type: previousType,
+          next_action_at: previousAt,
+        },
+      });
+    } catch (activityError) {
+      console.error("Erro ao registrar conclusão da próxima ação:", activityError);
+    }
+
+    setNextActionSaving(false);
+    await loadActivities(selectedLead.id);
+    pushToast({
+      kind: "success",
+      title: "Ação concluída",
+      description: "O lead foi removido da Agenda de ações e continua no CRM.",
+    });
+  }
+
   const inputStyle: React.CSSProperties = { background: "rgba(255,255,255,0.06)", color: "white", border: "1px solid rgba(255,255,255,0.12)", padding: "10px 12px", borderRadius: 12, outline: "none", minWidth: 240 };
   const selectStyle: React.CSSProperties = { ...inputStyle, minWidth: 190 };
   const cardBox: React.CSSProperties = { border: "1px solid rgba(255,255,255,0.10)", background: "rgba(255,255,255,0.04)", borderRadius: 14, padding: 12 };
@@ -547,12 +634,29 @@ export default function DashboardPage() {
                 </select>
                 {/* Campo só de data, sem hora */}
                 <input type="date" value={nextActionAt} onChange={(e) => setNextActionAt(e.target.value)} style={{ ...inputStyle, minWidth: 180 }} />
-                <button style={smallBtn} onClick={handleSetNextAction} disabled={nextActionSaving}>{nextActionSaving ? "Salvando..." : "Salvar próxima ação"}</button>
+                <button style={smallBtn} onClick={handleSetNextAction} disabled={nextActionSaving}>
+                  {nextActionSaving ? "Salvando..." : selectedLead.next_action_at ? "Reagendar ação" : "Salvar próxima ação"}
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    ...smallBtn,
+                    border: "1px solid rgba(140,255,190,0.30)",
+                    background: "rgba(140,255,190,0.08)",
+                  }}
+                  onClick={handleCompleteNextAction}
+                  disabled={nextActionSaving || (!selectedLead.next_action_at && !selectedLead.next_action_type)}
+                >
+                  Concluir ação
+                </button>
               </div>
               <div style={{ fontSize: 12, opacity: 0.7, marginTop: 10 }}>
                 Atual: {selectedLead.next_action_type || selectedLead.next_action_at
                   ? `${selectedLead.next_action_type ?? "—"} • ${selectedLead.next_action_at ? formatDateOnly(selectedLead.next_action_at) : "—"}`
                   : "—"}
+              </div>
+              <div style={{ fontSize: 12, opacity: 0.62, marginTop: 6 }}>
+                Abrir o lead não altera a agenda. Use “Concluir ação” somente quando o atendimento/tarefa realmente estiver finalizado.
               </div>
             </div>
 
