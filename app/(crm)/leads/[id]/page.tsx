@@ -230,6 +230,30 @@ function InterestTags({ values, onChange, suggestions }: {
   );
 }
 
+function formatDateTimeLocalFromISO(value?: string | null) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mi = String(date.getMinutes()).padStart(2, "0");
+
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+}
+
+function formatDateToISO(value: string) {
+  if (!value) return null;
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return date.toISOString();
+}
+
 export default function EditLeadPage() {
   const router = useRouter();
   const params = useParams<{ id: string }>();
@@ -254,6 +278,8 @@ export default function EditLeadPage() {
   const [stageId, setStageId] = useState("");
   const [campaign, setCampaign] = useState("");
   const [responsibleId, setResponsibleId] = useState("");
+  const [nextActionType, setNextActionType] = useState("whatsapp");
+  const [nextActionAt, setNextActionAt] = useState("");
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [aiReviewLevel, setAiReviewLevel] = useState<"normal" | "attention" | "urgent">("normal");
   const [aiReviewReason, setAiReviewReason] = useState<string | null>(null);
@@ -278,7 +304,7 @@ export default function EditLeadPage() {
     setLoading(true); setErr(null);
     const [st, lead, prof, interestsRes, sourcesRes] = await Promise.all([
       supabase.from("stages").select("id,name,position,is_final").order("position", { ascending: true }),
-      supabase.from("leads").select("id,name,phone_raw,source,interest,interests,stage_id,campaign,responsible_id,cpf,birth_date,sex,ai_review_level,ai_review_reason,ai_summary,ai_next_action,ai_confidence,ai_suggested_stage").eq("id", leadId).single(),
+      supabase.from("leads").select("id,name,phone_raw,source,interest,interests,stage_id,campaign,responsible_id,next_action_type,next_action_at,cpf,birth_date,sex,ai_review_level,ai_review_reason,ai_summary,ai_next_action,ai_confidence,ai_suggested_stage").eq("id", leadId).single(),
       supabase.from("profiles").select("id,name"),
       supabase.from("leads").select("interest,interests").not("interest", "is", null),
       supabase.from("leads").select("source").not("source", "is", null),
@@ -299,6 +325,8 @@ export default function EditLeadPage() {
     setStageId(l?.stage_id ?? "");
     setCampaign(l?.campaign ?? "");
     setResponsibleId(l?.responsible_id ?? "");
+    setNextActionType(l?.next_action_type ?? "whatsapp");
+    setNextActionAt(formatDateTimeLocalFromISO(l?.next_action_at));
     setAiReviewLevel(l?.ai_review_level ?? "normal");
     setAiReviewReason(l?.ai_review_reason ?? null);
     setAiSummary(l?.ai_summary ?? null);
@@ -336,11 +364,10 @@ export default function EditLeadPage() {
   const canSave = useMemo(() => {
     if (loading || saving) return false;
     if (!name.trim()) return false;
-    if (interests.length === 0) return false;
     if (!source.trim()) return false;
     if (!stageId) return false;
     return !!toE164BR(phoneRaw);
-  }, [loading, saving, name, interests, source, stageId, phoneRaw]);
+  }, [loading, saving, name, source, stageId, phoneRaw]);
 
   async function handleSave() {
     if (!leadId || saving) return;
@@ -369,13 +396,15 @@ export default function EditLeadPage() {
         return;
       }
 
-      if (interests.length === 0) {
-        setErr("Adicione pelo menos um interesse.");
+      if (!stageId) {
+        setErr("Selecione a etapa atual do lead.");
         return;
       }
 
-      if (!stageId) {
-        setErr("Selecione a etapa atual do lead.");
+      const nextActionIso = nextActionAt ? formatDateToISO(nextActionAt) : null;
+
+      if (nextActionAt && !nextActionIso) {
+        setErr("Data da próxima ação inválida.");
         return;
       }
 
@@ -392,13 +421,15 @@ export default function EditLeadPage() {
         stage_id: stageId,
         campaign: campaign.trim() ? campaign.trim() : null,
         responsible_id: responsibleId || null,
+        next_action_type: nextActionAt ? nextActionType : null,
+        next_action_at: nextActionIso,
       };
 
       const { data, error } = await supabase
         .from("leads")
         .update(payload)
         .eq("id", leadId)
-        .select("id,name,phone_raw,phone_e164,source,interest,interests,stage_id,campaign,responsible_id,cpf,birth_date,sex")
+        .select("id,name,phone_raw,phone_e164,source,interest,interests,stage_id,campaign,responsible_id,next_action_type,next_action_at,cpf,birth_date,sex")
         .single();
 
       if (error) {
@@ -554,7 +585,7 @@ export default function EditLeadPage() {
 
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
             <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
-              <div style={labelStyle}>Interesses * <span style={{ fontWeight: 400, opacity: 0.6 }}>(pode adicionar vários)</span></div>
+              <div style={labelStyle}>Interesses <span style={{ fontWeight: 400, opacity: 0.6 }}>(opcional • pode adicionar vários)</span></div>
               <InterestTags values={interests} onChange={setInterests} suggestions={interestSuggestions} />
             </div>
             <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Campanha (opcional)</div><input style={inputStyle} value={campaign} onChange={(e) => setCampaign(e.target.value)} /></div>
@@ -563,6 +594,69 @@ export default function EditLeadPage() {
           <div style={{ display: "grid", gap: 12, gridTemplateColumns: "minmax(0, 220px) minmax(0, 1fr)", alignItems: "end" }}>
             <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Responsável</div><Select value={responsibleId} onChange={setResponsibleId} options={responsibleOptions} placeholder="Não definido" /></div>
             <div style={{ display: "grid", gap: 10, minWidth: 0 }}><div style={labelStyle}>Etapa atual *</div><Select value={stageId} onChange={setStageId} options={stageOptions} disabled={stages.length === 0} /></div>
+          </div>
+
+          <div
+            style={{
+              border: "1px solid rgba(180,120,255,0.20)",
+              background: "rgba(180,120,255,0.06)",
+              borderRadius: 14,
+              padding: 14,
+              display: "grid",
+              gap: 12,
+            }}
+          >
+            <div style={{ fontWeight: 950 }}>Próxima ação (opcional)</div>
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "minmax(0, 0.9fr) minmax(0, 1.1fr) auto",
+                gap: 10,
+                alignItems: "end",
+              }}
+            >
+              <div style={{ display: "grid", gap: 10, minWidth: 0 }}>
+                <div style={labelStyle}>Tipo</div>
+                <Select
+                  value={nextActionType}
+                  onChange={setNextActionType}
+                  placeholder="Selecione…"
+                  options={[
+                    { value: "whatsapp", label: "WhatsApp" },
+                    { value: "ligacao", label: "Ligação" },
+                    { value: "avaliacao", label: "Agendar avaliação" },
+                    { value: "retorno", label: "Retorno" },
+                  ]}
+                />
+              </div>
+
+              <label style={{ display: "grid", gap: 10, minWidth: 0 }}>
+                <span style={labelStyle}>Data e hora</span>
+                <input
+                  type="datetime-local"
+                  value={nextActionAt}
+                  onChange={(e) => setNextActionAt(e.target.value)}
+                  style={{ ...inputStyle, colorScheme: "dark" }}
+                />
+              </label>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setNextActionAt("");
+                  setNextActionType("whatsapp");
+                }}
+                style={{ ...btn, opacity: nextActionAt ? 1 : 0.55 }}
+                disabled={!nextActionAt}
+              >
+                Remover ação
+              </button>
+            </div>
+
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Ao definir uma data, o contato aparecerá automaticamente na Agenda de ações da Home.
+            </div>
           </div>
         </div>
       </div>

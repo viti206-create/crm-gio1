@@ -326,13 +326,12 @@ export default function NewLeadPage() {
     if (saving) return false;
     if (!name.trim()) return false;
     if (!source.trim()) return false;
-    if (interests.length === 0) return false;
     if (!stageId) return false;
     const e164 = toE164BR(phoneRaw);
     if (!e164) return false;
     if (nextActionEnabled) { if (!nextActionType) return false; if (!nextActionAt) return false; if (!formatDateToISO(nextActionAt)) return false; }
     return true;
-  }, [saving, name, source, interests, stageId, phoneRaw, nextActionEnabled, nextActionType, nextActionAt]);
+  }, [saving, name, source, stageId, phoneRaw, nextActionEnabled, nextActionType, nextActionAt]);
 
   async function saveNoteForLead(leadId: string) {
     const note = noteText.trim();
@@ -482,12 +481,6 @@ export default function NewLeadPage() {
         title: "Campos obrigatórios",
       });
 
-    if (interests.length === 0)
-      return showToast("Adicione pelo menos um interesse.", {
-        variant: "error",
-        title: "Campos obrigatórios",
-      });
-
     if (!stageId)
       return showToast("Selecione a etapa.", {
         variant: "error",
@@ -522,7 +515,7 @@ export default function NewLeadPage() {
       phone_raw: cleanPhoneRaw,
       phone_e164: phoneE164,
       source: source.trim(),
-      interest: interests[0],
+      interest: interests[0] ?? null,
       interests,
       stage_id: stageId,
       responsible_id: responsibleId || null,
@@ -685,7 +678,7 @@ export default function NewLeadPage() {
 
             <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr" }}>
               <div style={fieldWrap}>
-                <div style={labelStyle}>Interesses * <span style={{ fontWeight: 400, opacity: 0.6 }}>(pode adicionar vários)</span></div>
+                <div style={labelStyle}>Interesses <span style={{ fontWeight: 400, opacity: 0.6 }}>(opcional • pode adicionar vários)</span></div>
                 <InterestTags values={interests} onChange={setInterests} suggestions={interestSuggestions} />
               </div>
               <div style={fieldWrap}><div style={labelStyle}>Campanha (opcional)</div><SuggestInput value={campaign} onChange={setCampaign} suggestions={campaignSuggestions} placeholder="Digite ou selecione" /></div>

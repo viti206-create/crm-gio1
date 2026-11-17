@@ -577,18 +577,16 @@ export default function HomePage() {
     return d;
   }, [todayEnd]);
 
+  // A agenda é operacional e independe do período usado nos indicadores/funis.
+  // Qualquer contato ativo com próxima ação definida deve aparecer aqui,
+  // mesmo que tenha sido criado em outro mês/ano.
   const leadsWithNext = useMemo(() => {
-    return filteredLeads
+    return leads
       .filter((l) => !!l.next_action_at)
       .map((l) => ({ ...l, _next: new Date(l.next_action_at as string) }))
       .filter((l) => !isNaN((l as any)._next.getTime()))
-      .filter(
-        (l: any) =>
-          l._next.getTime() >= normalizedPeriod.start.getTime() &&
-          l._next.getTime() <= normalizedPeriod.end.getTime()
-      )
       .sort((a: any, b: any) => a._next.getTime() - b._next.getTime());
-  }, [filteredLeads, normalizedPeriod]);
+  }, [leads]);
 
   const overdue = useMemo(
     () => leadsWithNext.filter((l: any) => l._next.getTime() < todayStart.getTime()),
@@ -971,13 +969,13 @@ export default function HomePage() {
         <div style={card}>
           <div style={cardTitle}>Ações hoje</div>
           <div style={cardValue}>{today.length}</div>
-          <div style={cardHint}>Dentro do período filtrado</div>
+          <div style={cardHint}>Todas as próximas ações ativas</div>
         </div>
 
         <div style={card}>
           <div style={cardTitle}>Atrasadas</div>
           <div style={cardValue}>{overdue.length}</div>
-          <div style={cardHint}>Dentro do período filtrado</div>
+          <div style={cardHint}>Todas as próximas ações ativas</div>
         </div>
       </div>
 
