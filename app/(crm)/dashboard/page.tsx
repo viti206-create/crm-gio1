@@ -516,7 +516,7 @@ export default function DashboardPage() {
         </DragOverlay>
       </DndContext>
 
-      <Modal open={!!selectedLeadId} title={selectedLead ? selectedLead.name : "Lead"} onClose={() => setSelectedLeadId(null)}>
+      <Modal open={!!selectedLeadId && !!selectedLead} title={selectedLead ? selectedLead.name : "Lead"} onClose={() => setSelectedLeadId(null)}>
         {selectedLead ? (
           <div style={{ display: "grid", gap: 14 }}>
             <div style={{ display: "grid", gap: 10 }}>
@@ -570,7 +570,7 @@ export default function DashboardPage() {
               : activities.length === 0 ? <div style={{ opacity: 0.65 }}>Sem atividades ainda.</div>
               : <div style={{ display: "grid", gap: 10 }}>{activities.map((a) => <ActivityRow key={a.id} a={a} stageNameFromId={stageNameFromId} />)}</div>}
           </div>
-        ) : <div style={{ opacity: 0.75 }}>Lead não encontrado.</div>}
+        ) : null}
       </Modal>
     </div>
   );

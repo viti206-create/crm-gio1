@@ -280,6 +280,7 @@ export default function EditLeadPage() {
   const [responsibleId, setResponsibleId] = useState("");
   const [nextActionType, setNextActionType] = useState("whatsapp");
   const [nextActionAt, setNextActionAt] = useState("");
+  const [noteText, setNoteText] = useState("");
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [aiReviewLevel, setAiReviewLevel] = useState<"normal" | "attention" | "urgent">("normal");
   const [aiReviewReason, setAiReviewReason] = useState<string | null>(null);
@@ -369,6 +370,30 @@ export default function EditLeadPage() {
     return !!toE164BR(phoneRaw);
   }, [loading, saving, name, source, stageId, phoneRaw]);
 
+  async function saveNoteForLead() {
+    if (!leadId) return;
+
+    const note = noteText.trim();
+    if (!note) return;
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    const { error } = await supabase.from("activities").insert({
+      lead_id: leadId,
+      user_id: user?.id ?? null,
+      type: "note",
+      payload: { text: note },
+    });
+
+    if (error) {
+      throw new Error(`O contato foi salvo, mas a observação não foi registrada: ${error.message}`);
+    }
+
+    setNoteText("");
+  }
+
   async function handleSave() {
     if (!leadId || saving) return;
 
@@ -441,6 +466,8 @@ export default function EditLeadPage() {
         setErr("O Supabase não confirmou a alteração do lead. Verifique as permissões/RLS da tabela leads.");
         return;
       }
+
+      await saveNoteForLead();
 
       setSaveSuccess("Alterações salvas com sucesso.");
       router.replace("/leads");
@@ -656,6 +683,33 @@ export default function EditLeadPage() {
 
             <div style={{ fontSize: 12, opacity: 0.7 }}>
               Ao definir uma data, o contato aparecerá automaticamente na Agenda de ações da Home.
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: "1px solid rgba(255,255,255,0.10)",
+              background: "rgba(255,255,255,0.035)",
+              borderRadius: 14,
+              padding: 14,
+              display: "grid",
+              gap: 10,
+            }}
+          >
+            <div style={{ fontWeight: 950 }}>Observação (opcional)</div>
+            <textarea
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              placeholder="Ex: Cliente pediu para chamar amanhã após 14h..."
+              style={{
+                ...inputStyle,
+                minHeight: 90,
+                resize: "vertical",
+                fontFamily: "inherit",
+              }}
+            />
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              A observação será adicionada ao histórico do contato quando você clicar em Salvar.
             </div>
           </div>
         </div>

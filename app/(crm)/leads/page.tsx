@@ -275,6 +275,27 @@ export default function LeadsListPage() {
               options={[{ value: "all", label: "Todos os interesses" }, ...interestOptions.map((i) => ({ value: i, label: i }))]} />
             <SelectDark value={campaignFilter} onChange={setCampaignFilter} placeholder="Todas as campanhas" searchable={true} minWidth={220}
               options={[{ value: "all", label: "Todas as campanhas" }, ...campaignOptions.map((c) => ({ value: c, label: c }))]} />
+
+            <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 900, opacity: 0.85 }}>
+              CRIADO DE
+              <input
+                type="date"
+                value={contactDateFrom}
+                onChange={(e) => setContactDateFrom(e.target.value)}
+                style={{ ...inputDateStyle, colorScheme: "dark" }}
+              />
+            </label>
+
+            <label style={{ display: "grid", gap: 5, fontSize: 11, fontWeight: 900, opacity: 0.85 }}>
+              ATÉ
+              <input
+                type="date"
+                value={contactDateTo}
+                onChange={(e) => setContactDateTo(e.target.value)}
+                style={{ ...inputDateStyle, colorScheme: "dark" }}
+              />
+            </label>
+
             <button onClick={() => setReviewFilter(reviewFilter === "review" ? "all" : "review")} style={reviewFilter === "review" ? btnPrimary : btn}>⚠ Requer atenção</button>
             <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); setCampaignFilter("all"); setContactDateFrom(""); setContactDateTo(""); setReviewFilter("all"); }} style={btn}>Limpar</button>
           </div>
