@@ -13,6 +13,9 @@ import {
   useSensor,
   useSensors,
   closestCorners,
+  pointerWithin,
+  rectIntersection,
+  type CollisionDetection,
   useDroppable,
   DragOverlay,
   defaultDropAnimationSideEffects,
@@ -21,6 +24,7 @@ import { restrictToWindowEdges } from "@dnd-kit/modifiers";
 import {
   SortableContext,
   verticalListSortingStrategy,
+  horizontalListSortingStrategy,
   useSortable,
   arrayMove,
 } from "@dnd-kit/sortable";
@@ -80,6 +84,26 @@ function chipStyle(kind: "primary" | "muted" = "muted"): React.CSSProperties {
     gap: 6, lineHeight: "16px", whiteSpace: "nowrap",
   };
 }
+
+
+const kanbanCollisionDetection: CollisionDetection = (args) => {
+  // Prioridade 1: o alvo realmente sob o ponteiro.
+  // Evita o closestCorners escolher o card/coluna de origem enquanto
+  // o usuário já está visualmente sobre outra coluna.
+  const pointerCollisions = pointerWithin(args);
+  if (pointerCollisions.length > 0) {
+    return pointerCollisions;
+  }
+
+  // Prioridade 2: interseção física do retângulo arrastado.
+  const rectCollisions = rectIntersection(args);
+  if (rectCollisions.length > 0) {
+    return rectCollisions;
+  }
+
+  // Fallback para casos de borda / movimento rápido.
+  return closestCorners(args);
+};
 
 function stageTheme(stageName: string) {
   const n = stageName.trim().toLowerCase();
@@ -214,23 +238,40 @@ function Column({
   leads,
   onOpenLead,
   onRenameStage,
-  onMoveStage,
   onToggleFinalStage,
   onDeleteStage,
-  canMoveLeft,
-  canMoveRight,
+  columnDragEnabled,
 }: {
   stage: Stage;
   leads: Lead[];
   onOpenLead: (leadId: string) => void;
   onRenameStage: (stage: Stage) => void;
-  onMoveStage: (stage: Stage, direction: "left" | "right") => void;
   onToggleFinalStage: (stage: Stage) => void;
   onDeleteStage: (stage: Stage) => void;
-  canMoveLeft: boolean;
-  canMoveRight: boolean;
+  columnDragEnabled: boolean;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: stage.id, data: { type: "stage", stageId: stage.id } });
+  const {
+    attributes: stageAttributes,
+    listeners: stageListeners,
+    setNodeRef: setStageSortableRef,
+    setActivatorNodeRef,
+    transform: stageTransform,
+    transition: stageTransition,
+    isDragging: isStageDragging,
+  } = useSortable({
+    id: `stage-sort:${stage.id}`,
+    data: { type: "stage-sort", stageId: stage.id },
+    disabled: !columnDragEnabled,
+  });
+
+  const {
+    setNodeRef: setStageDropRef,
+    isOver,
+  } = useDroppable({
+    id: `stage-drop:${stage.id}`,
+    data: { type: "stage", stageId: stage.id },
+  });
+
   const [menuOpen, setMenuOpen] = useState(false);
   const theme = stageTheme(stage.name);
 
@@ -249,77 +290,241 @@ function Column({
 
   return (
     <div
-      ref={setNodeRef}
+      ref={setStageSortableRef}
       style={{
         minWidth: 300,
+        width: 320,
         maxWidth: 340,
-        padding: 14,
-        borderRadius: 18,
-        border: isOver ? `1px solid ${theme.accent.replace("0.95", "0.40")}` : "1px solid rgba(255,255,255,0.08)",
-        background: isOver
-          ? `linear-gradient(180deg, ${theme.tint} 0%, rgba(255,255,255,0.03) 100%)`
-          : "linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%)",
-        boxShadow: "0 16px 44px rgba(0,0,0,0.35)",
+        minHeight: 260,
+        transform: CSS.Transform.toString(stageTransform),
+        transition: stageTransition,
+        opacity: isStageDragging ? 0.35 : 1,
+        zIndex: isStageDragging ? 40 : "auto",
       }}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 950, minWidth: 0 }}>
-          <span style={{ width: 10, height: 10, borderRadius: 999, background: theme.accent, boxShadow: `0 0 0 6px ${theme.tint}`, flex: "0 0 auto" }} />
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={stage.name}>{stage.name}</span>
-          {stage.is_final ? <span style={{ ...chipStyle("muted"), opacity: 0.9 }}>Final</span> : null}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 6, position: "relative" }}>
-          <div style={{ fontSize: 12, opacity: 0.9, border: "1px solid rgba(255,255,255,0.12)", padding: "2px 8px", borderRadius: 999, background: "rgba(0,0,0,0.20)" }}>{leads.length}</div>
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+      <div
+        ref={setStageDropRef}
+        style={{
+          minHeight: 260,
+          padding: 14,
+          borderRadius: 18,
+          border: isOver
+            ? `1px solid ${theme.accent.replace("0.95", "0.40")}`
+            : "1px solid rgba(255,255,255,0.08)",
+          background: isOver
+            ? `linear-gradient(180deg, ${theme.tint} 0%, rgba(255,255,255,0.03) 100%)`
+            : "linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%)",
+          boxShadow: isStageDragging
+            ? "0 28px 80px rgba(0,0,0,0.55)"
+            : "0 16px 44px rgba(0,0,0,0.35)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 10,
+            gap: 10,
+          }}
+        >
+          <div
             style={{
-              width: 30,
-              height: 30,
-              borderRadius: 9,
-              border: "1px solid rgba(255,255,255,0.12)",
-              background: "rgba(255,255,255,0.05)",
-              color: "white",
-              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
               fontWeight: 950,
+              minWidth: 0,
+              flex: 1,
             }}
-            title="Configurar etapa"
           >
-            ⋯
-          </button>
-
-          {menuOpen ? (
-            <div
-              onClick={(e) => e.stopPropagation()}
+            <button
+              ref={setActivatorNodeRef}
+              type="button"
+              {...stageAttributes}
+              {...stageListeners}
+              disabled={!columnDragEnabled}
+              title={
+                columnDragEnabled
+                  ? "Arraste para mudar a posição da coluna"
+                  : "Limpe o filtro de etapa para reordenar as colunas"
+              }
               style={{
-                position: "absolute",
-                right: 0,
-                top: 36,
-                zIndex: 80,
-                width: 210,
-                padding: 6,
-                borderRadius: 12,
-                border: "1px solid rgba(255,255,255,0.14)",
-                background: "rgba(15,13,22,0.98)",
-                boxShadow: "0 20px 55px rgba(0,0,0,0.55)",
+                width: 30,
+                height: 30,
+                display: "grid",
+                placeItems: "center",
+                borderRadius: 9,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.05)",
+                color: "rgba(255,255,255,0.90)",
+                cursor: columnDragEnabled ? "grab" : "not-allowed",
+                opacity: columnDragEnabled ? 1 : 0.4,
+                fontWeight: 950,
+                fontSize: 17,
+                lineHeight: 1,
+                touchAction: "none",
+                flex: "0 0 auto",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              ⠿
+            </button>
+
+            <span
+              style={{
+                width: 10,
+                height: 10,
+                borderRadius: 999,
+                background: theme.accent,
+                boxShadow: `0 0 0 6px ${theme.tint}`,
+                flex: "0 0 auto",
+              }}
+            />
+
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={stage.name}
+            >
+              {stage.name}
+            </span>
+
+            {stage.is_final ? (
+              <span style={{ ...chipStyle("muted"), opacity: 0.9 }}>
+                Final
+              </span>
+            ) : null}
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              position: "relative",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                opacity: 0.9,
+                border: "1px solid rgba(255,255,255,0.12)",
+                padding: "2px 8px",
+                borderRadius: 999,
+                background: "rgba(0,0,0,0.20)",
               }}
             >
-              <button type="button" style={menuBtn} onClick={() => { setMenuOpen(false); onRenameStage(stage); }}>Renomear etapa</button>
-              <button type="button" style={{ ...menuBtn, opacity: canMoveLeft ? 1 : 0.45, cursor: canMoveLeft ? "pointer" : "not-allowed" }} disabled={!canMoveLeft} onClick={() => { setMenuOpen(false); onMoveStage(stage, "left"); }}>Mover para esquerda</button>
-              <button type="button" style={{ ...menuBtn, opacity: canMoveRight ? 1 : 0.45, cursor: canMoveRight ? "pointer" : "not-allowed" }} disabled={!canMoveRight} onClick={() => { setMenuOpen(false); onMoveStage(stage, "right"); }}>Mover para direita</button>
-              <button type="button" style={menuBtn} onClick={() => { setMenuOpen(false); onToggleFinalStage(stage); }}>{stage.is_final ? "Desmarcar como final" : "Marcar como etapa final"}</button>
-              <div style={{ height: 1, background: "rgba(255,255,255,0.08)", margin: "5px 0" }} />
-              <button type="button" style={{ ...menuBtn, color: "#ffb3b3" }} onClick={() => { setMenuOpen(false); onDeleteStage(stage); }}>Excluir etapa</button>
+              {leads.length}
             </div>
-          ) : null}
-        </div>
-      </div>
 
-      <SortableContext items={leads.map((l) => l.id)} strategy={verticalListSortingStrategy}>
-        {leads.map((lead) => <LeadCard key={lead.id} lead={lead} accent={theme.accent} onOpen={onOpenLead} />)}
-      </SortableContext>
-      {leads.length === 0 ? <div style={{ opacity: 0.55, fontSize: 12, marginTop: 12 }}>Solte um lead aqui</div> : null}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((v) => !v);
+              }}
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 9,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: "rgba(255,255,255,0.05)",
+                color: "white",
+                cursor: "pointer",
+                fontWeight: 950,
+              }}
+              title="Configurar etapa"
+            >
+              ⋯
+            </button>
+
+            {menuOpen ? (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: 36,
+                  zIndex: 80,
+                  width: 210,
+                  padding: 6,
+                  borderRadius: 12,
+                  border: "1px solid rgba(255,255,255,0.14)",
+                  background: "rgba(15,13,22,0.98)",
+                  boxShadow: "0 20px 55px rgba(0,0,0,0.55)",
+                }}
+              >
+                <button
+                  type="button"
+                  style={menuBtn}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onRenameStage(stage);
+                  }}
+                >
+                  Renomear etapa
+                </button>
+
+                <button
+                  type="button"
+                  style={menuBtn}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onToggleFinalStage(stage);
+                  }}
+                >
+                  {stage.is_final
+                    ? "Desmarcar como final"
+                    : "Marcar como etapa final"}
+                </button>
+
+                <div
+                  style={{
+                    height: 1,
+                    background: "rgba(255,255,255,0.08)",
+                    margin: "5px 0",
+                  }}
+                />
+
+                <button
+                  type="button"
+                  style={{ ...menuBtn, color: "#ffb3b3" }}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onDeleteStage(stage);
+                  }}
+                >
+                  Excluir etapa
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <SortableContext
+          items={leads.map((l) => l.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          {leads.map((lead) => (
+            <LeadCard
+              key={lead.id}
+              lead={lead}
+              accent={theme.accent}
+              onOpen={onOpenLead}
+            />
+          ))}
+        </SortableContext>
+
+        {leads.length === 0 ? (
+          <div style={{ opacity: 0.55, fontSize: 12, marginTop: 12 }}>
+            Solte um lead aqui
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -377,7 +582,17 @@ export default function DashboardPage() {
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [interestFilter, setInterestFilter] = useState<string>("all");
   const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
-  const activeLead = useMemo(() => leads.find((l) => l.id === activeLeadId) ?? null, [activeLeadId, leads]);
+  const [activeStageId, setActiveStageId] = useState<string | null>(null);
+
+  const activeLead = useMemo(
+    () => leads.find((l) => l.id === activeLeadId) ?? null,
+    [activeLeadId, leads]
+  );
+
+  const activeStage = useMemo(
+    () => stages.find((s) => s.id === activeStageId) ?? null,
+    [activeStageId, stages]
+  );
   const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
   const selectedLead = useMemo(() => leads.find((l) => l.id === selectedLeadId) ?? null, [selectedLeadId, leads]);
   const [activities, setActivities] = useState<Activity[]>([]);
@@ -481,53 +696,101 @@ export default function DashboardPage() {
     pushToast({ kind: "success", title: "Etapa renomeada", description: `${stage.name} → ${name}` });
   }
 
-  async function handleMoveStage(stage: Stage, direction: "left" | "right") {
-    const ordered = [...stages].sort((a, b) => a.position - b.position);
-    const index = ordered.findIndex((s) => s.id === stage.id);
-    if (index < 0) return;
-
-    const targetIndex = direction === "left" ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= ordered.length) return;
-
-    const target = ordered[targetIndex];
-    const currentPosition = stage.position;
-    const targetPosition = target.position;
-    const maxPosition = Math.max(...ordered.map((s) => Number(s.position) || 0));
-    const temporaryPosition = maxPosition + 1000;
-
-    const step1 = await supabase.from("stages").update({ position: temporaryPosition }).eq("id", stage.id);
-    if (step1.error) {
-      pushToast({ kind: "error", title: "Não foi possível mover a etapa", description: step1.error.message });
-      return;
-    }
-
-    const step2 = await supabase.from("stages").update({ position: currentPosition }).eq("id", target.id);
-    if (step2.error) {
-      await supabase.from("stages").update({ position: currentPosition }).eq("id", stage.id);
-      pushToast({ kind: "error", title: "Não foi possível mover a etapa", description: step2.error.message });
-      return;
-    }
-
-    const step3 = await supabase.from("stages").update({ position: targetPosition }).eq("id", stage.id);
-    if (step3.error) {
-      await supabase.from("stages").update({ position: targetPosition }).eq("id", target.id);
-      await supabase.from("stages").update({ position: currentPosition }).eq("id", stage.id);
-      pushToast({ kind: "error", title: "Não foi possível mover a etapa", description: step3.error.message });
-      return;
-    }
-
-    setStages((prev) =>
-      prev
-        .map((s) => {
-          if (s.id === stage.id) return { ...s, position: targetPosition };
-          if (s.id === target.id) return { ...s, position: currentPosition };
-          return s;
-        })
-        .sort((a, b) => a.position - b.position)
+  async function persistStageOrder(nextOrderedStages: Stage[]) {
+    const previousOrdered = [...stages].sort(
+      (a, b) => a.position - b.position
     );
 
-    pushToast({ kind: "success", title: "Ordem atualizada", description: `${stage.name} movida para ${direction === "left" ? "esquerda" : "direita"}.` });
+    const normalized = nextOrderedStages.map((stage, index) => ({
+      ...stage,
+      position: index + 1,
+    }));
+
+    // Atualização otimista: a coluna já fica na nova posição.
+    setStages(normalized);
+
+    const temporaryBase = 100000;
+
+    try {
+      /*
+       * Duas fases evitam colisão caso exista UNIQUE em stages.position:
+       * 1) joga todas as posições para uma faixa temporária;
+       * 2) grava 1..N na nova ordem.
+       */
+      for (let i = 0; i < normalized.length; i += 1) {
+        const stage = normalized[i];
+
+        const { error } = await supabase
+          .from("stages")
+          .update({ position: temporaryBase + i })
+          .eq("id", stage.id);
+
+        if (error) throw error;
+      }
+
+      for (let i = 0; i < normalized.length; i += 1) {
+        const stage = normalized[i];
+
+        const { error } = await supabase
+          .from("stages")
+          .update({ position: i + 1 })
+          .eq("id", stage.id);
+
+        if (error) throw error;
+      }
+
+      setStages(normalized);
+
+      pushToast({
+        kind: "success",
+        title: "Ordem das etapas atualizada",
+      });
+    } catch (error) {
+      console.error("stage order error", error);
+
+      /*
+       * Tenta restaurar a ordem anterior também em duas fases.
+       * Mesmo se o rollback remoto falhar parcialmente, recarregamos
+       * depois para refletir a verdade do banco.
+       */
+      try {
+        for (let i = 0; i < previousOrdered.length; i += 1) {
+          await supabase
+            .from("stages")
+            .update({ position: temporaryBase + 5000 + i })
+            .eq("id", previousOrdered[i].id);
+        }
+
+        for (let i = 0; i < previousOrdered.length; i += 1) {
+          await supabase
+            .from("stages")
+            .update({ position: i + 1 })
+            .eq("id", previousOrdered[i].id);
+        }
+      } catch (rollbackError) {
+        console.error("stage order rollback error", rollbackError);
+      }
+
+      setStages(
+        previousOrdered.map((stage, index) => ({
+          ...stage,
+          position: index + 1,
+        }))
+      );
+
+      pushToast({
+        kind: "error",
+        title: "Não foi possível salvar a ordem",
+        description:
+          error instanceof Error
+            ? error.message
+            : "O Supabase não confirmou a nova ordem das etapas.",
+      });
+
+      await fetchData();
+    }
   }
+
 
   async function handleToggleFinalStage(stage: Stage) {
     const nextValue = !Boolean(stage.is_final);
@@ -628,21 +891,153 @@ export default function DashboardPage() {
   }, [stages, filteredLeads]);
   const visibleStages = useMemo(() => stageFilter === "all" ? stages : stages.filter((s) => s.id === stageFilter), [stages, stageFilter]);
 
+  function onDragStart(event: DragStartEvent) {
+    const type = event.active.data.current?.type;
+
+    if (type === "stage-sort") {
+      const stageId = String(
+        event.active.data.current?.stageId ?? ""
+      );
+
+      setActiveStageId(stageId || null);
+      setActiveLeadId(null);
+      return;
+    }
+
+    if (type === "lead") {
+      setActiveLeadId(String(event.active.id));
+      setActiveStageId(null);
+      return;
+    }
+
+    setActiveLeadId(null);
+    setActiveStageId(null);
+  }
+
+  function onDragCancel(_: DragCancelEvent) {
+    setActiveLeadId(null);
+    setActiveStageId(null);
+  }
+
   async function onDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-    if (!over) { setActiveLeadId(null); return; }
-    const activeId = String(active.id);
-    const overId = String(over.id);
+    const activeType = active.data.current?.type;
+
     setActiveLeadId(null);
-    if (activeId === overId) return;
-    const activeLeadNow = leads.find((l) => l.id === activeId);
+    setActiveStageId(null);
+
+    if (!over) return;
+
+    /*
+     * REORDENAÇÃO DE COLUNAS
+     *
+     * O destino pode ser:
+     * - outra coluna sortable;
+     * - área droppable da coluna;
+     * - um lead dentro da coluna.
+     *
+     * Todos carregam stageId em data.current.
+     */
+    if (activeType === "stage-sort") {
+      if (stageFilter !== "all") {
+        pushToast({
+          kind: "info",
+          title: "Limpe o filtro de etapa",
+          description:
+            "Para reordenar as colunas, deixe o filtro em Todas as etapas.",
+        });
+        return;
+      }
+
+      const sourceStageId = String(
+        active.data.current?.stageId ?? ""
+      );
+
+      const targetStageId =
+        typeof over.data.current?.stageId === "string"
+          ? over.data.current.stageId
+          : null;
+
+      if (
+        !sourceStageId ||
+        !targetStageId ||
+        sourceStageId === targetStageId
+      ) {
+        return;
+      }
+
+      const orderedStages = [...stages].sort(
+        (a, b) => a.position - b.position
+      );
+
+      const oldIndex = orderedStages.findIndex(
+        (stage) => stage.id === sourceStageId
+      );
+
+      const newIndex = orderedStages.findIndex(
+        (stage) => stage.id === targetStageId
+      );
+
+      if (
+        oldIndex === -1 ||
+        newIndex === -1 ||
+        oldIndex === newIndex
+      ) {
+        return;
+      }
+
+      const reordered = arrayMove(
+        orderedStages,
+        oldIndex,
+        newIndex
+      );
+
+      await persistStageOrder(reordered);
+      return;
+    }
+
+    /*
+     * MOVIMENTAÇÃO DE LEADS
+     */
+    const activeId = String(active.id);
+    const activeLeadNow = leads.find(
+      (l) => l.id === activeId
+    );
+
     if (!activeLeadNow) return;
-    const overLead = leads.find((l) => l.id === overId);
-    const overIsStage = stages.some((s) => s.id === overId);
-    const targetStageId = overLead ? overLead.stage_id : overIsStage ? overId : activeLeadNow.stage_id;
+
+    const overId = String(over.id);
+
+    const targetStageId =
+      typeof over.data.current?.stageId === "string"
+        ? over.data.current.stageId
+        : stages.some((s) => s.id === overId)
+          ? overId
+          : leads.find((l) => l.id === overId)?.stage_id ?? null;
+
+    if (!targetStageId) {
+      pushToast({
+        kind: "error",
+        title: "Não consegui identificar a coluna",
+        description:
+          "Solte o contato dentro da área da coluna desejada.",
+      });
+      return;
+    }
+
     if (targetStageId !== activeLeadNow.stage_id) {
+      const previousStageId = activeLeadNow.stage_id;
+
       setSaving(activeLeadNow.id);
-      setLeads((prev) => prev.map((l) => (l.id === activeLeadNow.id ? { ...l, stage_id: targetStageId } : l)));
+
+      setLeads((prev) =>
+        prev.map((l) =>
+          l.id === activeLeadNow.id
+            ? { ...l, stage_id: targetStageId }
+            : l
+        )
+      );
+
       const { data, error } = await supabase
         .from("leads")
         .update({ stage_id: targetStageId })
@@ -652,27 +1047,94 @@ export default function DashboardPage() {
 
       setSaving(null);
 
-      if (error || !data?.id || data.stage_id !== targetStageId) {
-        setLeads((prev) => prev.map((l) => l.id === activeLeadNow.id ? { ...l, stage_id: activeLeadNow.stage_id } : l));
+      if (
+        error ||
+        !data?.id ||
+        data.stage_id !== targetStageId
+      ) {
+        setLeads((prev) =>
+          prev.map((l) =>
+            l.id === activeLeadNow.id
+              ? { ...l, stage_id: previousStageId }
+              : l
+          )
+        );
+
         pushToast({
           kind: "error",
           title: "Não consegui mover o lead",
-          description: error?.message ?? "O Supabase não confirmou a alteração do stage_id.",
+          description:
+            error?.message ??
+            "O Supabase não confirmou a alteração da etapa.",
         });
+
         return;
       }
 
-      pushToast({ kind: "success", title: "Etapa atualizada", description: `Agora em: ${stageNameFromId(targetStageId)}` });
-      if (selectedLeadId === activeLeadNow.id) loadActivities(activeLeadNow.id);
+      pushToast({
+        kind: "success",
+        title: "Etapa atualizada",
+        description: `Agora em: ${stageNameFromId(
+          targetStageId
+        )}`,
+      });
+
+      if (selectedLeadId === activeLeadNow.id) {
+        loadActivities(activeLeadNow.id);
+      }
+
       return;
     }
-    if (!overLead) return;
-    const currentStageLeads = leads.filter((l) => l.stage_id === activeLeadNow.stage_id);
-    const oldIndex = currentStageLeads.findIndex((l) => l.id === activeId);
-    const newIndex = currentStageLeads.findIndex((l) => l.id === overId);
-    if (oldIndex === -1 || newIndex === -1) return;
-    const reordered = arrayMove(currentStageLeads, oldIndex, newIndex);
-    setLeads((prev) => { const others = prev.filter((l) => l.stage_id !== activeLeadNow.stage_id); return [...others, ...reordered]; });
+
+    const overLead = leads.find(
+      (l) => l.id === overId
+    );
+
+    if (!overLead || overLead.id === activeLeadNow.id) {
+      return;
+    }
+
+    const currentStageLeads = leads.filter(
+      (l) => l.stage_id === activeLeadNow.stage_id
+    );
+
+    const oldIndex = currentStageLeads.findIndex(
+      (l) => l.id === activeId
+    );
+
+    const newIndex = currentStageLeads.findIndex(
+      (l) => l.id === overId
+    );
+
+    if (
+      oldIndex === -1 ||
+      newIndex === -1 ||
+      oldIndex === newIndex
+    ) {
+      return;
+    }
+
+    const reordered = arrayMove(
+      currentStageLeads,
+      oldIndex,
+      newIndex
+    );
+
+    setLeads((prev) => {
+      const reorderedIds = new Set(
+        reordered.map((l) => l.id)
+      );
+
+      let index = 0;
+
+      return prev.map((lead) => {
+        if (!reorderedIds.has(lead.id)) return lead;
+
+        const nextLead = reordered[index];
+        index += 1;
+        return nextLead;
+      });
+    });
   }
 
   async function copyText(text: string, successMsg: string) {
@@ -830,41 +1292,116 @@ export default function DashboardPage() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          <span
+            style={{
+              ...chipStyle("muted"),
+              alignSelf: "center",
+            }}
+          >
+            ⠿ Arraste o cabeçalho para ordenar
+          </span>
           <button onClick={handleCreateStage} style={smallBtn}>+ Nova etapa</button>
           <button onClick={() => router.push("/leads/new")} style={smallBtn}>+ Novo lead</button>
         </div>
       </div>
 
-      <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={(e: DragStartEvent) => setActiveLeadId(String(e.active.id))} onDragCancel={(_: DragCancelEvent) => setActiveLeadId(null)} onDragEnd={onDragEnd} modifiers={[restrictToWindowEdges]}>
-        <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 12 }}>
-          {visibleStages.map((stage) => {
-            const orderedStages = [...stages].sort((a, b) => a.position - b.position);
-            const stageIndex = orderedStages.findIndex((s) => s.id === stage.id);
-
-            return (
+      <DndContext
+        sensors={sensors}
+        collisionDetection={kanbanCollisionDetection}
+        onDragStart={onDragStart}
+        onDragCancel={onDragCancel}
+        onDragEnd={onDragEnd}
+        modifiers={[restrictToWindowEdges]}
+      >
+        <SortableContext
+          items={visibleStages.map((stage) => `stage-sort:${stage.id}`)}
+          strategy={horizontalListSortingStrategy}
+        >
+          <div
+            style={{
+              display: "flex",
+              gap: 14,
+              overflowX: "auto",
+              paddingBottom: 12,
+            }}
+          >
+            {visibleStages.map((stage) => (
               <Column
                 key={stage.id}
                 stage={stage}
                 leads={leadsByStage.get(stage.id) ?? []}
-                onOpenLead={(leadId) => setSelectedLeadId(leadId)}
+                onOpenLead={(leadId) =>
+                  setSelectedLeadId(leadId)
+                }
                 onRenameStage={handleRenameStage}
-                onMoveStage={handleMoveStage}
                 onToggleFinalStage={handleToggleFinalStage}
                 onDeleteStage={handleDeleteStage}
-                canMoveLeft={stageIndex > 0}
-                canMoveRight={stageIndex >= 0 && stageIndex < orderedStages.length - 1}
+                columnDragEnabled={stageFilter === "all"}
               />
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        </SortableContext>
+
         <DragOverlay dropAnimation={dropAnimation}>
-          {activeLead ? (
-            <div style={{ background: "linear-gradient(180deg, rgba(18,18,26,0.98) 0%, rgba(10,10,16,0.96) 100%)", padding: 12, borderRadius: 16, width: 320, border: "1px solid rgba(255,255,255,0.14)", boxShadow: "0 28px 90px rgba(0,0,0,0.70)", transform: "scale(1.02)" }}>
-              <div style={{ fontWeight: 950, marginBottom: 6 }}>{activeLead.name}</div>
-              <div style={{ opacity: 0.9 }}>{activeLead.phone_raw ?? activeLead.phone_e164}</div>
+          {activeStage ? (
+            <div
+              style={{
+                width: 320,
+                padding: 14,
+                borderRadius: 18,
+                border: "1px solid rgba(180,120,255,0.35)",
+                background:
+                  "linear-gradient(180deg, rgba(28,22,40,0.98) 0%, rgba(12,10,18,0.98) 100%)",
+                boxShadow: "0 32px 100px rgba(0,0,0,0.72)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  fontWeight: 950,
+                }}
+              >
+                <span style={{ fontSize: 18 }}>⠿</span>
+                <span>{activeStage.name}</span>
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  opacity: 0.7,
+                  marginTop: 8,
+                }}
+              >
+                Movendo coluna
+              </div>
+            </div>
+          ) : activeLead ? (
+            <div
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(18,18,26,0.98) 0%, rgba(10,10,16,0.96) 100%)",
+                padding: 12,
+                borderRadius: 16,
+                width: 320,
+                border: "1px solid rgba(255,255,255,0.14)",
+                boxShadow: "0 28px 90px rgba(0,0,0,0.70)",
+                transform: "scale(1.02)",
+              }}
+            >
+              <div style={{ fontWeight: 950, marginBottom: 6 }}>
+                {activeLead.name}
+              </div>
+              <div style={{ opacity: 0.9 }}>
+                {activeLead.phone_raw ?? activeLead.phone_e164}
+              </div>
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <span style={chipStyle("primary")}>{activeLead.interest}</span>
-                <span style={chipStyle("muted")}>{activeLead.source}</span>
+                <span style={chipStyle("primary")}>
+                  {activeLead.interest}
+                </span>
+                <span style={chipStyle("muted")}>
+                  {activeLead.source}
+                </span>
               </div>
             </div>
           ) : null}
