@@ -230,7 +230,7 @@ function InterestTags({ values, onChange, suggestions }: {
   );
 }
 
-function formatDateTimeLocalFromISO(value?: string | null) {
+function formatDateInputFromISO(value?: string | null) {
   if (!value) return "";
 
   const date = new Date(value);
@@ -239,16 +239,14 @@ function formatDateTimeLocalFromISO(value?: string | null) {
   const yyyy = date.getFullYear();
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
-  const hh = String(date.getHours()).padStart(2, "0");
-  const mi = String(date.getMinutes()).padStart(2, "0");
 
-  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function formatDateToISO(value: string) {
   if (!value) return null;
 
-  const date = new Date(value);
+  const date = new Date(`${value}T12:00:00`);
   if (Number.isNaN(date.getTime())) return null;
 
   return date.toISOString();
@@ -327,7 +325,7 @@ export default function EditLeadPage() {
     setCampaign(l?.campaign ?? "");
     setResponsibleId(l?.responsible_id ?? "");
     setNextActionType(l?.next_action_type ?? "whatsapp");
-    setNextActionAt(formatDateTimeLocalFromISO(l?.next_action_at));
+    setNextActionAt(formatDateInputFromISO(l?.next_action_at));
     setAiReviewLevel(l?.ai_review_level ?? "normal");
     setAiReviewReason(l?.ai_review_reason ?? null);
     setAiSummary(l?.ai_summary ?? null);
@@ -659,9 +657,9 @@ export default function EditLeadPage() {
               </div>
 
               <label style={{ display: "grid", gap: 10, minWidth: 0 }}>
-                <span style={labelStyle}>Data e hora</span>
+                <span style={labelStyle}>Data</span>
                 <input
-                  type="datetime-local"
+                  type="date"
                   value={nextActionAt}
                   onChange={(e) => setNextActionAt(e.target.value)}
                   style={{ ...inputStyle, colorScheme: "dark" }}

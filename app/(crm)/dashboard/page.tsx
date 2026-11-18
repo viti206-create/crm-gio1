@@ -452,7 +452,7 @@ export default function DashboardPage() {
     if (!selectedLead) return;
     if (!nextActionAt) { pushToast({ kind: "info", title: "Escolha a data da próxima ação" }); return; }
     try {
-      const iso = new Date(nextActionAt).toISOString();
+      const iso = new Date(`${nextActionAt}T12:00:00`).toISOString();
       setNextActionSaving(true);
       setLeads((prev) => prev.map((l) => l.id === selectedLead.id ? { ...l, next_action_type: nextActionType, next_action_at: iso } : l));
       const { error } = await supabase.from("leads").update({ next_action_type: nextActionType, next_action_at: iso }).eq("id", selectedLead.id);
