@@ -62,6 +62,16 @@ function calculateAge(birthDate?: string | null) {
   return age >= 0 ? age : null;
 }
 
+function ageRange(age: number | null) {
+  if (age === null) return "Não informado";
+  if (age <= 17) return "Até 17";
+  if (age <= 24) return "18-24";
+  if (age <= 34) return "25-34";
+  if (age <= 44) return "35-44";
+  if (age <= 54) return "45-54";
+  return "55+";
+}
+
 function getLeadInterests(l: Lead): string[] {
   if (l.interests && l.interests.length > 0) return l.interests;
   if (l.interest) return [l.interest];
@@ -94,6 +104,8 @@ export default function LeadsListPage() {
   const [campaignFilter, setCampaignFilter] = useState<string>("all");
   const [contactDateFrom, setContactDateFrom] = useState<string>("");
   const [contactDateTo, setContactDateTo] = useState<string>("");
+  const [ageFilter, setAgeFilter] = useState<string>("all");
+  const [progressOnly, setProgressOnly] = useState(false);
   const [reviewFilter, setReviewFilter] = useState<"all" | "review">("all");
 
   // Filtros aba responsáveis
@@ -108,14 +120,20 @@ export default function LeadsListPage() {
     const camp = params.get("campaign");
     const inter = params.get("interest");
     const src = params.get("source");
+    const stage = params.get("stage");
+    const age = params.get("age");
+    const status = params.get("status");
     const from = params.get("dateFrom");
     const to = params.get("dateTo");
     if (camp) setCampaignFilter(camp);
     if (inter) setInterestFilter(inter);
     if (src) setSourceFilter(src);
+    if (stage) setStageFilter(stage);
+    if (age) setAgeFilter(age);
+    if (status === "in_progress") setProgressOnly(true);
     if (from) setContactDateFrom(from);
     if (to) setContactDateTo(to);
-    if (camp || inter || src || from || to) {
+    if (camp || inter || src || stage || age || status || from || to) {
       // Limpar URL sem reload depois de carregar os filtros vindos da Home
       window.history.replaceState({}, "", window.location.pathname);
     }
@@ -159,10 +177,20 @@ export default function LeadsListPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [leads]);
 
+  const finalStageIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const stage of stages) {
+      if (stage.is_final) set.add(stage.id);
+    }
+    return set;
+  }, [stages]);
+
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     return leads.filter((l) => {
       if (stageFilter !== "all" && l.stage_id !== stageFilter) return false;
+      if (progressOnly && finalStageIds.has(l.stage_id)) return false;
+      if (ageFilter !== "all" && ageRange(calculateAge(l.birth_date)) !== ageFilter) return false;
       if (sourceFilter !== "all" && l.source !== sourceFilter) return false;
       if (interestFilter !== "all") {
         const li = getLeadInterests(l).map(i => i.toLowerCase());
@@ -198,7 +226,7 @@ export default function LeadsListPage() {
       ].join(" ").toLowerCase();
       return hay.includes(query);
     });
-  }, [leads, q, stageFilter, sourceFilter, interestFilter, campaignFilter, contactDateFrom, contactDateTo, reviewFilter, stages]);
+  }, [leads, q, stageFilter, sourceFilter, interestFilter, campaignFilter, contactDateFrom, contactDateTo, ageFilter, progressOnly, reviewFilter, stages, finalStageIds]);
 
   // Contagem por responsável filtrada por período
   const responsaveisCounts = useMemo(() => {
@@ -244,6 +272,9 @@ export default function LeadsListPage() {
           <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Contatos (Leads)</div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             {loading ? <span style={chipStyle("primary")}>Carregando…</span> : <span style={chipStyle("muted")}>Total: {filtered.length}</span>}
+            {stageFilter !== "all" && <span style={chipStyle("primary")}>Etapa: {stageNameFromId(stageFilter)}</span>}
+            {progressOnly && <span style={chipStyle("primary")}>Em progresso</span>}
+            {ageFilter !== "all" && <span style={chipStyle("primary")}>Idade: {ageFilter}</span>}
             {interestFilter !== "all" && <span style={chipStyle("primary")}>Interesse: {interestFilter}</span>}
             {campaignFilter !== "all" && <span style={chipStyle("primary")}>Campanha: {campaignFilter}</span>}
             {(contactDateFrom || contactDateTo) && (
@@ -297,7 +328,7 @@ export default function LeadsListPage() {
             </label>
 
             <button onClick={() => setReviewFilter(reviewFilter === "review" ? "all" : "review")} style={reviewFilter === "review" ? btnPrimary : btn}>⚠ Requer atenção</button>
-            <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); setCampaignFilter("all"); setContactDateFrom(""); setContactDateTo(""); setReviewFilter("all"); }} style={btn}>Limpar</button>
+            <button onClick={() => { setQ(""); setStageFilter("all"); setSourceFilter("all"); setInterestFilter("all"); setCampaignFilter("all"); setContactDateFrom(""); setContactDateTo(""); setAgeFilter("all"); setProgressOnly(false); setReviewFilter("all"); }} style={btn}>Limpar</button>
           </div>
 
           {loading ? (

@@ -960,10 +960,34 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div style={card}>
+        <div
+          style={{ ...card, cursor: "pointer" }}
+          role="button"
+          tabIndex={0}
+          title="Abrir contatos em progresso"
+          onClick={() => {
+            const params = new URLSearchParams({
+              status: "in_progress",
+              dateFrom: formatDateInput(normalizedPeriod.start),
+              dateTo: formatDateInput(normalizedPeriod.end),
+            });
+            router.push(`/leads?${params.toString()}`);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              const params = new URLSearchParams({
+                status: "in_progress",
+                dateFrom: formatDateInput(normalizedPeriod.start),
+                dateTo: formatDateInput(normalizedPeriod.end),
+              });
+              router.push(`/leads?${params.toString()}`);
+            }
+          }}
+        >
           <div style={cardTitle}>Em progresso</div>
           <div style={cardValue}>{inProgress}</div>
-          <div style={cardHint}>Exclui etapas finais</div>
+          <div style={cardHint}>Clique para consultar • exclui etapas finais</div>
         </div>
 
         <div style={card}>
@@ -1064,6 +1088,28 @@ export default function HomePage() {
               {clientsByAge.map((item) => (
                 <div
                   key={item.label}
+                  role="button"
+                  tabIndex={0}
+                  title={`Consultar clientes: ${item.label}`}
+                  onClick={() => {
+                    const params = new URLSearchParams({
+                      age: item.label,
+                      dateFrom: formatDateInput(normalizedPeriod.start),
+                      dateTo: formatDateInput(normalizedPeriod.end),
+                    });
+                    router.push(`/leads?${params.toString()}`);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      const params = new URLSearchParams({
+                        age: item.label,
+                        dateFrom: formatDateInput(normalizedPeriod.start),
+                        dateTo: formatDateInput(normalizedPeriod.end),
+                      });
+                      router.push(`/leads?${params.toString()}`);
+                    }
+                  }}
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
@@ -1072,6 +1118,7 @@ export default function HomePage() {
                     borderRadius: 12,
                     padding: 10,
                     background: "rgba(255,255,255,0.03)",
+                    cursor: "pointer",
                   }}
                 >
                   <div style={{ fontWeight: 900 }}>{item.label}</div>
@@ -1225,6 +1272,28 @@ export default function HomePage() {
                 return (
                   <div
                     key={st.id}
+                    role="button"
+                    tabIndex={0}
+                    title={`Consultar etapa: ${st.name}`}
+                    onClick={() => {
+                      const params = new URLSearchParams({
+                        stage: st.id,
+                        dateFrom: formatDateInput(normalizedPeriod.start),
+                        dateTo: formatDateInput(normalizedPeriod.end),
+                      });
+                      router.push(`/leads?${params.toString()}`);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        const params = new URLSearchParams({
+                          stage: st.id,
+                          dateFrom: formatDateInput(normalizedPeriod.start),
+                          dateTo: formatDateInput(normalizedPeriod.end),
+                        });
+                        router.push(`/leads?${params.toString()}`);
+                      }
+                    }}
                     style={{
                       width: `${width}%`,
                       minWidth: 180,
@@ -1233,6 +1302,7 @@ export default function HomePage() {
                       padding: "12px 14px",
                       border: `1px solid ${st.theme.tint}`,
                       background: `linear-gradient(180deg, ${st.theme.tint} 0%, rgba(255,255,255,0.02) 100%)`,
+                      cursor: "pointer",
                     }}
                   >
                     <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center" }}>
